@@ -89,6 +89,9 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--remove", nargs="+", default=[], metavar="ID", help="question ids to take out (c0004-p2)")
     p.add_argument("--restore", nargs="+", default=[], metavar="ID", help="question ids to put back")
     p.add_argument("--epubcheck", action="store_true", default=None, help="also run EPUBCheck on both books")
+    p.add_argument("--cards", choices=("all", "missed", "reached"),
+                   help="which questions go into the Anki deck and the text file, by your results in the web "
+                        "reader: all, those you missed on the first try, or those you have met (default: as before)")
     p.set_defaults(func=cmd_rebuild)
 
     p = sub.add_parser("serve", help="start the local web app",
@@ -153,7 +156,7 @@ def cmd_process(args: argparse.Namespace) -> int:
 
 def cmd_rebuild(args: argparse.Namespace) -> int:
     out_dir = args.output.resolve()
-    report = rebuild(out_dir, args.remove, args.restore, epubcheck=args.epubcheck)
+    report = rebuild(out_dir, args.remove, args.restore, epubcheck=args.epubcheck, cards=args.cards)
     print_summary(report, out_dir)
     return EXIT_OK
 

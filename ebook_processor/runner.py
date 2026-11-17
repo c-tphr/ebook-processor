@@ -63,7 +63,8 @@ def _open_run(out_dir: Path) -> tuple[Any, bytes, dict[str, Any]]:
 
 
 def rebuild(out_dir: Path, remove: Iterable[str] = (), restore: Iterable[str] = (),
-            removed: Iterable[str] | None = None, epubcheck: bool | None = None) -> dict[str, Any]:
+            removed: Iterable[str] | None = None, epubcheck: bool | None = None,
+            cards: str | None = None) -> dict[str, Any]:
     """Build the outputs again from the saved run, without calling Claude.
 
     ``remove`` and ``restore`` change which questions the user has taken out; ``removed``, when given, is the
@@ -83,6 +84,11 @@ def rebuild(out_dir: Path, remove: Iterable[str] = (), restore: Iterable[str] = 
             q["removed"] = True
         if q["id"] in set(restore):
             q["removed"] = False
+    if cards is not None:
+        from .exports import CARD_CHOICES
+        if cards not in CARD_CHOICES:
+            raise PipelineError(f"cards must be one of {', '.join(CARD_CHOICES)}")
+        state["cards"] = cards
     write_json(work_dir(out_dir) / STATE_FILE, state)
     return build_outputs(book, original, state, out_dir,
                          state["settings"].get("epubcheck", False) if epubcheck is None else epubcheck)

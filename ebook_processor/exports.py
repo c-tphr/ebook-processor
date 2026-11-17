@@ -57,7 +57,22 @@ def left_out_reason(q: dict[str, Any]) -> str:
 
 
 
-def questions_document(book: Book, state: dict[str, Any]) -> dict[str, Any]:
+CARD_CHOICES = ("all", "missed", "reached")
+
+
+def selected_cards(doc: dict[str, Any], cards: str = "all") -> list[dict[str, Any]]:
+    """The questions that go into the deck and the text file: all, those missed on the first try, or those met."""
+    if cards == "missed":
+        return [q for q in doc["questions"] if q.get("result") == "missed"]
+    if cards == "reached":
+        return [q for q in doc["questions"] if q.get("reached")]
+    return doc["questions"]
+
+
+def questions_document(book: Book, state: dict[str, Any], results: dict[str, str] | None = None,
+                       reached: set[str] | None = None) -> dict[str, Any]:
+    """``results`` (question id -> correct or missed) and ``reached`` come from reading the book in the app."""
+    results, reached = results or {}, reached or set()
     index = BookIndex(book)
     titles = chapter_titles(book)
     book_tag = slug(state["source"]["title"])
@@ -94,7 +109,9 @@ def questions_document(book: Book, state: dict[str, Any]) -> dict[str, Any]:
             "check": {"criteria": q["criteria"], "citations": q["citations"], "evidence": q["evidence"],
                       "minor_note": q["minor_note"], "times_checked": q["checks"],
                       "revisions": len(q["history"])},
-            "tags": [book_tag, f"{book_tag}::ch{sd.index:02d}"],
+            "result": results.get(q["id"]), "reached": q["id"] in reached or q["id"] in results,
+            "tags": [book_tag, f"{book_tag}::ch{sd.index:02d}"]
+            + ([f"recall::{results[q['id']]}"] if q["id"] in results else ["recall::unseen"] if results else []),
         })
     return {
         "format": QUESTIONS_FORMAT,
@@ -119,12 +136,12 @@ def _passage_plain(q: dict[str, Any]) -> str:
     return "\n\n".join(p["text"] for p in q["passage"])
 
 
-def tsv_text(doc: dict[str, Any]) -> str:
+def tsv_text(doc: dict[str, Any], cards: str = "all") -> str:
     """One row per question, tab-separated, with a header row. Fields that hold a line break are quoted."""
     out = io.StringIO()
     writer = csv.writer(out, delimiter="\t", lineterminator="\n", quoting=csv.QUOTE_MINIMAL)
     writer.writerow(TSV_COLUMNS)
-    for q in doc["questions"]:
+    for q in selected_cards(doc, cards):
         writer.writerow([q["id"], q["question"], q["answer"], doc["book"]["title"], q["chapter"], q["section_label"],
                          _passage_plain(q), " ".join(q["tags"])])
     return out.getvalue()
@@ -153,7 +170,7 @@ ANKI_BACK = ('{{FrontSide}}\n<hr id="answer">\n<div class="a">{{Answer}}</div>\n
              '{{#Passage}}<div class="passage">{{Passage}}</div>{{/Passage}}')
 
 
-def write_anki(doc: dict[str, Any], path: Path) -> int:
+def write_anki(doc: dict[str, Any], path: Path, cards: str = "all") -> int:
     """Write the deck; return the number of notes. Needs the ``genanki`` package."""
     import genanki
 
@@ -166,7 +183,7 @@ def write_anki(doc: dict[str, Any], path: Path) -> int:
     deck = genanki.Deck(deck_id, "Books::" + doc["book"]["title"].replace("::", ": "),
                         description=f"Retrieval-practice questions for {doc['book']['title']}, made by "
                                     "ebook-processor.")
-    for q in doc["questions"]:
+    for q in selected_cards(doc, cards):
         passage = "<br><br>".join(_html(p["text"]) for p in q["passage"])
         deck.add_note(genanki.Note(
             model=model,

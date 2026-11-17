@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import __version__, exports
+from . import __version__, exports, reading
 from .pipeline import KEPT, draft_bytes, kept, now, write_json
 from .prep import epubcheck as epubcheck_mod
 from .prep.build import BuildError, build_bytes
@@ -105,13 +105,20 @@ def build_outputs(book: Book, original: bytes, state: dict[str, Any], out_dir: P
         notes.append(f"{name}: " + _epubcheck_line(visible, name, out_dir))
 
     # 3. the questions on their own
-    doc = exports.questions_document(book, state)
+    read = reading.load_state(out_dir)
+    met = {a["id"] for a in (read or {}).get("x_attempts", [])}
+    doc = exports.questions_document(book, state, reading.results(read), met)
+    cards = state.get("cards", "all")
+    if cards != "all":
+        chosen = len(exports.selected_cards(doc, cards))
+        notes.append(f"The Anki deck and the text file hold {chosen} of the {len(doc['questions'])} questions: "
+                     + ("those you missed on the first try." if cards == "missed" else "those you have met while reading."))
     write_json(out_dir / f"{stem}.questions.json", doc)
     files["questions"] = f"{stem}.questions.json"
-    (out_dir / f"{stem}.cards.tsv").write_text(exports.tsv_text(doc), encoding="utf-8", newline="")
+    (out_dir / f"{stem}.cards.tsv").write_text(exports.tsv_text(doc, cards), encoding="utf-8", newline="")
     files["tsv"] = f"{stem}.cards.tsv"
     try:
-        exports.write_anki(doc, out_dir / f"{stem}.anki.apkg")
+        exports.write_anki(doc, out_dir / f"{stem}.anki.apkg", cards)
         files["anki"] = f"{stem}.anki.apkg"
     except ImportError:
         files["anki"] = None
@@ -159,6 +166,7 @@ def make_report(state: dict[str, Any], doc: dict[str, Any], files: dict[str, str
         "counts": counts,
         "files": files,
         "firmware_format_ok": prepared_ok,
+        "cards": state.get("cards", "all"),
         "structure_checks": [{"name": c["name"], "title": c["title"], "status": c["status"],
                               "failures": c["failures"]} for c in checks],
         "left_out": doc["left_out"],

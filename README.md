@@ -76,13 +76,40 @@ ebook-processor rebuild path/to/Book-processed --remove c0004-p2 c0011-p1
 
 `--restore` puts them back. Every output file is written again.
 
-## Use it as a web app
+## Use it as a web app, and read in it
 
 ```bash
 ebook-processor serve
 ```
 
 It opens `http://localhost:8765/` in your browser. Drop an EPUB on the page (or type the path of a file on the computer), choose the options and press **Process book**. Under **Advanced**, the two model fields list the models your Claude login can use, as Claude Code reports them when the app starts. The page shows the run's progress. When it is finished you can download each file and go through the questions: untick the ones you do not want and press **Rebuild files**. The app listens on your own computer only, runs one book at a time and keeps its runs in `~/ebook-processor-runs` (`--data` chooses another folder).
+
+The app opens on your **library**: every book with how far you have read and how many questions you recalled on the first try, and the book you were last reading on top. **Add book** processes a new EPUB, or takes a `Book.prepared.epub` made elsewhere as it is.
+
+### The reader
+
+**Read** opens a book in the app's own reader. It has three views over one position, so you can change between them at any point:
+
+| View | How it works |
+| --- | --- |
+| Page | Whole pages, two side by side on a wide window. Turn with the arrow keys, the space bar, or a click near the edge of the page. |
+| Scroll | One chapter as a long column. Each checkpoint is a bar across the text; what follows it stays hidden until you have been through it. |
+| RSVP | One word at a time (or two or three) at a pace you set, aligned on a focus letter, with longer holds at punctuation. Paused, it shows the paragraph around the word; click a word to move there. It stops at pictures, tables and listings and shows them. |
+
+At the end of each section the reader stops for its **checkpoint**, one question at a time:
+
+1. The question is shown with the answer hidden. Recall it. You may type your recall; it is kept with your grade.
+2. **Reveal answer** puts your words beside the reference answer. Mark yourself **Correct** or **Incorrect**.
+3. After Incorrect you can **reread the section** in any view and come back to the same question with the answer hidden, or continue.
+4. **Skip question** and **Skip checkpoint** grade nothing.
+
+Only your **first** grade for a question is kept: a Correct after a reread does not replace an earlier Incorrect. Jumping through the contents, the search or the map never sets off a checkpoint; reading through a section again does. Closing the window in the middle of a question or a reread brings you back to the same place.
+
+Also in the reader: contents by chapter and section, search, footnotes that open in place, text settings (serif or grotesk, size, line spacing, column width, light or dark), and **Review**, which goes back through the questions you missed or skipped until you get each one right.
+
+The strip at the bottom is the book: one block per section, with a square for each question (blue recalled, black missed, hollow not yet met). The book's page shows the same map, your time and pace per view, and lets you choose which cards go into the Anki deck and the text file: all, only those you missed on the first try, or only those you have met. Cards are tagged `recall::correct`, `recall::missed` or `recall::unseen`.
+
+Reading state lives in `reading.json` in the book's folder. It follows the saved-state format of the Picco firmware (`position`, `grades`, `active_checkpoint`), with members of its own (prefixed `x_`) for every attempt with what you typed, time and pace.
 
 ## How it works
 
@@ -139,7 +166,8 @@ The tests never call Claude: `tests/scripted.py` is a stand-in that answers from
 | `ebook_processor/visible.py` | The book with visible checkpoints |
 | `ebook_processor/exports.py` | `questions.json`, the Anki deck, the text file |
 | `ebook_processor/outputs.py` | Writes every output from the saved state, and the report |
-| `ebook_processor/web/` | The local web app: a standard-library HTTP server and one page |
+| `ebook_processor/reading.py` | A prepared EPUB as the reader needs it (clean chapter HTML with word positions, sections, search) and the saved reading state |
+| `ebook_processor/web/` | The local web app: a standard-library HTTP server, the library page (`index.html`) and the reader (`reader.html`) |
 | `tests/data/` | A small made-up book with its expected results, broken prepared books the validator must reject, and Thomas Paine's *Essays* (Standard Ebooks, CC0) |
 
 The firmware format (`rsvp/checkpoints.json`, version 1, and the `rsvp-<section>-start` and `-end` markers) is the one eink-learner-aid defines; its names are kept so that books from this tool load on that firmware. The two repositories share no code at run time.

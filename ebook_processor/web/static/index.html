@@ -103,11 +103,19 @@ details.adv > summary { cursor: pointer; font: 12px/1.5 var(--mono); letter-spac
 
 /* list of books */
 .runs { border-top: 1px solid var(--ink); }
-a.run { display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; gap: 4px 18px; align-items: baseline; text-decoration: none;
-  padding: 14px 0; border-bottom: 1px solid var(--ghost); }
-a.run:hover .t { color: var(--blue); }
-a.run .t { font: 500 21px/1.2 var(--grot); letter-spacing: -0.025em; }
-a.run .sub { grid-column: 2; color: var(--mute); font-size: 14px; }
+.run { display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; gap: 4px 18px; align-items: baseline; padding: 14px 0; border-bottom: 1px solid var(--ghost); }
+.run .t { font: 500 21px/1.2 var(--grot); letter-spacing: -0.025em; text-decoration: none; }
+.run .t:hover { color: var(--blue); }
+.run .sub { grid-column: 2; color: var(--mute); font-size: 14px; }
+.run .btn, .run .lab { grid-row: 1 / span 2; grid-column: 3; align-self: center; }
+.run .prog { grid-column: 2 / -1; height: 4px; margin-top: 6px; background: linear-gradient(to right, var(--ink) calc(var(--p) * 100%), var(--ghost) 0); }
+.btn.primary { background: var(--ink); color: var(--paper); padding: 15px 22px; font-size: 13px; }
+.btn.primary:hover { background: var(--blue); border-color: var(--blue); color: var(--on-blue); }
+.hero h1.book { font-size: clamp(40px, 7vw, 88px); line-height: 0.95; text-wrap: balance; margin-top: 10px; }
+.map .col > i.no { background: var(--ink); }
+.map .col > i.todo { background: transparent; box-shadow: inset 0 0 0 1.5px var(--blue); }
+.legend span.no::before { background: var(--ink); } .legend span.todo::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--blue); }
+.legend span.cp::before { background: var(--blue); }
 .empty { color: var(--mute); padding: 18px 0; margin: 0; }
 
 /* one run */
@@ -173,7 +181,7 @@ a.run .sub { grid-column: 2; color: var(--mute); font-size: 14px; }
   .band { padding: 28px 0; }
   .stats { grid-template-columns: repeat(2, 1fr); } .stat:nth-child(3) { border-left: 0; padding-left: 0; }
   .stat:nth-child(n+3) { border-top: 1px solid var(--ghost); }
-  a.run { grid-template-columns: minmax(0, 1fr) auto; } a.run .d { display: none; } a.run .sub { grid-column: 1; }
+  .run { grid-template-columns: minmax(0, 1fr) auto; } .run .d { display: none; } .run .sub { grid-column: 1; } .run .btn, .run .lab { grid-column: 2; } .run .prog { grid-column: 1 / -1; }
   .reg::before, .reg::after { display: none; }
 }
 </style>
@@ -237,7 +245,7 @@ let info = null, timer = null, view = { removed: new Set(), saved: new Set(), fi
 function route() {
   clearTimeout(timer); $("sticky").classList.remove("on"); window.scrollTo(0, 0);
   const m = location.hash.match(/^#\/run\/([0-9a-z-]+)$/);
-  if (m) showRun(m[1]); else showHome();
+  if (m) showRun(m[1]); else if (location.hash === "#/add") showAdd(); else showLibrary();
 }
 window.addEventListener("hashchange", route);
 
@@ -251,7 +259,7 @@ async function init() {
 }
 
 /* ---------- home ---------- */
-function showHome() {
+function showAdd() {
   const app = $("app");
   let file = null;
   const error = h("div", { class: "msg err", role: "alert", hidden: true });
@@ -351,35 +359,74 @@ function showHome() {
     } catch (err) { error.textContent = err.message; error.hidden = false; $("go").disabled = false; $("go").textContent = "Process book"; }
   }
 
-  // The hero's picture is the product: stretches of text, and a stop after each.
+  const importError = h("div", { class: "msg err", role: "alert", hidden: true });
+  const importInput = h("input", { type: "file", accept: ".epub,application/epub+zip", hidden: true, onchange: async () => {
+    const f = importInput.files[0]; if (!f) return;
+    importError.hidden = true;
+    try {
+      const job = await api(`/books/import?name=${encodeURIComponent(f.name)}`, { method: "POST", body: f, headers: { "Content-Type": "application/epub+zip" } });
+      location.hash = "#/run/" + job.id;
+    } catch (err) { importError.textContent = err.message; importError.hidden = false; }
+  } });
+  put(app,
+    h("a", { class: "back m", href: "#/" }, "← Library"),
+    h("div", { class: "title" }, h("h1", {}, "Add a book"),
+      h("p", { style: "margin:0;max-width:46ch" }, "Give it an EPUB. It divides the book into sections, writes recall questions for the end of each one, has them checked against the text, and puts the book in your library with its checkpoints.")),
+    info.claude.ok ? null : h("div", { class: "msg err", role: "alert" }, info.claude.error),
+    band("New book", form),
+    band("Already prepared",
+      h("p", { class: "lede" }, "A Book.prepared.epub made elsewhere can be added as it is and read with its checkpoints. Taking questions out and the Anki deck need a run made here."),
+      importInput, h("button", { type: "button", onclick: () => importInput.click() }, "Choose a prepared EPUB"), importError));
+}
+
+/* ---------- library ---------- */
+const dur = (seconds) => { const m = Math.round(seconds / 60); return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`; };
+function showLibrary() {
+  const app = $("app");
+  const hero = h("section", { class: "hero" }), runs = h("div", { class: "runs" });
+  put(app, hero, band("Library",
+    h("div", { class: "row", style: "justify-content:flex-end;margin-bottom:16px" }, h("a", { class: "btn", href: "#/add" }, "Add book")),
+    runs, info.data ? h("div", { style: "margin-top:14px" }, kv("Kept in", info.data)) : null));
+  // Without a book in progress, the hero's picture is the product: stretches of text, and a stop after each.
   const widths = [9, 15, 7, 12, 18, 8, 13];
   const strip = h("div", { class: "map big", role: "img", "aria-label": "A book as a row of sections, with a checkpoint at the end of each" },
     widths.map((w) => h("div", { class: "col", style: `--w:${w}` }, h("span", { class: "sec" }), h("i"))));
-  const runs = h("div", { class: "runs" });
-  put(app,
-    h("section", { class: "hero" },
-      h("h1", {}, "Read.", h("br"), "Stop.", h("br"), "Recall."),
-      h("div", {},
-        h("p", {}, "Give it an EPUB. It divides the book into sections, writes recall questions for the end of each one, has them checked against the text, and gives the book back with checkpoints, plus the questions as an Anki deck."),
-        strip,
-        h("div", { class: "legend m" }, h("span", {}, "Section"), h("span", { class: "cp" }, "Checkpoint")))),
-    info.claude.ok ? null : h("div", { class: "msg err", role: "alert" }, info.claude.error),
-    band("New book", form),
-    band("Books", runs, info.data ? h("div", { style: "margin-top:14px" }, kv("Kept in", info.data)) : null));
   async function refresh() {
-    try {
-      const { jobs } = await api("/jobs");
-      put(runs, jobs.length ? jobs.map(runRow) : h("p", { class: "empty" }, "Nothing yet. Processed books appear here."));
-      if (jobs.some((j) => j.status === "queued" || j.status === "running")) timer = setTimeout(refresh, 2500);
-    } catch (e) { put(runs, h("p", { class: "msg err" }, e.message)); }
+    let jobs;
+    try { ({ jobs } = await api("/jobs")); } catch (e) { return put(runs, h("p", { class: "msg err" }, e.message)); }
+    const last = jobs.filter((j) => j.reading).sort((a, b) => (b.reading.last_read || "").localeCompare(a.reading.last_read || ""))[0];
+    if (last) {
+      const r = last.reading;
+      put(hero,
+        h("div", {}, h("span", { class: "m" }, r.progress >= 0.995 ? "Last read" : "Continue reading"), h("h1", { class: "book" }, last.title)),
+        h("div", {},
+          kv("Read", `${Math.round(100 * r.progress)}%`),
+          r.answered ? kv("Recalled on the first try", `${r.correct} of ${r.answered}`) : null,
+          r.seconds >= 60 ? kv("Time reading", dur(r.seconds)) : null,
+          r.last_read ? kv("Last read", day(r.last_read)) : null,
+          h("div", { class: "actions" }, h("a", { class: "btn primary", href: "/read/" + last.id }, r.in_checkpoint ? "Back to the question" : "Continue"),
+            h("a", { class: "btn", href: "#/run/" + last.id }, "Book page"))));
+    } else {
+      put(hero, h("h1", {}, "Read.", h("br"), "Stop.", h("br"), "Recall."),
+        h("div", {},
+          h("p", {}, "Books come back with checkpoints: at the end of each section you stop and recall what you just read, before going on. The questions are also yours as an Anki deck."),
+          strip, h("div", { class: "legend m" }, h("span", {}, "Section"), h("span", { class: "cp" }, "Checkpoint")),
+          jobs.length ? null : h("div", { class: "actions" }, h("a", { class: "btn primary", href: "#/add" }, "Add your first book"))));
+    }
+    put(runs, jobs.length ? jobs.map(runRow) : h("p", { class: "empty" }, "No books yet."));
+    if (jobs.some((j) => j.status === "queued" || j.status === "running")) timer = setTimeout(refresh, 2500);
   }
   refresh();
 }
 function runRow(j) {
-  const sub = j.status === "done" && j.counts ? `${fmt(j.counts.questions)} questions at ${fmt(j.counts.checkpoints)} checkpoints` : j.message || "";
-  return h("a", { class: "run", href: "#/run/" + j.id },
-    h("span", { class: "m mute d" }, day(j.created)), h("span", { class: "t" }, j.title),
-    h("span", { class: STATUS_LAB[j.status] || "lab" }, STATUS[j.status] || j.status), h("span", { class: "sub" }, sub));
+  const r = j.reading, c = j.counts;
+  const sub = j.status !== "done" ? j.message || ""
+    : r ? `${Math.round(100 * r.progress)}% read` + (r.answered ? ` / ${r.correct} of ${r.answered} recalled on the first try` : "")
+    : c ? `${fmt(c.questions)} questions at ${fmt(c.checkpoints)} checkpoints` : "";
+  return h("div", { class: "run" },
+    h("span", { class: "m mute d" }, day(j.created)), h("a", { class: "t", href: "#/run/" + j.id }, j.title),
+    j.can_read ? h("a", { class: "btn", href: "/read/" + j.id }, r ? "Continue" : "Read") : h("span", { class: STATUS_LAB[j.status] || "lab" }, STATUS[j.status] || j.status),
+    h("span", { class: "sub" }, sub), r ? h("div", { class: "prog", style: `--p:${r.progress}` }) : null);
 }
 
 /* ---------- one run ---------- */
@@ -388,13 +435,13 @@ async function showRun(id) {
   put(app, h("p", { class: "empty" }, "Loading"));
   let job, review = null, lastStatus = null;
   const head = h("div"), body = h("div");
-  put(app, h("a", { class: "back m", href: "#/" }, "← All books"), head, body);
+  put(app, h("a", { class: "back m", href: "#/" }, "← Library"), head, body);
 
   async function poll() {
     try { job = await api("/jobs/" + id); }
     catch (e) { put(head, h("p", { class: "msg err" }, e.message)); return; }
     drawHead();
-    if (job.status === "done" && lastStatus !== "done") await loadReview();
+    if (job.status === "done" && lastStatus !== "done") await (job.report ? loadReview() : drawImported());
     else if (job.status !== "done") drawProgress();
     lastStatus = job.status;
     if (job.status === "queued" || job.status === "running") timer = setTimeout(poll, 1500);
@@ -411,8 +458,15 @@ async function showRun(id) {
         kv("Status", h("span", { class: STATUS_LAB[job.status] || "lab" }, STATUS[job.status])),
         kv("File", job.file), kv("Words", fmt(job.words)),
         s.min_words ? kv("Section length", `${fmt(s.min_words)}–${fmt(s.max_words)}`) : null,
-        kv("Started", day(job.created)),
-        h("div", { class: "row", style: "margin-top:12px" },
+        kv("Added", day(job.created)),
+        job.reading ? [kv("Read", `${Math.round(100 * job.reading.progress)}%`),
+          job.reading.answered ? kv("Recalled on the first try", `${job.reading.correct} of ${job.reading.answered}`) : null,
+          job.reading.seconds >= 60 ? kv("Time reading", dur(job.reading.seconds)) : null,
+          Object.keys(job.reading.pace).length ? kv("Your pace", Object.entries(job.reading.pace).map(([m, w]) => `${w} wpm ${m === "rsvp" ? "RSVP" : m}`).join(" / ")) : null,
+          job.reading.last_read ? kv("Last read", day(job.reading.last_read)) : null] : null,
+        h("div", { class: "row", style: "margin-top:14px" },
+          job.can_read ? h("a", { class: "btn primary", href: "/read/" + id }, job.reading ? "Continue reading" : "Read") : null,
+          Object.values(job.results || {}).includes("missed") ? h("a", { class: "btn", href: `/read/${id}?review=1` }, "Review missed questions") : null,
           active ? h("button", { onclick: act("/cancel") }, "Stop") : null,
           job.status === "stopped" || job.status === "failed" ? h("button", { onclick: act("/continue") }, "Continue") : null,
           !active ? h("button", { class: "text", onclick: async () => {
@@ -432,6 +486,15 @@ async function showRun(id) {
       h("ul", { class: "log", "aria-label": "Activity" }, (job.events || []).slice().reverse().map((e) =>
         h("li", { class: e.stage === "warning" ? "w" : "" }, `${new Date(e.time).toLocaleTimeString()}  ${e.stage.toUpperCase()}  ${e.message}`)))));
   }
+  function drawImported() {
+    const c = job.counts || {}, name = job.file.replace(/\.epub$/i, "") + ".prepared.epub";
+    put(body,
+      h("div", { class: "stats" }, [[c.questions, "Questions"], [c.checkpoints, "Checkpoints"], [c.sections, "Sections"]].map(([n, t]) =>
+        h("div", { class: "stat" }, h("b", {}, fmt(n || 0)), h("span", { class: "m" }, t)))),
+      band("This book", h("p", { class: "lede" }, "Added as a prepared book. It can be read with its checkpoints. Taking questions out and the Anki deck need a run made in this app from the original EPUB."),
+        h("div", { class: "files" }, h("div", { class: "file" }, h("b", {}, "Book for the Picco firmware"), h("small", {}, "The file you added."),
+          h("a", { class: "btn", href: `/api/jobs/${id}/files/${encodeURIComponent(name)}`, download: name }, "Download")))));
+  }
   async function loadReview() {
     try { review = await api(`/jobs/${id}/review`); }
     catch (e) { put(body, h("p", { class: "msg err" }, e.message)); return; }
@@ -441,6 +504,7 @@ async function showRun(id) {
   }
   function bookMap() {
     const map = h("div", { class: "map", role: "img", "aria-label": "The book: each block is a section, each square a question" });
+    const res = job.results || {};
     let chapter = null;
     for (const s of review.sections) {
       if (chapter !== null && s.chapter !== chapter) map.append(h("i", { class: "gap" }));
@@ -450,7 +514,7 @@ async function showRun(id) {
         "aria-label": s.label,
         onclick: (e) => { e.preventDefault(); if (view.filter !== "all") { view.filter = "all"; drawDone(); }
           document.getElementById("sec-" + s.id)?.scrollIntoView({ behavior: "smooth", block: "start" }); } }),
-        s.questions.map((q) => h("i", { class: !q.can_keep || view.removed.has(q.id) ? "out" : "", "data-q": q.id }))));
+        s.questions.map((q) => h("i", { class: !q.can_keep || view.removed.has(q.id) ? "out" : !job.reading ? "" : res[q.id] === "missed" ? "no" : res[q.id] ? "" : "todo", "data-q": q.id }))));
     }
     return map;
   }
@@ -466,10 +530,18 @@ async function showRun(id) {
         [[c.questions, "Questions"], [c.checkpoints, "Checkpoints"], [c.sections, "Sections"], [c.left_out, "Left out"]].map(([n, t]) =>
           h("div", { class: "stat" }, h("b", {}, fmt(n)), h("span", { class: "m" }, t)))),
       band("The book", bookMap(),
-        h("div", { class: "legend m" }, h("span", {}, "Section, by length"), h("span", { class: "cp" }, "Question at its end"), h("span", { class: "out" }, "Left out"))),
+        job.reading
+          ? h("div", { class: "legend m" }, h("span", {}, "Section, by length"), h("span", { class: "cp" }, "Recalled on the first try"), h("span", { class: "no" }, "Missed"), h("span", { class: "todo" }, "Not yet met"), h("span", { class: "out" }, "Left out"))
+          : h("div", { class: "legend m" }, h("span", {}, "Section, by length"), h("span", { class: "cp" }, "Question at its end"), h("span", { class: "out" }, "Left out"))),
       band("Files",
         r.files.prepared && !r.firmware_format_ok ? h("div", { class: "msg", style: "margin:0 0 16px" }, "The firmware-format book did not pass all its structure checks. The report says which.") : null,
         notes.length ? h("div", { class: "msg", style: "margin:0 0 16px" }, notes.map((n) => h("div", {}, n))) : null,
+        job.reading ? h("div", { class: "row", style: "margin-bottom:16px" }, h("span", { class: "m" }, "Cards in the deck and the text file"),
+          h("div", { class: "filters", role: "group", style: "margin:0" }, [["all", "All"], ["missed", "Missed on the first try"], ["reached", "Met while reading"]].map(([k, t]) =>
+            h("button", { type: "button", "aria-pressed": String((r.cards || "all") === k), onclick: async (e) => {
+              e.target.disabled = true;
+              try { job = await api(`/jobs/${id}/rebuild`, { method: "POST", json: { cards: k } }); drawHead(); await loadReview(); } catch (err) { alert(err.message); }
+            } }, t)))) : null,
         h("div", { class: "files" }, FILES.map(([key, title, what]) => {
           const name = r.files[key];
           return h("div", { class: "file" }, h("b", {}, title), h("small", {}, name ? what : "Not written. The report says why."),

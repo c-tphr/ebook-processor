@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from .. import __version__
+from .. import __version__, reading
 from ..llm import BackendError, ClaudeCodeBackend, UsageLimitError
 from ..outputs import load_report, stem_of
 from ..pipeline import now, write_json
@@ -69,6 +69,7 @@ class Jobs:
         self.turn = threading.Lock()  # held by the run that is being processed
         self.jobs: dict[str, dict[str, Any]] = {}
         self.cancels: dict[str, threading.Event] = {}
+        self.books: dict[str, tuple[int, reading.ReadingBook]] = {}
         self.backend_factory = backend_factory
         for path in sorted(self.data.glob("*/job.json")):
             try:
@@ -92,8 +93,75 @@ class Jobs:
         return self.jobs[job_id]
 
     def summary(self, job: dict[str, Any]) -> dict[str, Any]:
-        return {k: job.get(k) for k in ("id", "file", "title", "created", "updated", "status", "message", "stage",
-                                        "done", "total", "counts")}
+        out = {k: job.get(k) for k in ("id", "file", "title", "created", "updated", "status", "message", "stage",
+                                       "done", "total", "counts", "words", "kind")}
+        out["can_read"] = job["status"] == "done" and self.prepared(job["id"]).is_file()
+        out["reading"] = reading.summary(reading.load_state(self.folder(job["id"]))) if out["can_read"] else None
+        return out
+
+    # ---- reading
+
+    def prepared(self, job_id: str) -> Path:
+        return self.folder(job_id) / f"{stem_of(self.jobs[job_id]['file'])}.prepared.epub"
+
+    def book(self, job_id: str) -> reading.ReadingBook:
+        """The run's prepared book, parsed once and kept until the file changes (a rebuild writes it again)."""
+        self.get(job_id)
+        path = self.prepared(job_id)
+        if not path.is_file():
+            raise ApiError(HTTPStatus.NOT_FOUND, "this book has no file to read yet")
+        stamp = path.stat().st_mtime_ns
+        with self.lock:
+            cached = self.books.get(job_id)
+            if cached is None or cached[0] != stamp:
+                try:
+                    cached = (stamp, reading.open_reading_book(path))
+                except reading.ReadingError as exc:
+                    raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+                self.books[job_id] = cached
+            return cached[1]
+
+    def reading_state(self, job_id: str) -> dict[str, Any]:
+        book = self.book(job_id)
+        return reading.load_state(self.folder(job_id)) or reading.new_state(book.data["book"]["source_sha256"])
+
+    def save_reading(self, job_id: str, raw: Any) -> dict[str, Any]:
+        book = self.book(job_id)
+        known = {p["id"] for c in book.data["checkpoints"] for p in c["prompts"]}
+        with self.lock:
+            old = reading.load_state(self.folder(job_id))
+            state = reading.merge_state(old, reading.clean_state(raw, book.data["book"]["source_sha256"], known))
+            write_json(self.folder(job_id) / reading.STATE_FILE, state)
+        return state
+
+    def import_prepared(self, name: str, data: bytes) -> dict[str, Any]:
+        """Add a prepared EPUB made elsewhere. It can be read; it has no run to rebuild from."""
+        name = _safe_name(name)
+        stem = name[:-len(".prepared.epub")] if name.lower().endswith(".prepared.epub") else stem_of(name)
+        stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        with self.lock:
+            job_id = f"{stamp}-{_slug(stem)}"
+            while job_id in self.jobs:
+                job_id = job_id[:55] + "x"
+            folder = self.folder(job_id)
+            folder.mkdir(parents=True)
+            path = folder / f"{stem}.prepared.epub"
+            path.write_bytes(data)
+            try:
+                book = reading.open_reading_book(path)
+            except reading.ReadingError as exc:
+                shutil.rmtree(folder, ignore_errors=True)
+                raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+            manifest = book.manifest()
+            questions = sum(len(s["prompts"]) for s in manifest["sections"])
+            job = {"id": job_id, "file": f"{stem}.epub", "title": manifest["title"], "created": now(), "status": "done",
+                   "message": "Added as a prepared book", "stage": "done", "done": None, "total": None,
+                   "words": manifest["words"], "settings": {}, "events": [], "kind": "imported",
+                   "counts": {"questions": questions, "sections": len(manifest["sections"]), "left_out": 0,
+                              "checkpoints": sum(bool(s["prompts"]) for s in manifest["sections"])}}
+            self.jobs[job_id] = job
+            self._store(job)
+        return job
 
     def listing(self) -> list[dict[str, Any]]:
         with self.lock:
@@ -104,8 +172,11 @@ class Jobs:
             job = dict(self.get(job_id))
         report = load_report(self.folder(job_id), job["file"]) if job["status"] == "done" else None
         if report is not None:
-            job["report"] = {k: report[k] for k in ("counts", "files", "firmware_format_ok", "notes", "warnings",
-                                                    "usage", "complete", "doubted_breaks", "excluded")}
+            job["report"] = {k: report.get(k) for k in ("counts", "files", "firmware_format_ok", "notes", "warnings",
+                                                        "usage", "complete", "doubted_breaks", "excluded", "cards")}
+        job.update({k: v for k, v in self.summary(self.jobs[job_id]).items() if k in ("can_read", "reading")})
+        if job["can_read"]:
+            job["results"] = reading.results(reading.load_state(self.folder(job_id)))
         return job
 
     # ---- writing
@@ -206,13 +277,13 @@ class Jobs:
                     self.cancels.pop(job_id, None)
                     self._store(job)
 
-    def rebuild(self, job_id: str, removed: list[str]) -> dict[str, Any]:
+    def rebuild(self, job_id: str, removed: list[str] | None, cards: str | None = None) -> dict[str, Any]:
         with self.lock:
             job = self.get(job_id)
-            if job["status"] != "done":
-                raise ApiError(HTTPStatus.CONFLICT, "the run is not finished")
+            if job["status"] != "done" or job.get("kind") == "imported":
+                raise ApiError(HTTPStatus.CONFLICT, "this book has no finished run to rebuild from")
         try:
-            report = rebuild(self.folder(job_id), removed=removed)
+            report = rebuild(self.folder(job_id), removed=removed, cards=cards)
         except PipelineError as exc:
             raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
         with self.lock:
@@ -310,12 +381,18 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:
         self.dispatch("DELETE")
 
+    def do_PUT(self) -> None:
+        self.dispatch("PUT")
+
     # ---- routes
 
     def route(self, method: str, parts: list[str], query: dict[str, list[str]]) -> None:
         jobs = self.jobs
         if method == "GET" and not parts:
             return self.send_file(STATIC / "index.html")
+        if method == "GET" and len(parts) == 2 and parts[0] == "read":
+            jobs.get(parts[1])
+            return self.send_file(STATIC / "reader.html")
         if not parts or parts[0] != "api":
             raise ApiError(HTTPStatus.NOT_FOUND, "not found")
         match (method, parts[1:]):
@@ -347,6 +424,49 @@ class Handler(BaseHTTPRequestHandler):
                 settings = self.settings(request.get("settings") or {})
                 return self.send_json(jobs.summary(jobs.create(path.name, path.read_bytes(), settings)),
                                       HTTPStatus.CREATED)
+            case ("POST", ["books", "import"]):
+                data = self.body()
+                if not data:
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "no file was sent")
+                return self.send_json(jobs.summary(jobs.import_prepared((query.get("name") or ["book.epub"])[0], data)),
+                                      HTTPStatus.CREATED)
+            case ("GET", ["settings"]):
+                path = jobs.data / "reader-settings.json"
+                return self.send_json(json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {})
+            case ("PUT", ["settings"]):
+                settings = {k: v for k, v in self.json_body().items()
+                            if isinstance(k, str) and len(k) <= 32 and isinstance(v, (str, int, float, bool))}
+                if len(json.dumps(settings)) > 4000:
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "too many settings")
+                write_json(jobs.data / "reader-settings.json", settings)
+                return self.send_json(settings)
+            case ("GET", ["jobs", job_id, "book"]):
+                return self.send_json(jobs.book(job_id).manifest())
+            case ("GET", ["jobs", job_id, "book", "chapter", number]):
+                try:
+                    return self.send_json(jobs.book(job_id).chapter(int(number)))
+                except (ValueError, reading.ReadingError) as exc:
+                    raise ApiError(HTTPStatus.NOT_FOUND, str(exc)) from exc
+            case ("GET", ["jobs", job_id, "book", "asset"]):
+                try:
+                    data, kind = jobs.book(job_id).asset((query.get("path") or [""])[0])
+                except reading.ReadingError as exc:
+                    raise ApiError(HTTPStatus.NOT_FOUND, str(exc)) from exc
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", kind)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Content-Security-Policy", "sandbox")  # an SVG from a book never runs as a page
+                self.send_header("Cache-Control", "private, max-age=3600")
+                self.end_headers()
+                self.wfile.write(data)
+                return None
+            case ("GET", ["jobs", job_id, "book", "search"]):
+                return self.send_json({"results": jobs.book(job_id).search((query.get("q") or [""])[0])})
+            case ("GET", ["jobs", job_id, "reading"]):
+                return self.send_json(jobs.reading_state(job_id))
+            case ("PUT", ["jobs", job_id, "reading"]):
+                state = jobs.save_reading(job_id, self.json_body())
+                return self.send_json({"saved": True, "grades": state["grades"]})
             case ("GET", ["jobs", job_id]):
                 return self.send_json(jobs.detail(job_id))
             case ("DELETE", ["jobs", job_id]):
@@ -361,17 +481,20 @@ class Handler(BaseHTTPRequestHandler):
                 jobs.start(job_id)
                 return self.send_json({"ok": True})
             case ("GET", ["jobs", job_id, "review"]):
-                if jobs.get(job_id)["status"] != "done":
-                    raise ApiError(HTTPStatus.CONFLICT, "the run is not finished")
+                if jobs.get(job_id)["status"] != "done" or jobs.get(job_id).get("kind") == "imported":
+                    raise ApiError(HTTPStatus.CONFLICT, "this book has no finished run to review")
                 try:
                     return self.send_json(review_data(jobs.folder(job_id)))
                 except PipelineError as exc:
                     raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
             case ("POST", ["jobs", job_id, "rebuild"]):
-                removed = self.json_body().get("removed")
-                if not isinstance(removed, list) or not all(isinstance(r, str) for r in removed):
+                request = self.json_body()
+                removed, cards = request.get("removed"), request.get("cards")
+                if removed is not None and (not isinstance(removed, list) or not all(isinstance(r, str) for r in removed)):
                     raise ApiError(HTTPStatus.BAD_REQUEST, "'removed' must be a list of question ids")
-                return self.send_json(jobs.rebuild(job_id, removed))
+                if cards is not None and not isinstance(cards, str):
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "'cards' must be all, missed or reached")
+                return self.send_json(jobs.rebuild(job_id, removed, cards))
             case ("GET", ["jobs", job_id, "files", name]):
                 job = jobs.get(job_id)
                 folder = jobs.folder(job_id)

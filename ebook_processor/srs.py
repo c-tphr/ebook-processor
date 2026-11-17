@@ -1,48 +1,64 @@
-"""Spaced repetition for the questions of the books you have read, after Mochi's default algorithm.
+"""Spaced repetition for the questions of the books you have read, after Mochi's default (non-FSRS) scheduler.
 
-The algorithm (https://mochi.cards/docs/reviewing and its FAQ):
+What Mochi's documentation, changelog and developer establish, and this module follows:
 
-- A review has two answers, **Remembered** and **Forgot**.
-- Remembered multiplies the card's interval by a fixed multiplier (Mochi's default: 1.8).
-- Forgot multiplies it by a fixed, smaller multiplier. The interval is not reset. The card goes to the
-  **re-review** queue and is shown again the same day.
-- Remembered in re-review puts the card back on its (shortened) schedule. Forgot again in re-review resets the
-  interval to the first interval.
-- A **new** card joins the schedule when it is first remembered; Forgot postpones it.
-- New cards per day can be limited.
+- A review has two answers, **Remembered** and **Forgot**. Remembered multiplies the card's interval by one
+  fixed multiplier; Forgot multiplies it by another, smaller one. The interval is not reset.
+- A forgotten card goes to the **re-review** queue, shown after the due cards. Remembered there keeps the
+  shortened interval; Forgot there drops the interval to 1 day.
+- A **new** card joins the schedule when it is first remembered, and is due for its first review the same day.
+  Forgot leaves it new and sends it to the back.
+- Remembering an overdue card counts the time actually waited, not only the scheduled interval.
+- Due dates are varied slightly (on by default; can be switched off).
+- There is an optional longest interval and an optional limit on new cards per day; neither is on by default.
+  There is no limit on reviews per day.
+- Due cards are shown most overdue first, cards due the same day in random order.
 
-Mochi's docs give the remembering multiplier. The forgetting multiplier (0.5 here), a new card's first interval
-(1 day) and the longest interval (365 days) are this tool's choices; all four are settings.
+What Mochi does not publish, so the values here are this tool's and all are settings: the Remembered multiplier
+(1.8 here), the Forgot multiplier (0.5, the default two Mochi users report), the interval a card starts with
+(1 day), how much due dates are varied (about 5% of the interval), and the exact formula for overdue cards
+(here: the longer of the interval and the days actually waited, times the multiplier). Meeting a card before it
+is due moves nothing, which Mochi does not document either way.
 
-How cards come to exist here: a question becomes a card when you meet it at its checkpoint in the reader. Marked
-Correct there, it is scheduled for the first interval; marked Incorrect, it goes to re-review, due the same day;
-skipped, it is a new card. Questions of sections you have not read are never shown.
+How cards come to exist here: a question becomes a card when you meet it at its checkpoint in the reader, and
+your answer there is the card's first answer. Correct: it joins the schedule. Incorrect or skipped: it stays new.
+Questions of sections you have not read are never shown.
 
 One file per book, ``srs.json`` beside ``reading.json``:
 
     {"version": 1, "seen": <attempts of reading.json already taken in>,
-     "cards": {"c0007-p1": {"state": "learned", "interval": 3.24, "due": "2026-12-04", "again": false,
-                            "reviews": [{"at": "...", "remembered": true, "kind": "review", "interval": 3.24}]}}}
+     "cards": {"c0007-p1": {"state": "learned", "interval": 3.24, "due": "2026-12-04", "last": "2026-12-01",
+                            "again": false, "reviews": [{"at": "...", "remembered": true, "kind": "review",
+                                                         "interval": 3.24, "due": "2026-12-04"}]}}}
 """
 
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import json
+import random
 from pathlib import Path
 from typing import Any
 
 FILE = "srs.json"
 VERSION = 1
+RESET_INTERVAL = 1.0  # days, after a second miss in re-review (Mochi's changelog, v1.14.7)
+FUZZ_SHARE = 0.05  # of the interval, either way
+HARD_CAP = 3650.0  # days; a guard, not a setting
 DEFAULTS: dict[str, Any] = {
-    "remember_multiplier": 1.8,  # Mochi's documented default
+    "remember_multiplier": 1.8,
     "forget_multiplier": 0.5,
     "first_interval": 1.0,  # days
-    "max_interval": 365.0,  # days
-    "new_per_day": None,  # no limit
+    "max_interval": None,  # days; None: no longest interval
+    "new_per_day": None,  # None: no limit
+    "fuzz": True,  # vary due dates slightly
+    "same_day_first_review": True,  # a newly learned card is due the day it is learned
 }
 LIMITS = {"remember_multiplier": (1.1, 5.0), "forget_multiplier": (0.0, 1.0), "first_interval": (1.0, 30.0),
-          "max_interval": (7.0, 3650.0), "new_per_day": (0, 500)}
+          "max_interval": (7.0, HARD_CAP), "new_per_day": (0, 500)}
+OPTIONAL = ("max_interval", "new_per_day")
+_random = random.Random()
 
 
 def clean_settings(raw: Any) -> dict[str, Any]:
@@ -51,11 +67,16 @@ def clean_settings(raw: Any) -> dict[str, Any]:
         return out
     for key, (low, high) in LIMITS.items():
         value = raw.get(key)
-        if key == "new_per_day":
+        if key in OPTIONAL and value is None and key in raw:
+            out[key] = None
+        elif key == "new_per_day":
             if isinstance(value, int) and not isinstance(value, bool) and low <= value <= high:
                 out[key] = value
         elif isinstance(value, (int, float)) and not isinstance(value, bool) and low <= value <= high:
             out[key] = float(value)
+    for key in ("fuzz", "same_day_first_review"):
+        if isinstance(raw.get(key), bool):
+            out[key] = raw[key]
     return out
 
 
@@ -63,67 +84,84 @@ def day(date: _dt.date) -> str:
     return date.isoformat()
 
 
-def due_date(today: _dt.date, interval: float) -> str:
-    return day(today + _dt.timedelta(days=max(1, round(interval))))
+def due_date(today: _dt.date, interval: float, settings: dict[str, Any] | None = None,
+             rng: random.Random | None = None) -> str:
+    """The day a card with this interval comes back: whole days, at least one, varied slightly when asked."""
+    days = max(1, round(interval))
+    spread = round(interval * FUZZ_SHARE) if settings and settings.get("fuzz") else 0
+    if spread:
+        days = max(1, days + (rng or _random).randint(-spread, spread))
+    return day(today + _dt.timedelta(days=days))
 
 
 def _log(card: dict[str, Any], at: str, remembered: bool, kind: str, text: str = "") -> None:
-    entry = {"at": at, "remembered": remembered, "kind": kind, "interval": round(card["interval"], 2)}
+    entry = {"at": at, "remembered": remembered, "kind": kind, "interval": round(card["interval"], 2), "due": card["due"]}
     if text:
         entry["text"] = text[:4000]
     card["reviews"].append(entry)
 
 
 def new_card() -> dict[str, Any]:
-    return {"state": "new", "interval": 0.0, "due": None, "again": False, "reviews": []}
+    return {"state": "new", "interval": 0.0, "due": None, "last": None, "again": False, "reviews": []}
 
 
 def is_due(card: dict[str, Any], today: _dt.date) -> bool:
     return card["state"] == "learned" and (card["again"] or (card["due"] or "") <= day(today))
 
 
+def waited(card: dict[str, Any], today: _dt.date) -> int:
+    """Days since the card was last scheduled."""
+    try:
+        return max(0, (today - _dt.date.fromisoformat(card.get("last") or "")).days)
+    except ValueError:
+        return 0
+
+
 def answer(card: dict[str, Any], remembered: bool, today: _dt.date, settings: dict[str, Any], at: str,
-           kind: str = "review", text: str = "") -> dict[str, Any]:
+           kind: str = "review", text: str = "", rng: random.Random | None = None) -> dict[str, Any]:
     """Apply one answer to a card, in place, and return it."""
-    first, longest = settings["first_interval"], settings["max_interval"]
+    first = settings["first_interval"]
+    longest = min(HARD_CAP, settings["max_interval"] or HARD_CAP)
     if card["state"] == "new":
-        if remembered:  # the card joins the schedule
-            card.update(state="learned", interval=first, due=due_date(today, first), again=False)
-        _log(card, at, remembered, "new" if kind == "review" else kind, text)  # Forgot: postponed, still new
+        if remembered:  # the card joins the schedule, due for its first review the same day
+            due = day(today) if settings["same_day_first_review"] else due_date(today, first)
+            card.update(state="learned", interval=first, due=due, last=day(today), again=False)
+        _log(card, at, remembered, "new" if kind == "review" else kind, text)  # Forgot: it stays new
         return card
     if card["again"]:  # re-review of a card forgotten earlier
         if remembered:
-            card.update(again=False, due=due_date(today, card["interval"]))
-        else:
-            card.update(interval=first, due=day(today))  # forgotten twice: start again
+            card.update(again=False, due=due_date(today, card["interval"]), last=day(today))
+        else:  # forgotten twice: down to one day
+            card.update(interval=RESET_INTERVAL, due=day(today), last=day(today))
         _log(card, at, remembered, "rereview" if kind == "review" else kind, text)
         return card
     if not is_due(card, today):  # met early (rereading a section): nothing moves
         _log(card, at, remembered, "early", text)
         return card
-    if remembered:
-        card["interval"] = min(longest, max(card["interval"], first) * settings["remember_multiplier"])
-        card["due"] = due_date(today, card["interval"])
+    if remembered:  # an overdue card is credited with the time actually waited
+        base = max(card["interval"], float(waited(card, today)), first)
+        card["interval"] = min(longest, base * settings["remember_multiplier"])
+        card.update(due=due_date(today, card["interval"], settings, rng), last=day(today))
     else:
-        card["interval"] = max(first, card["interval"] * settings["forget_multiplier"])
-        card.update(again=True, due=day(today))
+        card["interval"] = max(RESET_INTERVAL, card["interval"] * settings["forget_multiplier"])
+        card.update(again=True, due=day(today), last=day(today))
     _log(card, at, remembered, kind, text)
     return card
 
 
 def preview(card: dict[str, Any], today: _dt.date, settings: dict[str, Any]) -> dict[str, str]:
-    """What each answer would do, in words, for the buttons."""
+    """What each answer would do, in words, for the buttons (without the slight variation of due dates)."""
     def words(c: dict[str, Any]) -> str:
         if c["state"] == "new":
             return "later"
-        if c["again"]:
-            return "again today"
         days = (_dt.date.fromisoformat(c["due"]) - today).days
+        if c["again"] or days <= 0:
+            return "again today"
         return "tomorrow" if days == 1 else f"in {days} days" if days < 60 else f"in {round(days / 30)} months"
     out = {}
     for name, remembered in (("remembered", True), ("forgot", False)):
         copy = {**card, "reviews": []}
-        out[name] = words(answer(copy, remembered, today, settings, ""))
+        out[name] = words(answer(copy, remembered, today, {**settings, "fuzz": False}, ""))
     return out
 
 
@@ -147,8 +185,9 @@ def take_in(store: dict[str, Any], reading_state: dict[str, Any] | None, setting
             today: _dt.date) -> bool:
     """Bring the book's cards up to date with what happened in the reader. Returns whether anything changed.
 
-    Each attempt of ``reading.json`` is taken in once, in order. The first attempt at a question makes its card;
-    later ones (the checkpoint met again on a reread) count as reviews, which move a card only when it is due.
+    Each attempt of ``reading.json`` is taken in once, in order. The first attempt at a question makes its card
+    and is its first answer; later ones (a retry after a reread, the checkpoint met again) are answers like any
+    other, which move a learned card only when it is due.
     """
     attempts = (reading_state or {}).get("x_attempts") or []
     fresh = attempts[store["seen"]:]
@@ -163,14 +202,7 @@ def take_in(store: dict[str, Any], reading_state: dict[str, Any] | None, setting
         card = store["cards"].get(pid)
         if card is None:
             card = store["cards"][pid] = new_card()
-            if grade == "correct":
-                card.update(state="learned", interval=settings["first_interval"],
-                            due=due_date(when, settings["first_interval"]))
-            elif grade == "incorrect":  # as a card forgotten once: re-review, due the same day
-                card.update(state="learned", interval=settings["first_interval"], due=day(when), again=True)
-            if grade != "skipped":
-                _log(card, str(a.get("at", "")), grade == "correct", "checkpoint", str(a.get("text") or ""))
-        elif grade != "skipped":
+        if grade != "skipped":
             answer(card, grade == "correct", when, settings, str(a.get("at", "")), "checkpoint", str(a.get("text") or ""))
     store["seen"] = len(attempts)
     return bool(fresh)
@@ -192,17 +224,42 @@ def counts(store: dict[str, Any], today: _dt.date, known: set[str] | None = None
             "next_count": upcoming.count(upcoming[0]) if upcoming else 0}
 
 
+def _shuffle(pid: str, today: _dt.date) -> str:
+    """A key that orders cards due the same day at random, the same way all day."""
+    return hashlib.sha256(f"{day(today)}:{pid}".encode()).hexdigest()
+
+
+def kind_of(card: dict[str, Any], today: _dt.date) -> str | None:
+    """Where a card stands today: ``due``, ``again`` (re-review), ``new``, ``later`` (a new card already forgotten
+    today, sent to the back), ``first`` (learned today and waiting for its same-day first review), or ``None``
+    when it is not to be shown."""
+    if card["state"] == "new":
+        return "later" if card["reviews"] and card["reviews"][-1]["at"][:10] == day(today) else "new"
+    if card["again"]:
+        return "again"
+    if (card["due"] or "") > day(today):
+        return None
+    return "first" if card.get("last") == day(today) else "due"
+
+
 def queue(store: dict[str, Any], today: _dt.date, order: dict[str, int], new_left: int | None) -> list[str]:
-    """Question ids to practise now: due cards (longest overdue first), then new ones up to the day's limit, then
-    the re-review queue with the card forgotten longest ago first. ``order`` gives reading order and drops cards
-    whose question is no longer in the book."""
+    """Question ids to practise now: due cards (most overdue first, the same day's in random order), then the
+    re-review queue (forgotten longest ago first), then new cards up to the day's limit, then the cards learned
+    today, for their same-day first review, and last the new cards already forgotten today. ``order`` gives
+    reading order and drops cards whose question is no longer in the book."""
+    groups: dict[str, list[str]] = {"due": [], "again": [], "new": [], "first": [], "later": []}
     cards = {pid: c for pid, c in store["cards"].items() if pid in order}
-    due = sorted((pid for pid, c in cards.items() if c["state"] == "learned" and not c["again"] and (c["due"] or "") <= day(today)),
-                 key=lambda pid: (cards[pid]["due"], order[pid]))
-    fresh = sorted((pid for pid, c in cards.items() if c["state"] == "new"),
-                   key=lambda pid: (len(cards[pid]["reviews"]), cards[pid]["reviews"][-1]["at"] if cards[pid]["reviews"] else "", order[pid]))
+    for pid, c in cards.items():
+        kind = kind_of(c, today)
+        if kind:
+            groups[kind].append(pid)
+    last_at = lambda pid: cards[pid]["reviews"][-1]["at"] if cards[pid]["reviews"] else ""  # noqa: E731
+    groups["due"].sort(key=lambda pid: (cards[pid]["due"], _shuffle(pid, today)))
+    groups["again"].sort(key=lambda pid: (last_at(pid), order[pid]))
+    groups["new"].sort(key=lambda pid: (len(cards[pid]["reviews"]), last_at(pid), order[pid]))
+    groups["first"].sort(key=lambda pid: _shuffle(pid, today))
+    groups["later"].sort(key=lambda pid: (last_at(pid), order[pid]))
     if new_left is not None:
-        fresh = fresh[:max(0, new_left)]
-    again = sorted((pid for pid, c in cards.items() if c["state"] == "learned" and c["again"]),
-                   key=lambda pid: (cards[pid]["reviews"][-1]["at"] if cards[pid]["reviews"] else "", order[pid]))
-    return due + fresh + again
+        groups["new"] = groups["new"][:max(0, new_left)]
+        groups["later"] = groups["later"][:max(0, new_left - len(groups["new"]))]
+    return groups["due"] + groups["again"] + groups["new"] + groups["first"] + groups["later"]

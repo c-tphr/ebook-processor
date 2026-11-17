@@ -130,7 +130,7 @@ class Jobs:
             self.get(only)
             raise ApiError(HTTPStatus.CONFLICT, "this book cannot be practised yet")
         total = {"due": 0, "again": 0, "new": 0, "cards": 0, "next_due": None, "next_count": 0}
-        stores, lists = {}, {"due": [], "new": [], "again": []}
+        stores, lists = {}, {"due": [], "new": [], "again": [], "first": [], "later": []}
         new_done = 0
         for job_id in ids:
             store = self.cards(job_id)
@@ -152,12 +152,16 @@ class Jobs:
                 total["next_due"] = c["next_due"]
             for pid in srs.queue(store, today, order, None):
                 card = store["cards"][pid]
-                kind = "new" if card["state"] == "new" else "again" if card["again"] else "due"
-                lists[kind].append((card["due"] or "", card["reviews"][-1]["at"] if card["reviews"] else "", job_id, pid))
+                kind = srs.kind_of(card, today)
+                key = srs._shuffle(pid, today) if kind in ("due", "first") else card["reviews"][-1]["at"] if card["reviews"] else ""
+                lists[kind].append((card["due"] or "", key, job_id, pid))
         limit = settings["new_per_day"]
-        fresh = lists["new"] if limit is None else lists["new"][:max(0, limit - new_done)]
-        total["new"] = len(fresh)
-        line = sorted(lists["due"]) + fresh + sorted(lists["again"], key=lambda t: t[1])
+        room = None if limit is None else max(0, limit - new_done)
+        fresh = lists["new"] if room is None else lists["new"][:room]
+        later = sorted(lists["later"], key=lambda t: t[1])
+        later = later if room is None else later[:max(0, room - len(fresh))]
+        total["new"] = len(fresh) + len(later)
+        line = sorted(lists["due"]) + sorted(lists["again"], key=lambda t: t[1]) + fresh + sorted(lists["first"], key=lambda t: t[1]) + later
         card = None
         if line:
             _, _, job_id, pid = line[0]
@@ -168,6 +172,7 @@ class Jobs:
             card = {"job": job_id, "id": pid, "book": manifest["title"], "chapter": chapter, "section": section["label"],
                     "question": prompt["prompt"], "answer": prompt["answer"], "passage": self.passage(job_id, pid),
                     "state": state["state"], "again": state["again"], "interval": round(state["interval"], 1),
+                    "first": srs.kind_of(state, today) == "first",
                     "times": len(state["reviews"]), "go": f"{section['chapter']}:{section['start']}",
                     "preview": srs.preview(state, today, settings)}
         return {"counts": total, "left": len(line), "card": card, "settings": settings, "today": srs.day(today)}

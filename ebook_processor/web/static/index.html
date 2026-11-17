@@ -485,7 +485,7 @@ async function showPractice(only) {
       h("div", { class: "head" }, h("span", { class: "m" }, [c.book, c.chapter, c.section !== c.chapter ? c.section : null].filter(Boolean).join(" / ")), h("span", { class: "m" }, tally)),
       h("h1", {}, c.question),
       !revealed ? [area, h("div", { class: "acts" }, h("button", { class: "primary", onclick: () => { revealed = true; draw(); } }, "Reveal answer", h("kbd", {}, "ctrl ↵")),
-          h("span", { class: "m mute" }, c.state === "new" ? "New card" : c.again ? "Forgotten earlier today" : `Interval ${c.interval} days`))]
+          h("span", { class: "m mute" }, c.state === "new" ? "New card" : c.again ? "Forgotten earlier today" : c.first ? "Learned today" : `Interval ${c.interval} days`))]
       : [h("div", { class: "two" }, h("div", {}, h("span", { class: "m" }, "Your recall"), h("p", {}, text || "Nothing typed.")), h("div", {}, h("span", { class: "m" }, "Reference answer"), h("p", {}, c.answer))),
         c.passage.length ? h("details", {}, h("summary", { class: "m", style: "margin-top:16px;cursor:pointer" }, "From the book"), h("div", { class: "passage" }, c.passage.map((t) => h("p", {}, t)))) : null,
         h("div", { class: "acts" },
@@ -497,20 +497,27 @@ async function showPractice(only) {
   }
   function drawSettings() {
     const s = data.settings;
+    const store = async (key, value) => {
+      try { data.settings = await api("/practice/settings", { method: "PUT", json: { ...s, [key]: value } }); await load(); } catch (err) { alert(err.message); }
+    };
     const field = (key, label, hint, step) => h("label", { class: "field" }, h("span", { class: "m" }, label),
-      h("input", { class: "num", type: "number", step, value: s[key] ?? "", placeholder: "none", onchange: async (e) => {
+      h("input", { class: "num", type: "number", step, value: s[key] ?? "", placeholder: "none", onchange: (e) => {
         const v = e.target.value.trim();
-        try { data.settings = await api("/practice/settings", { method: "PUT", json: { ...s, [key]: v === "" ? null : key === "new_per_day" ? parseInt(v, 10) : parseFloat(v) } }); await load(); }
-        catch (err) { alert(err.message); }
+        store(key, v === "" ? null : key === "new_per_day" ? parseInt(v, 10) : parseFloat(v));
       } }), h("small", {}, hint));
+    const toggle = (key, label, hint) => h("div", { class: "field" }, h("span", { class: "m" }, label),
+      h("div", { class: "filters", role: "group", style: "margin:0" }, [[true, "On"], [false, "Off"]].map(([v, t]) =>
+        h("button", { type: "button", "aria-pressed": String(s[key] === v), onclick: () => store(key, v) }, t))), h("small", {}, hint));
     put(tail, band("Schedule",
-      h("p", { class: "lede" }, "Each Remembered multiplies a card's interval; each Forgot shortens it and brings the card back the same day. Forgetting it again that day starts it over. A question becomes a card when you meet it at its checkpoint."),
+      h("p", { class: "lede" }, "Each Remembered multiplies a card's interval; each Forgot shortens it and brings the card back later in the session. Forgetting it again there drops it to one day. A question becomes a card when you meet it at its checkpoint, and joins the schedule the first time you remember it."),
       h("div", { class: "grid", style: "margin-top:8px" },
-        field("remember_multiplier", "Remembered multiplies by", "Mochi's default is 1.8.", "0.1"),
-        field("forget_multiplier", "Forgot multiplies by", "0.5 halves the interval.", "0.05"),
-        field("first_interval", "First interval, days", "After a card is first remembered.", "1"),
-        field("max_interval", "Longest interval, days", "No card waits longer than this.", "1"),
-        field("new_per_day", "New cards per day", "Questions you skipped at a checkpoint. Empty for no limit.", "1"))));
+        field("remember_multiplier", "Remembered multiplies by", "Higher spaces cards out faster.", "0.1"),
+        field("forget_multiplier", "Forgot multiplies by", "0.5 halves the interval; 0 starts the card over.", "0.05"),
+        field("first_interval", "Starting interval, days", "What a card begins with when it joins the schedule.", "1"),
+        field("max_interval", "Longest interval, days", "Empty for no longest interval.", "1"),
+        field("new_per_day", "New cards per day", "Questions you missed or skipped at a checkpoint. Empty for no limit.", "1"),
+        toggle("same_day_first_review", "First review the same day", "A card is due again on the day it is learned. Off: the day after."),
+        toggle("fuzz", "Vary due dates slightly", "Keeps cards learned together from always coming back together."))));
   }
   practiceKeys = (e) => {
     if (!data || !data.card) return;

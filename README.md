@@ -111,15 +111,30 @@ The strip at the bottom is the book: one block per section, with a square for ea
 
 ### Practice (spaced repetition)
 
-A question becomes a **card** when you meet it at its checkpoint. From then on it comes back in **Practice**, in the library for every book together or on a book's page for that book alone, on a schedule modelled on [Mochi](https://mochi.cards/docs/reviewing)'s default algorithm:
+A question becomes a **card** when you meet it at its checkpoint. From then on it comes back in **Practice**, in the library for every book together or on a book's page for that book alone, on a schedule that follows the default scheduler of [Mochi](https://mochi.cards/docs/reviewing):
 
 - There are two answers, **Remembered** and **Forgot**. Each button says when the card would come back.
-- Remembered multiplies the card's interval (by 1.8, Mochi's default).
-- Forgot shortens it (by half) without resetting it, and the card comes back **the same day**. Forget it again that day and it starts over at the first interval.
-- Marked Correct at its checkpoint, a card is first due the next day. Marked Incorrect, it is due the same day. A question you skipped is a **new** card: it joins the schedule the first time you remember it.
+- Remembered multiplies the card's interval. An overdue card is credited with the time it actually waited.
+- Forgot shortens the interval without resetting it and sends the card to the **re-review** queue, after the cards that are due. Remembered there, it keeps the shortened interval. Forgotten there again, it drops to one day.
+- A card **joins the schedule the first time you remember it**, at its checkpoint or in Practice, and is due for its first review the same day. Until then it is a **new** card: missed or skipped at its checkpoint, it stays new.
+- Due dates are varied slightly, so that cards learned together do not always come back together.
 - Meeting a card early, by rereading its section, changes its schedule only if it was due.
 
-Questions of sections you have not read never appear. You can type your recall before revealing the answer, open the supporting passage from the book, and jump to reread the section. The multipliers, the first and the longest interval and a daily limit on new cards are settings on the Practice page. Mochi's documentation gives the 1.8; the other defaults (0.5, 1 day, 365 days, no limit) are this tool's. Mochi's alternative scheduler, FSRS, is not included.
+A session shows the most overdue cards first (cards due the same day in random order), then re-reviews, then new cards, then the first reviews of cards learned that day. Questions of sections you have not read never appear. You can type your recall before revealing the answer, open the supporting passage from the book, and jump to reread the section.
+
+**Settings** are on the Practice page. Mochi documents the rules above but not its numbers, so the defaults are this tool's:
+
+| Setting | Default | Where the value comes from |
+| --- | --- | --- |
+| Remembered multiplies by | 1.8 | This tool's choice. Mochi does not publish its default |
+| Forgot multiplies by | 0.5 | Reported by two Mochi users as its default; not in Mochi's documentation |
+| Starting interval | 1 day | This tool's choice |
+| Longest interval | none | Mochi has the option; off unless set |
+| New cards per day | no limit | Mochi has the option; off unless set |
+| First review the same day | on | Mochi's rule since 2020; off makes it the day after |
+| Vary due dates slightly | on | Mochi's rule (on by default). The amount, about 5% of the interval, is this tool's |
+
+Two things Mochi's sources leave open are also this tool's choice: the formula for an overdue card (the longer of its interval and the days waited, times the multiplier), and that an early answer moves nothing. Mochi's alternative scheduler, FSRS, is not included.
 
 The Anki deck is still there for practising in Anki instead; the two do not share a schedule.
 

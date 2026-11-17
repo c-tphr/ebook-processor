@@ -436,6 +436,7 @@ class Handler(BaseHTTPRequestHandler):
     jobs: Jobs
     claude: dict[str, Any]
     models: list[dict[str, Any]]
+    pages: dict[str, bytes]
 
     def log_message(self, format: str, *args: Any) -> None:  # keep the terminal quiet
         return
@@ -450,6 +451,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def send_page(self, name: str) -> None:
+        """One of the app's own pages, as it was when the app started (see ``make_server``)."""
+        data = self.pages[name]
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
 
     def send_file(self, path: Path, download: bool = False) -> None:
         data = path.read_bytes()
@@ -528,10 +539,10 @@ class Handler(BaseHTTPRequestHandler):
     def route(self, method: str, parts: list[str], query: dict[str, list[str]]) -> None:
         jobs = self.jobs
         if method == "GET" and not parts:
-            return self.send_file(STATIC / "index.html")
+            return self.send_page("index.html")
         if method == "GET" and len(parts) == 2 and parts[0] == "read":
             jobs.get(parts[1])
-            return self.send_file(STATIC / "reader.html")
+            return self.send_page("reader.html")
         if not parts or parts[0] != "api":
             raise ApiError(HTTPStatus.NOT_FOUND, "not found")
         match (method, parts[1:]):
@@ -704,8 +715,12 @@ def make_server(data: Path, host: str = "127.0.0.1", port: int = 8765, backend_f
     claude = claude if claude is not None else claude_status()
     if models is None:
         models = ClaudeCodeBackend().list_models() if claude.get("ok") else []
+    # The pages are read once, now. A page and the server behind it then always come from the same version of
+    # the tool: updating the files while the app runs changes nothing until it is started again. Read on every
+    # request, a new page would be served by old code, and fail on whatever the new page asks for.
+    pages = {name: (STATIC / name).read_bytes() for name in ("index.html", "reader.html")}
     handler = type("BoundHandler", (Handler,), {"jobs": Jobs(data, backend_factory), "claude": claude,
-                                                "models": models})
+                                                "models": models, "pages": pages})
     server = ThreadingHTTPServer((host, port), handler)
     server.daemon_threads = True
     return server

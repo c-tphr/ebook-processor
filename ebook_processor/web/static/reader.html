@@ -253,11 +253,12 @@ function setPos(c, w, forward) {
   drawFoot(); save();
 }
 setInterval(() => {
+  if (!S) return;                     // the book did not load
   const playing = view && view.playing;
   if (document.visibilityState === "visible" && !cp && (playing || Date.now() - lastActive < 60000)) { S.x_stats.seconds[mode] += 5; save(); }
 }, 5000);
 for (const type of ["keydown", "pointerdown", "wheel", "scroll"]) addEventListener(type, () => { lastActive = Date.now(); }, { capture: true, passive: true });
-addEventListener("pagehide", () => save(true));
+addEventListener("pagehide", () => { if (S) save(true); });
 
 /* ---------- top, foot ---------- */
 function drawTop() {
@@ -910,7 +911,10 @@ addEventListener("keydown", (e) => {
 (async function init() {
   try {
     [book, S, settings, NB] = await Promise.all([api(`/jobs/${ID}/book`), api(`/jobs/${ID}/reading`), api("/settings").then((s) => ({ ...settings, ...s })), api(`/jobs/${ID}/notes`)]);
-  } catch (e) { return put(stage, h("p", { class: "empty" }, e.message, " ", h("a", { href: "/" }, "Back to the library"))); }
+  } catch (e) {
+    return put(stage, h("p", { class: "empty" }, "The book could not be opened: ", e.message, ". ",
+      e.message === "not found" ? "The app may have been updated while it was running: stop it and start it again. " : "", h("a", { href: "/" }, "Back to the library")));
+  }
   document.title = book.title; $("back").href = "/#/run/" + ID;
   applySettings();
   const want = new URLSearchParams(location.search);

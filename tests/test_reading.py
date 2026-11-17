@@ -188,3 +188,24 @@ def test_what_is_not_a_prepared_book_is_refused_and_settings_are_kept(app):
     assert app("GET", "/api/settings")[1] == {}
     assert app("PUT", "/api/settings", json_body={"size": 21, "face": "sans", "bad": {"x": 1}})[1] == {"size": 21, "face": "sans"}
     assert app("GET", "/api/settings")[1] == {"size": 21, "face": "sans"}
+
+
+def test_pages_are_the_ones_the_app_started_with(tmp_path, monkeypatch):
+    """Updating the files while the app runs must not put a new page in front of old code."""
+    from ebook_processor.web import server as web
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "index.html").write_text("<title>library, first version</title>", encoding="utf-8")
+    (static / "reader.html").write_text("<title>reader, first version</title>", encoding="utf-8")
+    monkeypatch.setattr(web, "STATIC", static)
+    server = web.make_server(tmp_path / "data", "127.0.0.1", 0, claude={"ok": True, "version": "test"}, models=[])
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        (static / "index.html").write_text("<title>library, second version</title>", encoding="utf-8")
+        with urllib.request.urlopen(base + "/", timeout=10) as response:
+            assert response.read() == b"<title>library, first version</title>"
+            assert response.headers["Content-Type"] == "text/html; charset=utf-8"
+    finally:
+        server.shutdown()
+        server.server_close()

@@ -94,6 +94,7 @@ def review_data(out_dir: Path) -> dict[str, Any]:
 
     book, _, state = _open_run(out_dir)
     titles = chapter_titles(book)
+    where = {b.ref: b for sd in book.spine for b in sd.blocks}
     by_section: dict[str, list[dict[str, Any]]] = {}
     for q in state["questions"]:
         by_section.setdefault(q["section"], []).append({
@@ -106,6 +107,7 @@ def review_data(out_dir: Path) -> dict[str, Any]:
         "book": state["source"], "stage": state["stage"],
         "sections": [{"id": s["id"], "label": s["label"], "chapter": titles.get(s["chapter_href"], s["chapter_href"]),
                       "first_paragraph": s["first_paragraph"], "last_paragraph": s["last_paragraph"],
+                      "words": where[s["last_paragraph"]].end - where[s["first_paragraph"]].start,
                       "natural_boundary": s["natural_boundary"], "boundary_note": s["boundary_note"],
                       "questions": by_section.get(s["id"], [])} for s in state["sections"]],
     }

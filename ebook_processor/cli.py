@@ -22,7 +22,7 @@ from .runner import Cancelled, PipelineError, default_out_dir, rebuild, run_book
 from .settings import CONTENT_MODES, DENSITIES, EFFORTS, KINDS, Settings, SettingsError, from_options
 
 EXIT_OK, EXIT_INPUT, EXIT_USAGE, EXIT_STOPPED = 0, 1, 2, 3
-COMMANDS = ("process", "rebuild", "serve", "models")
+COMMANDS = ("process", "rebuild", "serve", "models", "update")
 
 
 def add_run_options(p: argparse.ArgumentParser) -> None:
@@ -107,6 +107,15 @@ def make_parser() -> argparse.ArgumentParser:
                        description="List the models your Claude login can use, as Claude Code reports them. The "
                                    "first column is what --model and --checker-model take.")
     p.set_defaults(func=cmd_models)
+
+    p = sub.add_parser("update", help="update to the latest version and start the app again",
+                       description="Stop the app if it is running, fetch the latest 'main' into the git checkout "
+                                   "the tool is installed from, install it, and start the app again as it was "
+                                   "running. The checkout must be on 'main' with no uncommitted changes.")
+    p.add_argument("--no-serve", action="store_true", help="update only; do not start the app afterwards")
+    p.add_argument("--force", action="store_true",
+                   help="stop the app even while it is processing a book (the run can be continued afterwards)")
+    p.set_defaults(func=cmd_update)
     return parser
 
 
@@ -181,6 +190,15 @@ def cmd_models(args: argparse.Namespace) -> int:
         efforts = f"  [effort: {', '.join(m['efforts'])}]" if m["efforts"] else ""
         print(f"{m['value']:<{width}}  {m['name']}: {m['description']}{efforts}")
     return EXIT_OK
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    from . import update
+    try:
+        return update.update(serve=not args.no_serve, force=args.force)
+    except update.UpdateError as exc:
+        print(f"ebook-processor: {exc}", file=sys.stderr)
+        return EXIT_INPUT
 
 
 def main(argv: list[str] | None = None) -> int:

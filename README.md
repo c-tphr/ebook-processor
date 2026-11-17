@@ -43,6 +43,28 @@ Check that Claude Code is ready (run `claude` once and sign in with `/login` if 
 claude --version
 ```
 
+## Updating
+
+```bash
+ebook-processor update
+```
+
+This stops the app if it is running, fetches the latest `main` into the git checkout the tool was installed from, installs it, and starts the app again on the same port and data folder, in the terminal where you gave the command. With `--no-serve` it updates and stops there.
+
+- The checkout must be on `main` with no uncommitted changes to tracked files; otherwise nothing is touched and the message says what to do.
+- The app is not stopped while it is processing a book. Wait for the book, or give `--force`; the run continues afterwards with its Continue button.
+- The running app is found through a small record it keeps in `~/.ebook-processor/servers/` while it runs. An app started by a version from before this command existed has no record: stop it with Ctrl-C first.
+
+The first time, the command itself has to arrive by hand: stop the app, then
+
+```bash
+git -C path/to/ebook-processor pull
+```
+
+```bash
+python3 -m pip install -e path/to/ebook-processor
+```
+
 ## Use it from the command line
 
 ```bash
@@ -212,6 +234,7 @@ The tests never call Claude: `tests/scripted.py` is a stand-in that answers from
 | `ebook_processor/notes.py` | Highlights and notes, the notebook made from them, and its Markdown export |
 | `ebook_processor/srs.py` | The spaced-repetition scheduler and a book's cards |
 | `ebook_processor/reading.py` | A prepared EPUB as the reader needs it (clean chapter HTML with word positions, sections, search) and the saved reading state |
+| `ebook_processor/update.py` | `ebook-processor update`: find and stop the running app, fast-forward the checkout, install, start again |
 | `ebook_processor/web/` | The local web app: a standard-library HTTP server, the library page (`index.html`) and the reader (`reader.html`) |
 | `tests/data/` | A small made-up book with its expected results, broken prepared books the validator must reject, and Thomas Paine's *Essays* (Standard Ebooks, CC0) |
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import mimetypes
+import os
 import re
 import shutil
 import threading
@@ -437,6 +438,7 @@ class Handler(BaseHTTPRequestHandler):
     claude: dict[str, Any]
     models: list[dict[str, Any]]
     pages: dict[str, bytes]
+    shutdown_token: str | None = None
 
     def log_message(self, format: str, *args: Any) -> None:  # keep the terminal quiet
         return
@@ -580,6 +582,13 @@ class Handler(BaseHTTPRequestHandler):
                     raise ApiError(HTTPStatus.BAD_REQUEST, "no file was sent")
                 return self.send_json(jobs.summary(jobs.import_prepared((query.get("name") or ["book.epub"])[0], data)),
                                       HTTPStatus.CREATED)
+            case ("POST", ["shutdown"]):  # asked for by 'ebook-processor update', which holds the token
+                token = self.shutdown_token
+                if not token or self.headers.get("X-Shutdown-Token") != token:
+                    raise ApiError(HTTPStatus.FORBIDDEN, "stopping the app needs its token")
+                self.send_json({"stopping": True})
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+                return None
             case ("GET", ["practice"]):
                 return self.send_json(jobs.practice((query.get("job") or [None])[0]))
             case ("POST", ["practice", "answer"]):
@@ -710,7 +719,8 @@ def claude_status() -> dict[str, Any]:
 
 
 def make_server(data: Path, host: str = "127.0.0.1", port: int = 8765, backend_factory: Any = None,
-                claude: dict[str, Any] | None = None, models: list[dict[str, Any]] | None = None) -> ThreadingHTTPServer:
+                claude: dict[str, Any] | None = None, models: list[dict[str, Any]] | None = None,
+                shutdown_token: str | None = None) -> ThreadingHTTPServer:
     """``claude`` and ``models`` are asked of Claude Code once, when the app starts, unless given."""
     claude = claude if claude is not None else claude_status()
     if models is None:
@@ -720,21 +730,33 @@ def make_server(data: Path, host: str = "127.0.0.1", port: int = 8765, backend_f
     # request, a new page would be served by old code, and fail on whatever the new page asks for.
     pages = {name: (STATIC / name).read_bytes() for name in ("index.html", "reader.html")}
     handler = type("BoundHandler", (Handler,), {"jobs": Jobs(data, backend_factory), "claude": claude,
-                                                "models": models, "pages": pages})
+                                                "models": models, "pages": pages, "shutdown_token": shutdown_token})
     server = ThreadingHTTPServer((host, port), handler)
     server.daemon_threads = True
     return server
 
 
 def serve(data: Path, host: str, port: int, open_browser: bool) -> None:
-    server = make_server(data, host, port)
-    url = f"http://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{server.server_address[1]}/"
-    print(f"ebook-processor is running at {url}\nRuns are kept in {data}\nPress Ctrl-C to stop.")
+    from .. import update
+
+    try:
+        server = make_server(data, host, port)
+    except OSError as exc:
+        raise PipelineError(f"the app cannot listen on port {port} ({exc.strerror or exc}). Is it already running? "
+                            "Give --port to use another port.") from exc
+    port = server.server_address[1]
+    # A record of this app while it runs, so that 'ebook-processor update' can find it and ask it to stop.
+    record = update.write_record(host, port, data)
+    server.RequestHandlerClass.shutdown_token = record["token"]
+    url = f"http://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{port}/"
+    print(f"ebook-processor {__version__} is running at {url}\nRuns are kept in {data}\nPress Ctrl-C to stop.", flush=True)
     if open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:
         server.serve_forever()
+        print("Stopped on request.")
     except KeyboardInterrupt:
         print("\nStopping. Unfinished runs can be continued the next time.")
     finally:
         server.server_close()
+        update.remove_record(port, os.getpid())

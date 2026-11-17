@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/c-tphr/ebook-processor/ebook_processor/schema/questions.schema.json",
+  "title": "Questions of a processed book, version 1",
+  "description": "Book.questions.json: every kept question with its answer, where it comes from, the passage that supports it and the checker's verdict; the questions left out and why; the sections; the excluded text. Readers must ignore members they do not know, so that members can be added without a new version.",
+  "type": "object",
+  "required": ["format", "version", "generated", "tool", "run_id", "book", "settings", "sections", "questions", "left_out", "excluded"],
+  "properties": {
+    "format": { "const": "ebook-processor-questions" },
+    "version": { "const": 1 },
+    "generated": { "type": "string", "description": "UTC time the file was written, ISO 8601." },
+    "tool": {
+      "type": "object",
+      "required": ["name", "version", "instructions_version"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "instructions_version": { "type": "string", "description": "Version of the drafting and checking instructions the questions were written under." }
+      }
+    },
+    "run_id": { "type": "string", "description": "Identifies the run. A question id is stable within a run; a new run of the same book writes new questions under ids that may look the same." },
+    "book": {
+      "type": "object",
+      "required": ["title", "authors", "language", "source_file", "source_sha256", "words"],
+      "properties": {
+        "title": { "type": "string" },
+        "authors": { "type": "array", "items": { "type": "string" } },
+        "language": { "type": "string" },
+        "source_file": { "type": "string" },
+        "source_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "words": { "type": "integer" }
+      }
+    },
+    "settings": { "type": "object", "description": "The options of the run (ebook_processor/settings.py)." },
+    "sections": {
+      "description": "In reading order.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "order", "chapter_href", "chapter", "label", "first_paragraph", "last_paragraph", "word_count", "checkpoint", "natural_boundary"],
+        "properties": {
+          "id": { "$ref": "#/$defs/id" },
+          "order": { "type": "integer", "minimum": 1 },
+          "chapter_href": { "type": "string", "description": "The spine document, as the package (OPF) file names it." },
+          "chapter": { "type": "string", "description": "The document's name: its table-of-contents label, else its title, else its first heading." },
+          "label": { "type": "string" },
+          "first_paragraph": { "$ref": "#/$defs/paragraph" },
+          "last_paragraph": { "$ref": "#/$defs/paragraph" },
+          "word_count": { "type": "integer", "minimum": 1 },
+          "checkpoint": { "description": "The section's checkpoint id; null when it never had questions.", "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+          "natural_boundary": { "description": "The checker's verdict on the section's break; null when it was not judged.", "type": ["boolean", "null"] },
+          "boundary_note": { "type": "string" }
+        }
+      }
+    },
+    "questions": {
+      "description": "The kept questions, in reading order.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "order", "checkpoint", "section", "section_label", "chapter_href", "chapter", "question", "answer", "supporting_paragraphs", "passage", "status", "check", "tags"],
+        "properties": {
+          "id": { "$ref": "#/$defs/id", "description": "For example c0007-p2: question 2 of checkpoint c0007. The same id names the question in the prepared EPUB's rsvp/checkpoints.json." },
+          "order": { "type": "integer", "minimum": 1 },
+          "checkpoint": { "$ref": "#/$defs/id" },
+          "section": { "$ref": "#/$defs/id" },
+          "section_label": { "type": "string" },
+          "chapter_href": { "type": "string" },
+          "chapter": { "type": "string" },
+          "question": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "answer": { "type": "string", "minLength": 1, "maxLength": 600 },
+          "supporting_paragraphs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/paragraph" } },
+          "passage": {
+            "description": "The text of the supporting paragraphs, in the order cited.",
+            "type": "array",
+            "items": { "type": "object", "required": ["ref", "text"], "properties": { "ref": { "$ref": "#/$defs/paragraph" }, "text": { "type": "string" } } }
+          },
+          "status": { "enum": ["passed", "unchecked", "unverified"], "description": "passed: every criterion of the independent check is true. unchecked: checking was switched off. unverified: the checker's result for this question could not be used." },
+          "check": {
+            "type": "object",
+            "required": ["criteria", "citations", "evidence", "minor_note", "times_checked", "revisions"],
+            "properties": {
+              "criteria": { "type": "object", "additionalProperties": { "type": "boolean" }, "description": "supported_by_section, accepts_paraphrase, answerable_from_section, does_not_give_away_answer, stands_alone. Empty when not checked." },
+              "citations": { "type": "array", "items": { "$ref": "#/$defs/paragraph" }, "description": "The paragraphs the checker found the answer in." },
+              "evidence": { "type": "string" },
+              "minor_note": { "type": "string" },
+              "times_checked": { "type": "integer", "minimum": 0 },
+              "revisions": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "tags": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "left_out": {
+      "description": "Questions that are in none of the outputs.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "section", "question", "answer", "status", "reason", "problem", "failed_criteria", "history"],
+        "properties": {
+          "id": { "$ref": "#/$defs/id" },
+          "status": { "enum": ["failed", "withdrawn", "removed"] },
+          "reason": { "type": "string" },
+          "problem": { "type": "string", "description": "The checker's finding at the last check." },
+          "failed_criteria": { "type": "array", "items": { "type": "string" } },
+          "history": { "type": "array", "description": "Earlier wordings and why each failed." }
+        }
+      }
+    },
+    "excluded": {
+      "description": "Text in no section: front, back or editorial matter.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["chapter_href", "first_paragraph", "last_paragraph", "reason"],
+        "properties": {
+          "chapter_href": { "type": "string" },
+          "first_paragraph": { "$ref": "#/$defs/paragraph" },
+          "last_paragraph": { "$ref": "#/$defs/paragraph" },
+          "reason": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$" },
+    "paragraph": { "type": "string", "pattern": "^d[0-9]{2,}-p[0-9]{3,}$", "description": "Document and block number, for example d03-p011: block 11 of the third spine document." }
+  }
+}

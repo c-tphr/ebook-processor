@@ -541,7 +541,7 @@ async function showNotebook(id) {
     const typed = a.attempts.filter((t) => t.text).map((t) => t.text);
     return h("div", { class: "ans" },
       h("p", { class: "asked" }, h("span", { class: "hang" }, h("span", { class: a.first === "correct" ? "lab blue" : a.first ? "lab inv" : "lab" }, a.first === "correct" ? "Recalled" : a.first ? "Missed" : "Not graded")), a.question),
-      typed.map((t) => h("p", {}, h("span", { class: "hang m mute" }, "Mine"), t)), h("p", {}, h("span", { class: "hang m mute" }, "Answer"), a.answer));
+      typed.map((t) => h("p", {}, h("span", { class: "hang m mute" }, "Answered"), t)), h("p", {}, h("span", { class: "hang m mute" }, "Reference"), a.answer));
   }
   function section(c, s) {
     const empty = !s.note && !s.items.length && !s.answers.length;

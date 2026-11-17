@@ -236,8 +236,8 @@ def markdown(data: dict[str, Any], answers: bool = True) -> str:
                     part += [f"- **{a['question']}** ({grade})"]
                     typed = next((t["text"] for t in a["attempts"] if t["text"]), "")
                     if typed:
-                        part += ["  - Mine: " + typed.replace("\n", " ")]
-                    part += ["  - Answer: " + a["answer"].replace("\n", " ")]
+                        part += ["  - Answered: " + typed.replace("\n", " ")]
+                    part += ["  - Reference: " + a["answer"].replace("\n", " ")]
                 part += [""]
             if part:
                 single = len(c["sections"]) == 1 and s["label"] == c["title"]

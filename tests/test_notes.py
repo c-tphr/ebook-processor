@@ -92,7 +92,7 @@ def test_the_notebook_follows_the_book_and_the_export_leaves_out_what_is_empty(b
     md = notes.markdown(data)
     assert md.startswith("# The Lighthouse Keeper's Almanac\n\nMara Ellery Quill\n\nAbout the book.\n\n## The Lamp Room\n\n### Arrival at Gannet Rock\n\nMy summary.")
     assert "> " + store["highlights"][0]["text"] + "\n\nWhy *this* matters.\n\nA margin note\n" in md
-    assert "(missed)\n  - Mine: what I said\n  - Answer: " in md
+    assert "(missed)\n  - Answered: what I said\n  - Reference: " in md
     assert "Winding the Clockwork" not in md and "The Fog Season" not in md  # nothing marked there
     plain = notes.markdown(data, answers=False)
     assert "Checkpoint" not in plain and "My summary." in plain

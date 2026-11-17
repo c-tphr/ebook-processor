@@ -142,8 +142,10 @@ kbd { font: 11px/1 var(--mono); border: 1px solid currentColor; padding: 2px 4px
 .drawer input[type=text] { width: 100%; font: 16px/1.2 var(--grot); color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); padding: 10px 11px; border-radius: 0; }
 .toc a, .hits a { display: block; text-decoration: none; padding: 8px 0; border-bottom: 1px solid var(--ghost); cursor: pointer; }
 .toc a:hover, .hits a:hover { color: var(--blue); }
-.toc a.ch { font: 500 17px/1.25 var(--grot); letter-spacing: -0.02em; border-bottom-color: var(--ink); margin-top: 12px; }
-.toc a.se { padding-left: 14px; display: flex; justify-content: space-between; gap: 10px; } .toc a.cur { color: var(--blue); }
+.toc .ch, .toc .se { display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--ghost); } .toc .ch a, .toc .se a { flex: 1; border-bottom: 0; }
+.toc .ch { border-bottom-color: var(--ink); margin-top: 12px; } .toc .ch a { font: 500 17px/1.25 var(--grot); letter-spacing: -0.02em; }
+.toc .se { padding-left: 14px; } .toc .se.cur a { color: var(--blue); }
+.toc button.link { padding: 6px 0; font-size: 11px; flex: none; }
 .toc .sq { display: inline-flex; gap: 2px; align-items: center; flex: none; }
 .toc .sq i { width: 7px; height: 7px; box-shadow: inset 0 0 0 1px var(--mute); } .toc .sq i.ok { background: var(--blue); box-shadow: none; } .toc .sq i.no { background: var(--ink); box-shadow: none; }
 .hits a b { background: color-mix(in srgb, var(--blue) 22%, transparent); font-weight: inherit; }
@@ -344,7 +346,15 @@ async function render() {
   view = { page: pageView, scroll: scrollView, rsvp: rsvpView }[mode]();
   paint(); drawFoot();
 }
-const due = (s) => !PANE && s.prompts.length && !handled.has(s.id) && !(reread && reread.section.id === s.id);
+// A checkpoint is completed once every question of it has a grade. A completed one never opens by itself again;
+// one with questions skipped opens when its section is read through again, and then asks the skipped ones.
+const completed = (s) => s.prompts.length > 0 && s.prompts.every((p) => S.grades[p.id]);
+const unanswered = (s) => s.prompts.filter((p) => !S.grades[p.id]).length;
+const due = (s) => !PANE && s.prompts.length && !completed(s) && !handled.has(s.id) && !(reread && reread.section.id === s.id);
+function passed(s) {                  // the reader has been beyond the end of this section
+  const f = S.x_furthest;
+  return !!f && (chapterOrder(s.chapter) < chapterOrder(f.chapter) || (s.chapter === f.chapter && s.end <= f.word));
+}
 async function nextChapter(dir) {
   const i = chapterOrder(pos.chapter) + dir;
   if (i < 0 || i >= book.chapters.length) return false;
@@ -441,13 +451,15 @@ function scrollView() {
     (anchor.closest("[data-w]") || anchor).after(gate);
     gates.push({ s, gate, isReread });
   }
+  const left = (s) => { const n = unanswered(s); return `${n} question${n === 1 ? "" : "s"}`; };
   function drawGates() {
     let clip = null;
     for (const g of gates) {
       const open = g.isReread ? false : !due(g.s);
       if (g.isReread) put(g.gate, h("div", {}, h("span", { class: "m" }, "End of the section you are rereading"), h("b", {}, g.s.label)), h("button", { class: "primary", onclick: endReread }, "Return to the question"));
-      else if (open) put(g.gate, h("b", {}, `Checkpoint: ${g.s.prompts.filter((p) => S.grades[p.id]?.first === "correct").length} of ${g.s.prompts.length} recalled on the first try`), h("button", { class: "link", onclick: () => openCheckpoint(g.s) }, "Go through it again"));
-      else put(g.gate, h("div", {}, h("span", { class: "m" }, `Checkpoint / ${g.s.prompts.length} question${g.s.prompts.length === 1 ? "" : "s"}`), h("b", {}, g.s.label)), h("button", { class: "primary", onclick: () => openCheckpoint(g.s) }, "Begin"));
+      else if (open && completed(g.s)) put(g.gate, h("b", {}, `Checkpoint: ${g.s.prompts.filter((p) => S.grades[p.id]?.first === "correct").length} of ${g.s.prompts.length} recalled on the first try`), h("button", { class: "link", onclick: () => openCheckpoint(g.s, { all: true }) }, "Go through it again"));
+      else if (open) put(g.gate, h("b", {}, `Checkpoint skipped: ${left(g.s)} not answered`), h("button", { class: "link", onclick: () => openCheckpoint(g.s) }, "Answer now"));
+      else put(g.gate, h("div", {}, h("span", { class: "m" }, "Checkpoint / " + (unanswered(g.s) < g.s.prompts.length ? `${left(g.s)} left` : left(g.s))), h("b", {}, g.s.label)), h("button", { class: "primary", onclick: () => openCheckpoint(g.s) }, "Begin"));
       g.gate.classList.toggle("done", open);
       if (!open && !clip) clip = g.gate;
     }
@@ -596,12 +608,16 @@ function rsvpView() {
 /* ---------- checkpoints ---------- */
 function persistCp() {
   if (!cp || cp.review) return;
-  S.active_checkpoint = { id: cp.section.checkpoint, prompt_index: cp.index, resume: cp.resume };
+  S.active_checkpoint = { id: cp.section.checkpoint, prompt_index: cp.index, resume: cp.resume, ...(cp.all ? { x_all: true } : {}) };
   save(true);
 }
-function openCheckpoint(section, index = 0, resume = null) {
+// Opened by reading, a checkpoint asks the questions that have no grade yet. With `all` it asks every question:
+// that is "go through it again", which never changes a first grade. `index` names the question to begin at.
+function openCheckpoint(section, { index, resume = null, all = false } = {}) {
+  if (index === undefined) index = all ? 0 : section.prompts.findIndex((p) => !S.grades[p.id]);
+  if (index < 0 || index >= section.prompts.length) return;   // nothing left to ask
   if (view && view.stop) view.stop();
-  cp = { section, index, revealed: false, missed: false, text: "", resume: resume || { chapter: pos.chapter, word: mode === "rsvp" ? section.end : pos.word, mode } };
+  cp = { section, index, all, revealed: false, missed: false, text: "", resume: resume || { chapter: pos.chapter, word: mode === "rsvp" ? section.end : pos.word, mode } };
   persistCp(); drawCp();
 }
 function drawCp() {
@@ -616,7 +632,9 @@ function drawCp() {
     h("button", { class: "link", onclick: () => advance("skipped") }, "Skip question"),
     cp.review ? h("button", { class: "link", onclick: closeCp }, "Stop reviewing") : h("button", { class: "link", onclick: closeCp }, "Skip checkpoint"));
   let body;
-  if (!cp.revealed) body = [box, h("div", { class: "acts" }, h("button", { class: "primary", onclick: () => { cp.revealed = true; drawCp(); } }, "Reveal answer", h("kbd", {}, "ctrl ↵")), skips)];
+  const others = !cp.review && !cp.all && s.prompts.some((q) => q !== p && S.grades[q.id]);
+  if (!cp.revealed) body = [box, h("div", { class: "acts" }, h("button", { class: "primary", onclick: () => { cp.revealed = true; drawCp(); } }, "Reveal answer", h("kbd", {}, "ctrl ↵")), skips),
+    others ? h("p", { class: "note" }, "The questions of this checkpoint that you have already answered are not asked again.") : null];
   else if (cp.missed) body = [
     h("div", { class: "two" }, h("div", {}, h("span", { class: "m" }, "Your recall"), h("p", {}, cp.text || "Nothing typed.")), h("div", {}, h("span", { class: "m" }, "Reference answer"), h("p", {}, p.answer))),
     h("div", { class: "acts" },
@@ -642,7 +660,9 @@ function drawCp() {
     next();
   }
   function next() {
-    cp.index++; cp.revealed = false; cp.missed = false; cp.text = "";
+    cp.index++;
+    if (!cp.review && !cp.all) while (cp.index < total && S.grades[s.prompts[cp.index].id]) cp.index++;   // only what is not answered yet
+    cp.revealed = false; cp.missed = false; cp.text = "";
     if (cp.index >= total) return closeCp();
     persistCp(); drawCp();
   }
@@ -663,7 +683,7 @@ async function closeCp() {
 async function startReread(section, m) {
   const was = cp; cp = null; stage.querySelector(".cp")?.remove();
   reread = { section, held: was };
-  if (!was.review) { S.active_checkpoint = { id: section.checkpoint, prompt_index: was.index, resume: was.resume, reread: { mode: m, chapter: section.chapter, word: section.start } }; }
+  if (!was.review) { S.active_checkpoint = { id: section.checkpoint, prompt_index: was.index, resume: was.resume, ...(was.all ? { x_all: true } : {}), reread: { mode: m, chapter: section.chapter, word: section.start } }; }
   mode = m; pos = { chapter: section.chapter, word: section.start };
   await render(); save(true);
 }
@@ -675,7 +695,7 @@ async function endReread() {
   if (held.review) { await render(); cp = { ...held, revealed: false, missed: false, text: "" }; return drawCp(); }
   mode = held.resume.mode; pos = { chapter: held.resume.chapter, word: held.resume.word };
   await render();
-  cp = { section, index: held.index, revealed: false, missed: false, text: "", resume: held.resume };   // the same question, answer hidden
+  cp = { section, index: held.index, all: !!held.all, revealed: false, missed: false, text: "", resume: held.resume };   // the same question, answer hidden
   persistCp(); drawCp(); drawFoot();
 }
 
@@ -879,13 +899,22 @@ function closeDrawer() { $("drawer").classList.remove("on"); }
 $("d-close").onclick = closeDrawer;
 function contents() {
   const list = h("div", { class: "toc" });
+  // A row: the title, which goes there, and for a section its questions as squares and its checkpoint: to go
+  // through again, or to answer when it was skipped. Only for a section you have read.
+  const row = (cls, label, go, sec) => {
+    const again = !sec || PANE || !sec.prompts.length || !(completed(sec) || passed(sec)) ? null
+      : h("button", { class: "link", title: completed(sec) ? "Go through this checkpoint again" : "Answer the questions you skipped",
+          onclick: () => { closeDrawer(); openCheckpoint(sec, { all: completed(sec), resume: { chapter: pos.chapter, word: pos.word, mode } }); } }, completed(sec) ? "Again" : "Answer");
+    return h("div", { class: cls }, h("a", { onclick: go }, label),
+      sec ? h("span", { class: "sq" }, sec.prompts.map((p) => h("i", { class: S.grades[p.id] ? (S.grades[p.id].first === "correct" ? "ok" : "no") : "" }))) : null, again);
+  };
   for (const c of book.chapters) {
-    list.append(h("a", { class: "ch", onclick: () => jump(c.index, 0) }, c.title));
-    for (const s of sectionsIn(c.index)) {
-      if (s.label === c.title && sectionsIn(c.index).length === 1) continue;
-      const cur = c.index === pos.chapter && pos.word >= s.start && pos.word < s.end;
-      list.append(h("a", { class: "se" + (cur ? " cur" : ""), onclick: () => jump(s.chapter, s.start) }, h("span", {}, s.label),
-        h("span", { class: "sq" }, s.prompts.map((p) => h("i", { class: S.grades[p.id] ? (S.grades[p.id].first === "correct" ? "ok" : "no") : "" })))));
+    const sections = sectionsIn(c.index), only = sections.length === 1 && sections[0].label === c.title ? sections[0] : null;
+    list.append(row("ch", c.title, () => jump(c.index, 0), only));   // a chapter that is one section stands for it
+    if (only) continue;
+    for (const sec of sections) {
+      const cur = c.index === pos.chapter && pos.word >= sec.start && pos.word < sec.end;
+      list.append(row("se" + (cur ? " cur" : ""), sec.label, () => jump(sec.chapter, sec.start), sec));
     }
   }
   openDrawer("Contents", list);
@@ -991,13 +1020,13 @@ addEventListener("keydown", (e) => {
   if (go && chapterAt(+go[1])) { delete S.active_checkpoint; pos = { chapter: +go[1], word: +go[2] }; await render(); refreshPractice(); return setPos(pos.chapter, pos.word, false); }
   refreshPractice();
   if (section && active.reread) {      // closed during a reread: back into it, with the way back to the question intact
-    reread = { section, held: { index: active.prompt_index, resume: active.resume } };
+    reread = { section, held: { index: active.prompt_index, resume: active.resume, all: !!active.x_all } };
     mode = active.reread.mode; pos = { chapter: active.reread.chapter, word: active.reread.word };
     return render();
   }
   if (section) {                       // closed during a question: the same question, answer hidden
     mode = active.resume.mode; pos = { chapter: active.resume.chapter, word: active.resume.word };
-    await render(); return openCheckpoint(section, Math.min(active.prompt_index, section.prompts.length - 1), active.resume);
+    await render(); return openCheckpoint(section, { index: Math.min(active.prompt_index, section.prompts.length - 1), resume: active.resume, all: !!active.x_all });
   }
   delete S.active_checkpoint;
   await render();

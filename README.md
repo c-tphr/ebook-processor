@@ -155,7 +155,7 @@ At the end of each section the reader stops for its **checkpoint**, one question
 3. After Incorrect you can **reread the section** in any view and come back to the same question with the answer hidden, or continue.
 4. **Skip question** and **Skip checkpoint** grade nothing.
 
-Only your **first** grade for a question is kept: a Correct after a reread does not replace an earlier Incorrect. Jumping through the contents, the search or the map never sets off a checkpoint; reading through a section again does. Closing the window in the middle of a question or a reread brings you back to the same place.
+Only your **first** grade for a question is kept: a Correct after a reread does not replace an earlier Incorrect. A checkpoint is **completed** once every question of it has a grade, Correct or Incorrect. A completed checkpoint does not open by itself again when you go back and read its section once more. One you skipped, in whole or in part, does, and then asks only the questions you have not answered. Jumping through the contents, the search or the map never sets off a checkpoint. To go through a completed checkpoint again by choice, use **Again** beside its section in the contents, or the link at the section's end in the scroll view; **Answer** there takes up a skipped one. Going through one again never changes a first grade. Closing the window in the middle of a question or a reread brings you back to the same place.
 
 Also in the reader: contents by chapter and section, search, and footnotes that open in place. How the text is set (serif or grotesk, size, line spacing, column width) is in **Settings**, on the Reader tab.
 

@@ -304,6 +304,8 @@ def clean_state(raw: Any, sha256: str, known: set[str]) -> dict[str, Any]:
         if resume is not None:
             state["active_checkpoint"] = {"id": active["id"][:64], "prompt_index": max(0, active["prompt_index"]),
                                           "resume": resume}
+            if active.get("x_all") is True:  # "go through it again": every question is asked, also the answered ones
+                state["active_checkpoint"]["x_all"] = True
             reread = _position(active.get("reread"))
             if reread is not None:
                 state["active_checkpoint"]["reread"] = reread

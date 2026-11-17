@@ -97,6 +97,9 @@ def test_saved_state_keeps_what_is_well_formed_and_never_replaces_a_first_grade(
     assert list(state["grades"]) == ["c0001-p1"] and len(state["x_attempts"]) == 1 and state["x_attempts"][0]["text"] == "my words"
     assert state["x_stats"]["seconds"] == {"page": 12.0, "scroll": 0, "rsvp": 0} and "anything" not in state
     assert state["active_checkpoint"]["reread"] == {"chapter": 2, "word": 0, "mode": "scroll"}
+    assert "x_all" not in state["active_checkpoint"]
+    again = reading.clean_state({**raw, "active_checkpoint": {**raw["active_checkpoint"], "x_all": True}}, "ab" * 32, known)
+    assert again["active_checkpoint"]["x_all"] is True  # a checkpoint being gone through again asks every question
     later = reading.clean_state({**raw, "grades": {"c0001-p1": {"first": "correct", "at": "2026-12-02T10:00:00"}}}, "ab" * 32, known)
     merged = reading.merge_state(state, later)
     assert merged["grades"]["c0001-p1"] == {"first": "incorrect", "at": "2026-12-01T10:00:00"}  # written once

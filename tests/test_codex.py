@@ -42,7 +42,22 @@ if args == ["--version"]:
 if args == ["login", "status"]:
     print("Logged in using ChatGPT" if plan["logged_in"] else "Not logged in", file=sys.stderr); sys.exit(0 if plan["logged_in"] else 1)
 if args[:2] == ["debug", "models"]:
+    if plan["catalogue"] is None:
+        print("error: unrecognized subcommand 'models'", file=sys.stderr); sys.exit(2)
     print(json.dumps(plan["catalogue"])); sys.exit(0)
+if args == ["app-server"]:              # one JSON message per line, as Codex's own apps speak to it
+    if plan["app_server"] is None:
+        print("error: unrecognized subcommand 'app-server'", file=sys.stderr); sys.exit(2)
+    print(json.dumps({"method": "configWarning", "params": {"summary": "a notice, not a reply"}}), flush=True)
+    for line in sys.stdin:
+        message = json.loads(line)
+        if message.get("method") == "initialize":
+            print(json.dumps({"id": message["id"], "result": {"userAgent": "fake"}}), flush=True)
+        elif message.get("method") == "model/list":
+            pages = plan["app_server"]
+            at = int(message["params"].get("cursor") or 0)
+            print(json.dumps({"id": message["id"], "result": {"data": pages[at], "nextCursor": str(at + 1) if at + 1 < len(pages) else None}}), flush=True)
+    sys.exit(0)
 assert args[0] == "exec" and args[-1] == "-", args
 value = lambda flag: args[args.index(flag) + 1]
 config = dict(a.split("=", 1) for a in args if "=" in a and args[args.index(a) - 1] == "-c")
@@ -69,12 +84,15 @@ say({"type": "turn.completed", "usage": {"input_tokens": 1200, "cached_input_tok
 '''
 
 
-def fake_codex(tmp_path: Path, steps: list[dict] | None = None, logged_in: bool = True) -> tuple[str, Path]:
+def fake_codex(tmp_path: Path, steps: list[dict] | None = None, logged_in: bool = True, catalogue: dict | None = CATALOGUE,
+               app_server: list | None = None) -> tuple[str, Path]:
     """The stand-in program and the file it lists its ``exec`` calls in. Call n is answered by step n (the last
-    step again when there are more calls): ``answer``, ``fail`` (a failed turn), ``notices`` (error events)."""
+    step again when there are more calls): ``answer``, ``fail`` (a failed turn), ``notices`` (error events).
+    ``app_server`` holds the pages of models its app server gives; ``None`` is a Codex without that command, and
+    ``catalogue=None`` one without ``debug models``."""
     folder = tmp_path / "fake-codex"
     folder.mkdir(exist_ok=True)
-    (folder / "plan.json").write_text(json.dumps({"logged_in": logged_in, "catalogue": CATALOGUE,
+    (folder / "plan.json").write_text(json.dumps({"logged_in": logged_in, "catalogue": catalogue, "app_server": app_server,
                                                   "steps": steps or [{"answer": {"ranges": []}}]}), encoding="utf-8")
     script = folder / "codex"
     script.write_text(FAKE.replace("{python}", sys.executable), encoding="utf-8")
@@ -224,8 +242,38 @@ def test_the_models_are_read_from_codexs_catalogue(tmp_path):
     both = available_models(Claude(), CodexBackend(executable=exe))
     assert [(m["provider"], m["value"]) for m in both] == [("claude", "default"), ("codex", "codex"),
                                                            ("codex", "codex:gpt-6.1-sol"), ("codex", "codex:gpt-old")]
-    assert both[1]["efforts"] == ["low", "high"]  # Codex's default: only the levels every model takes
+    assert both[1]["efforts"] == ["low", "high"]  # Codex's default, not named by the catalogue: the levels every model takes
+    assert both[1]["name"] == "Codex's default"
     assert available_models(Claude(), None) == [{**Claude().list_models()[0], "provider": "claude"}]
+
+
+def test_the_models_come_from_codexs_app_server_when_it_has_one(tmp_path):
+    pages = [[{"id": "gpt-6.1-sol", "model": "gpt-6.1-sol", "displayName": "GPT-6.1-Sol", "description": "Workhorse.", "isDefault": True,
+               "hidden": False, "supportedReasoningEfforts": [{"reasoningEffort": "low"}, {"reasoningEffort": "ultra"}]},
+              {"id": "secret", "model": "secret", "hidden": True}],
+             [{"id": "gpt-6-luna", "model": "gpt-6-luna", "displayName": "GPT-6-Luna", "supportedReasoningEfforts": []}]]
+    exe, _ = fake_codex(tmp_path, app_server=pages, catalogue=None)  # this Codex has no "debug models"
+    backend = CodexBackend(executable=exe)
+    listed = backend.list_models()
+    assert listed == [{"value": "gpt-6.1-sol", "name": "GPT-6.1-Sol", "description": "Workhorse.", "resolved": "gpt-6.1-sol",
+                       "efforts": ["low", "ultra"], "default": True},
+                      {"value": "gpt-6-luna", "name": "GPT-6-Luna", "description": "", "resolved": "gpt-6-luna", "efforts": []}]
+    assert backend.models_note == ""
+    default = available_models(None, backend)[0]  # Codex's default is named, with that model's own effort levels
+    assert (default["value"], default["name"], default["efforts"]) == ("codex", "Codex's default (GPT-6.1-Sol)", ["low", "ultra"])
+
+
+def test_a_codex_that_lists_nothing_says_why_and_still_offers_its_default(tmp_path, monkeypatch, capsys):
+    exe, _ = fake_codex(tmp_path, catalogue=None)  # neither source answers
+    backend = CodexBackend(executable=exe)
+    assert backend.list_models() == []
+    assert "app server: it stopped before replying to initialize" in backend.models_note
+    assert "catalogue: error: unrecognized subcommand 'models'" in backend.models_note
+    assert [m["value"] for m in available_models(None, backend)] == ["codex"]
+    monkeypatch.setenv("PATH", str(Path(exe).parent))
+    assert cli.main(["models"]) == 0
+    said = capsys.readouterr()
+    assert "its models could not be listed" in said.err and "--model codex:NAME" in said.err and "  codex " in said.out
 
 
 def test_the_command_line_lists_both_tools_models(tmp_path, monkeypatch, capsys):

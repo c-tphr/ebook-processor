@@ -263,6 +263,8 @@ ebook-processor Book.epub --model codex:gpt-6.1-sol --checker-model opus
 
 A tool is only needed when a setting names it. The reasoning effort is one setting for both models; the app offers the levels both accept.
 
+Codex's models are asked of Codex itself when the app starts: first of its app server, which is what Codex's own apps ask, then of its catalogue (`codex debug models`). When neither answers, the app says so in its terminal and in Settings, and `ebook-processor models` prints what each replied. The Model fields then still offer Codex's default and **Another Codex model**, where a name can be typed; that entry is always there, for a model too new to be listed.
+
 Codex is a coding agent and cannot be run with no tools at all, so a call to it is kept as close to a plain question as its options allow: this tool's instructions replace Codex's own, the sandbox is read-only, the working folder is an empty temporary one, your Codex settings, rules and project `AGENTS.md` files are left out, and the session is not kept. One thing cannot be switched off: a personal `AGENTS.md` in your Codex home folder (`~/.codex/AGENTS.md`) is still shown to the model. Codex reports no price, so the report's list-price figure covers the Claude Code calls only.
 
 ## Things to know

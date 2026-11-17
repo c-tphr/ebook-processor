@@ -189,6 +189,9 @@ def cmd_models(args: argparse.Namespace) -> int:
         except BackendUnavailable as exc:
             missing.append(f"{PROVIDERS[provider]}: {exc}")
     models = available_models(ready.get("claude"), ready.get("codex"))
+    if "codex" in ready and ready["codex"].models_note:
+        missing.append(f"Codex is ready, but its models could not be listed ({ready['codex'].models_note}). Any "
+                       "model can still be named: --model codex:NAME")
     if not models:
         print("ebook-processor: no models to list.\n" + "\n".join(missing) if missing else
               "ebook-processor: Claude Code did not report its models (is it signed in and up to date?)", file=sys.stderr)

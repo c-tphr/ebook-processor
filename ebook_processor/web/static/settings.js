@@ -107,13 +107,30 @@ function processing(inf, initial, onchange) {
   const defaultModel = ofClaude.find((m) => m.value === "default"), named = ofClaude.filter((m) => m.value !== "default");
   const claudeDefault = defaultModel ? `Claude Code's default (${defaultModel.description})` : "Claude Code's default";
   const modelHint = el("span", {}, models.length ? "" : "A Claude Code model (opus, sonnet, or a full name), or a Codex one with codex: before it (codex:gpt-6.1-sol).");
-  // `lead` options stand before the groups; `first` ones open the Claude Code group.
+  // `lead` options stand before the groups; `first` ones open the Claude Code group. The Codex group ends with
+  // a way to name a model that is not in Codex's list (a new one, or all of them when the list could not be read).
+  const OTHER = "codex:?";
   const modelSelect = (key, lead, first, value) => {
     const option = ([val, t]) => el("option", { value: val }, t);
     const claude = [...first, ...named.map((m) => [m.value, m.name])].map(option), codex = ofCodex.map((m) => option([m.value, m.name]));
-    const s = el("select", { onchange: () => { sync(true); fire(key); } }, lead.map(option),
-      codex.length ? [el("optgroup", { label: "Claude Code" }, claude), el("optgroup", { label: "Codex" }, codex)] : claude);
+    const other = option([OTHER, "Another Codex model…"]);
+    let last = "";
+    const s = el("select", { onchange: () => {
+      if (s.value === OTHER) {
+        const name = (prompt("The model's name as Codex knows it, for example gpt-6.1-sol:") || "").trim().replace(/^codex:/i, "");
+        if (!name) { s.value = last; return; }
+        s.have("codex:" + name); s.value = "codex:" + name;
+      }
+      last = s.value; sync(true); fire(key);
+    } }, lead.map(option),
+      codex.length ? [el("optgroup", { label: "Claude Code" }, claude), el("optgroup", { label: "Codex" }, codex, other)] : claude);
+    s.have = (val) => {                 // a Codex model that is not listed gets an option of its own
+      if (!codex.length || !/^codex:.+/.test(val) || val === OTHER || [...s.options].some((o) => o.value === val)) return;
+      other.before(option([val, val.slice(6)]));
+    };
+    s.have(String(value));
     s.value = String(value); if (s.selectedIndex < 0) s.selectedIndex = 0;
+    last = s.value;
     return s;
   };
   const checkerHint = el("span", {}), effortHint = el("span", {});
@@ -139,8 +156,9 @@ function processing(inf, initial, onchange) {
     const pick = (value) => (value && value !== "claude" ? models.find((m) => m.value === value) : defaultModel);
     const drafting = pick(c.model.value), checking = c.checker_model.value ? pick(c.checker_model.value) : drafting;
     const about = (m) => (m ? [m.description, m.resolved && m.resolved !== m.value ? m.resolved : ""].filter(Boolean).join(" / ") : "");
-    modelHint.textContent = c.model.value ? about(drafting) : "Drafts and revises the questions.";
-    checkerHint.textContent = c.checker_model.value ? about(checking) : "Checks them, in a separate session.";
+    const unlisted = "Not in Codex's list. The name is passed to Codex as it is.";
+    modelHint.textContent = c.model.value ? (drafting ? about(drafting) : unlisted) : "Drafts and revises the questions.";
+    checkerHint.textContent = c.checker_model.value ? (pick(c.checker_model.value) ? about(checking) : unlisted) : "Checks them, in a separate session.";
     // effort is one setting for the whole run, so offer only the levels both models take
     const levels = (drafting?.efforts || []).filter((e) => e in EFFORT && (checking?.efforts || []).includes(e));
     const was = c.effort.value, keep = levels.includes(was) ? was : "";
@@ -160,6 +178,7 @@ function processing(inf, initial, onchange) {
     if (value == null) value = { density: "medium", model: "", checker_model: "", effort: "", epubcheck: false }[key] ?? d[key];
     if (key === "density") { const box = density.querySelector(`input[value="${value}"]`); if (box) box.checked = true; return; }
     if (!c[key]) return;
+    if (c[key].have) c[key].have(String(value));
     c[key].value = key === "epubcheck" ? (value ? "1" : "") : String(value);
     if (c[key].tagName === "SELECT" && c[key].selectedIndex < 0) c[key].selectedIndex = 0;
     if (key === "model" || key === "checker_model") sync(false);
@@ -253,7 +272,8 @@ const DRAW = {
     const about = el("div", {});
     info().then((i) => about.replaceChildren(kv("Version", i.version || "unknown"), kv("Books are kept in", i.data || "unknown"),
       kv("Claude Code", i.claude && i.claude.ok ? i.claude.version.replace(/\s*\(.*/, "") + " / ready" : "not ready"),
-      kv("Codex", !i.codex || !i.codex.installed ? "not installed" : i.codex.ok ? i.codex.version.replace(/^codex-cli\s*/, "") + " / ready" : "not signed in")), () => {});
+      kv("Codex", !i.codex || !i.codex.installed ? "not installed" : !i.codex.ok ? "not signed in"
+        : i.codex.version.replace(/^codex-cli\s*/, "") + " / ready" + (i.codex.models_note ? " / its models could not be listed" : ""))), () => {});
     return [el("h3", {}, "General"),
       row("Colours", choice("theme", [["system", "As the system"], ["light", "Light"], ["dark", "Dark"]]), "For every page of the app."),
       el("h4", {}, "About"), about];

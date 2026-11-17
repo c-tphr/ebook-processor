@@ -805,8 +805,10 @@ def make_server(data: Path, host: str = "127.0.0.1", port: int = 8765, backend_f
     if codex is None:  # a caller that gives the models has said what there is: Codex is not looked for
         codex = codex_status() if models is None else {"ok": False, "installed": False, "error": "not looked for"}
     if models is None:
-        models = available_models(ClaudeCodeBackend() if claude.get("ok") else None,
-                                  CodexBackend() if codex.get("ok") else None)
+        asked = CodexBackend() if codex.get("ok") else None
+        models = available_models(ClaudeCodeBackend() if claude.get("ok") else None, asked)
+        if asked and asked.models_note:  # Codex is ready but would not say which models it has
+            codex = {**codex, "models_note": asked.models_note}
     # The pages are read once, now. A page and the server behind it then always come from the same version of
     # the tool: updating the files while the app runs changes nothing until it is started again. Read on every
     # request, a new page would be served by old code, and fail on whatever the new page asks for.
@@ -832,6 +834,10 @@ def serve(data: Path, host: str, port: int, open_browser: bool) -> None:
     server.RequestHandlerClass.shutdown_token = record["token"]
     url = f"http://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{port}/"
     print(f"ebook-processor {__version__} is running at {url}\nRuns are kept in {data}\nPress Ctrl-C to stop.", flush=True)
+    note = server.RequestHandlerClass.codex.get("models_note")
+    if note:
+        print(f"Codex is ready, but its models could not be listed ({note}). The Model fields offer Codex's default "
+              "and 'Another Codex model', where a name can be typed.", flush=True)
     if open_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:

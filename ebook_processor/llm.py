@@ -15,10 +15,12 @@ also where a backend that calls an API directly would go.
 from __future__ import annotations
 
 import json
+import queue
 import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -286,6 +288,7 @@ class CodexBackend:
     retries: int = 3  # further attempts after a failure that looks temporary
     backoff: tuple[float, ...] = (15.0, 60.0, 180.0)
     sleep: Callable[[float], None] = field(default=time.sleep, repr=False)
+    models_note: str = field(default="", repr=False)  # why ``list_models`` last came back empty
 
     def check_available(self) -> str:
         """Codex's version, or ``BackendUnavailable`` with what to do."""
@@ -307,18 +310,107 @@ class CodexBackend:
         return version.stdout.strip() or "unknown version"
 
     def list_models(self, timeout: float = 30.0) -> list[dict[str, Any]]:
-        """The models Codex offers, from its own catalogue (``codex debug models``). No model is called.
+        """The models Codex offers. No model is called.
 
-        Entries have the shape of ``ClaudeCodeBackend.list_models``; ``value`` is the bare model name. The
-        catalogue is first asked for as Codex refreshes it, then as shipped with the program. Returns an empty
-        list when Codex cannot say.
+        Entries have the shape of ``ClaudeCodeBackend.list_models``; ``value`` is the bare model name, and the
+        model Codex uses when none is named has ``"default": True`` when Codex says which it is. Two sources are
+        tried, because Codex versions differ in what they have: its app server, which is what Codex's own apps
+        ask (``model/list``), then its catalogue (``codex debug models``). Returns an empty list when neither
+        answers; ``models_note`` then says what each replied.
         """
-        for extra in ([], ["--bundled"]):
+        notes = []
+        for name, source in (("app server", self._models_from_app_server), ("catalogue", self._models_from_catalogue)):
             try:
-                proc = subprocess.run([self.executable, "debug", "models", *extra], capture_output=True, text=True,
-                                      encoding="utf-8", timeout=timeout)
+                found = source(timeout)
+            except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                notes.append(f"{name}: {str(exc).strip()[:300] or type(exc).__name__}")
+                continue
+            if found:
+                self.models_note = ""
+                return found
+            notes.append(f"{name}: no models in the reply")
+        self.models_note = "; ".join(notes)
+        return []
+
+    def _models_from_app_server(self, timeout: float) -> list[dict[str, Any]]:
+        """Ask ``codex app-server`` over its standard input and output: one JSON message per line."""
+        proc = subprocess.Popen([self.executable, "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
+        lines: queue.Queue[str | None] = queue.Queue()
+
+        def read() -> None:
+            for line in proc.stdout or []:
+                lines.put(line)
+            lines.put(None)
+
+        threading.Thread(target=read, daemon=True).start()
+        deadline = time.monotonic() + timeout
+
+        def ask(request_id: int, method: str, params: dict[str, Any]) -> dict[str, Any]:
+            assert proc.stdin is not None
+            proc.stdin.write(json.dumps({"id": request_id, "method": method, "params": params}) + "\n")
+            proc.stdin.flush()
+            while True:  # notifications come in between; the reply is the message with our id
+                try:
+                    line = lines.get(timeout=max(0.1, deadline - time.monotonic()))
+                except queue.Empty:
+                    raise ValueError(f"no reply to {method} within {int(timeout)} seconds") from None
+                if line is None:
+                    raise ValueError(f"it stopped before replying to {method}")
+                try:
+                    message = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(message, dict) and message.get("id") == request_id and "method" not in message:
+                    if not isinstance(message.get("result"), dict):
+                        raise ValueError(f"{method} was refused: {json.dumps(message.get('error'))[:200]}")
+                    return message["result"]
+
+        try:
+            from . import __version__
+            ask(0, "initialize", {"clientInfo": {"name": "ebook-processor", "title": "ebook-processor", "version": __version__}})
+            assert proc.stdin is not None
+            proc.stdin.write(json.dumps({"method": "initialized"}) + "\n")
+            found, cursor = [], None
+            for page in range(1, 21):  # the list comes in pages
+                result = ask(page, "model/list", {"cursor": cursor} if cursor else {})
+                found += [m for m in result.get("data") or [] if isinstance(m, dict)]
+                cursor = result.get("nextCursor")
+                if not cursor:
+                    break
+        finally:
+            for close in (lambda: proc.stdin and proc.stdin.close(), proc.terminate):
+                try:
+                    close()
+                except OSError:
+                    pass
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        out = []
+        for m in found:
+            name = m.get("model") or m.get("id")
+            if not isinstance(name, str) or not name or m.get("hidden"):
+                continue
+            entry = {"value": name, "name": str(m.get("displayName") or name), "description": str(m.get("description") or ""),
+                     "resolved": name, "efforts": [str(e["reasoningEffort"]) for e in m.get("supportedReasoningEfforts") or []
+                                                   if isinstance(e, dict) and e.get("reasoningEffort")]}
+            if m.get("isDefault"):
+                entry["default"] = True
+            out.append(entry)
+        return out
+
+    def _models_from_catalogue(self, timeout: float) -> list[dict[str, Any]]:
+        """``codex debug models``: first as Codex refreshes it, then as shipped with the program."""
+        said = ""
+        for extra in ([], ["--bundled"]):
+            proc = subprocess.run([self.executable, "debug", "models", *extra], capture_output=True, text=True,
+                                  encoding="utf-8", timeout=timeout)
+            try:
                 catalogue = json.loads(proc.stdout).get("models")
-            except (OSError, subprocess.TimeoutExpired, ValueError, AttributeError):
+            except (ValueError, AttributeError):
+                said = (proc.stderr or proc.stdout or "").strip()[-300:] or f"exit status {proc.returncode}"
                 continue
             found = [m for m in catalogue or [] if isinstance(m, dict) and isinstance(m.get("slug"), str)
                      and m["slug"] and m.get("visibility", "list") == "list"]
@@ -329,6 +421,8 @@ class CodexBackend:
                      "description": str(m.get("description") or ""), "resolved": m["slug"],
                      "efforts": [str(level["effort"]) for level in m.get("supported_reasoning_levels") or []
                                  if isinstance(level, dict) and level.get("effort")]} for m in found]
+        if said:
+            raise ValueError(said)
         return []
 
     def command(self, system_file: Path, schema_file: Path, answer_file: Path, model: str | None,
@@ -445,13 +539,17 @@ class Backends:
 
 def available_models(claude: ClaudeCodeBackend | None, codex: CodexBackend | None) -> list[dict[str, Any]]:
     """The models to choose from, of the tools given. ``value`` is what a model setting takes, ``provider`` the
-    tool it belongs to. Codex's come after an entry for Codex's own default."""
+    tool it belongs to. Codex's come after an entry for Codex's own default, which names the model when Codex
+    says which it is."""
     out = [{**m, "provider": "claude"} for m in (claude.list_models() if claude else [])]
     listed = codex.list_models() if codex else []
     if codex:
+        chosen = next((m for m in listed if m.get("default")), None)
         shared = [e for e in (listed[0]["efforts"] if listed else []) if all(e in m["efforts"] for m in listed)]
-        out.append({"value": "codex", "name": "Codex's default", "description": "the model Codex itself chooses",
-                    "resolved": "", "efforts": shared, "provider": "codex"})
+        out.append({"value": "codex", "name": f"Codex's default ({chosen['name']})" if chosen else "Codex's default",
+                    "description": chosen["description"] if chosen else "the model Codex itself chooses",
+                    "resolved": chosen["resolved"] if chosen else "",
+                    "efforts": chosen["efforts"] if chosen else shared, "provider": "codex"})
     out += [{**m, "value": f"codex:{m['value']}", "provider": "codex"} for m in listed]
     return out
 

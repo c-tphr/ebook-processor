@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from .. import __version__, reading, srs
+from .. import __version__, notes, reading, srs
 from ..llm import BackendError, ClaudeCodeBackend, UsageLimitError
 from ..outputs import load_report, stem_of
 from ..pipeline import now, write_json
@@ -98,6 +98,9 @@ class Jobs:
         out["can_read"] = job["status"] == "done" and self.prepared(job["id"]).is_file()
         out["reading"] = reading.summary(reading.load_state(self.folder(job["id"]))) if out["can_read"] else None
         out["practice"] = srs.counts(self.cards(job["id"]), self.today()) if out["can_read"] else None
+        marked = notes.load(self.folder(job["id"])) if out["can_read"] else None
+        out["notes"] = {"highlights": len(marked["highlights"]),
+                        "notes": len(marked["notes"]) + sum(bool(h["note"]) for h in marked["highlights"])} if marked else None
         return out
 
     # ---- practice (spaced repetition)
@@ -177,14 +180,51 @@ class Jobs:
                     "preview": srs.preview(state, today, settings)}
         return {"counts": total, "left": len(line), "card": card, "settings": settings, "today": srs.day(today)}
 
-    def passage(self, job_id: str, pid: str) -> list[str]:
-        """The paragraphs that support a question's answer, when the book was processed here."""
+    def passage(self, job_id: str, pid: str) -> list[list[dict[str, Any]]]:
+        """The paragraphs that support a question's answer, when the book was processed here. Each paragraph is
+        a list of runs ``{"t": text, "h": highlighted?}``, so that what the reader highlighted shows here too."""
         path = self.folder(job_id) / f"{stem_of(self.jobs[job_id]['file'])}.questions.json"
         try:
             doc = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return []
-        return next(([p["text"] for p in q["passage"]] for q in doc.get("questions", []) if q["id"] == pid), [])
+        refs = next((q["passage"] for q in doc.get("questions", []) if q["id"] == pid), [])
+        where = {b.ref: (sd, b) for sd in self.book(job_id).book.spine for b in sd.blocks}
+        store = notes.load(self.folder(job_id))
+        out = []
+        for entry in refs:
+            sd, block = where.get(entry["ref"], (None, None))
+            if block is None or block.placeholder is not None:
+                out.append([{"t": entry["text"], "h": False}])
+                continue
+            lit = [False] * len(block.words)
+            for start, end in notes.marked(store, sd.index, block.start, block.end):
+                for i in range(start - block.start, end - block.start):
+                    lit[i] = True
+            runs: list[dict[str, Any]] = []
+            for word, h in zip(block.words, lit):
+                if runs and runs[-1]["h"] == h:
+                    runs[-1]["t"] += " " + word
+                else:
+                    runs.append({"t": word, "h": h})
+            out.append(runs)
+        return out
+
+    # ---- highlights and notes
+
+    def notes_do(self, job_id: str, change: Any = None) -> dict[str, Any]:
+        """The book's highlights and notes, after ``change(store, book)`` when one is given."""
+        book = self.book(job_id)
+        folder = self.folder(job_id)
+        with self.lock:
+            store = notes.load(folder)
+            if change is not None:
+                try:
+                    change(store, book)
+                except notes.NotesError as exc:
+                    raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+                write_json(folder / notes.FILE, store)
+        return store
 
     def practice_answer(self, job_id: str, pid: str, remembered: bool, text: str) -> None:
         self.get(job_id)
@@ -273,7 +313,7 @@ class Jobs:
         if report is not None:
             job["report"] = {k: report.get(k) for k in ("counts", "files", "firmware_format_ok", "notes", "warnings",
                                                         "usage", "complete", "doubted_breaks", "excluded", "cards")}
-        job.update({k: v for k, v in self.summary(self.jobs[job_id]).items() if k in ("can_read", "reading", "practice")})
+        job.update({k: v for k, v in self.summary(self.jobs[job_id]).items() if k in ("can_read", "reading", "practice", "notes")})
         if job["can_read"]:
             job["results"] = reading.results(reading.load_state(self.folder(job_id)))
         return job
@@ -552,6 +592,38 @@ class Handler(BaseHTTPRequestHandler):
                     raise ApiError(HTTPStatus.BAD_REQUEST, "too many settings")
                 write_json(jobs.data / "reader-settings.json", settings)
                 return self.send_json(settings)
+            case ("GET", ["jobs", job_id, "notes"]):
+                return self.send_json(jobs.notes_do(job_id))
+            case ("POST", ["jobs", job_id, "notes", "highlight"]):
+                r = self.json_body()
+                made: dict[str, Any] = {}
+                store = jobs.notes_do(job_id, lambda st, bk: made.update(
+                    notes.add_highlight(st, bk, r.get("chapter"), r.get("start"), r.get("end"), r.get("note"))))
+                return self.send_json({**store, "made": made.get("id")})
+            case ("PUT", ["jobs", job_id, "notes", "target"]):
+                r = self.json_body()
+                target = r.get("target") if isinstance(r.get("target"), dict) else {}
+                return self.send_json(jobs.notes_do(job_id, lambda st, bk: notes.set_note(st, bk, target, r.get("text"))))
+            case ("PUT", ["jobs", job_id, "notes", "item", item]):
+                r = self.json_body()
+                return self.send_json(jobs.notes_do(job_id, lambda st, bk: notes.update_item(st, item, r.get("text"))))
+            case ("DELETE", ["jobs", job_id, "notes", "item", item]):
+                return self.send_json(jobs.notes_do(job_id, lambda st, bk: notes.remove_item(st, item)))
+            case ("GET", ["jobs", job_id, "notebook"]):
+                return self.send_json(notes.notebook(jobs.book(job_id), jobs.notes_do(job_id),
+                                                     reading.load_state(jobs.folder(job_id))))
+            case ("GET", ["jobs", job_id, "notebook.md"]):
+                data = notes.notebook(jobs.book(job_id), jobs.notes_do(job_id), reading.load_state(jobs.folder(job_id)))
+                text = notes.markdown(data, (query.get("answers") or ["1"])[0] != "0").encode("utf-8")
+                name = stem_of(jobs.get(job_id)["file"]).encode("ascii", "replace").decode("ascii").replace('"', "_")
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/markdown; charset=utf-8")
+                self.send_header("Content-Length", str(len(text)))
+                self.send_header("Content-Disposition", f'attachment; filename="{name}.notes.md"')
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(text)
+                return None
             case ("GET", ["jobs", job_id, "book"]):
                 return self.send_json(jobs.book(job_id).manifest())
             case ("GET", ["jobs", job_id, "book", "chapter", number]):

@@ -74,6 +74,21 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .text .note-body { font-size: 0.85em; color: var(--mute); border-top: 1px solid var(--ghost); margin-top: 2em; padding-top: 0.8em; }
 .text .note-body p { text-indent: 0; }
 .text .hit { background: color-mix(in srgb, var(--blue) 22%, transparent); }
+::highlight(hl) { background-color: color-mix(in srgb, var(--blue) 24%, transparent); }
+::highlight(hln) { background-color: color-mix(in srgb, var(--blue) 24%, transparent); text-decoration: underline; text-decoration-color: var(--blue); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.text [data-note]::before { content: ""; display: inline-block; width: 0.5em; height: 0.5em; background: var(--blue); margin-right: 0.4em; vertical-align: 0.12em; }
+.tip { position: fixed; z-index: 15; display: flex; background: var(--ink); padding: 3px; gap: 3px; transform: translate(-50%, -100%); }
+.tip button { border-color: var(--ink); background: var(--ink); color: var(--paper); padding: 8px 10px; }
+.tip button:hover { background: var(--blue); border-color: var(--blue); color: var(--on-blue); }
+.offer { position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; background: var(--sheet); border-top: 1px solid var(--ink); padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.ed blockquote { margin: 0 0 14px; padding: 2px 0 2px 12px; border-left: 8px solid var(--ghost); font: 16px/1.5 var(--serif); }
+.ed textarea { width: 100%; min-height: 180px; font: 16px/1.5 var(--serif); color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 10px 12px; resize: vertical; }
+.ed .acts { margin-top: 12px; display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.marks a { display: block; text-decoration: none; padding: 10px 0; border-bottom: 1px solid var(--ghost); cursor: pointer; }
+.marks a:hover { color: var(--blue); } .marks q { font: 15px/1.45 var(--serif); quotes: none; display: block; }
+.marks small { display: block; color: var(--mute); margin-top: 4px; white-space: pre-wrap; }
+.rv .word.lit { text-decoration: underline; text-decoration-color: var(--blue); text-decoration-thickness: 4px; text-underline-offset: 10px; }
+.rv .ctx span.lit { background: color-mix(in srgb, var(--blue) 24%, transparent); color: var(--ink); }
 
 /* paged */
 .pv { position: absolute; inset: 22px 0 16px; overflow: hidden; }
@@ -143,7 +158,7 @@ kbd { font: 11px/1 var(--mono); border: 1px solid currentColor; padding: 2px 4px
     <div class="where"><a class="m" href="/" id="back">← Book page</a><b id="t-book"></b><span class="m mute" id="t-chap"></span></div>
     <div class="row">
       <span class="seg" role="group" aria-label="Reading mode" id="modes"></span>
-      <button id="b-toc">Contents</button><button id="b-find">Search</button><button id="b-rev">Practice</button><button id="b-set" aria-label="Text settings">Aa</button>
+      <button id="b-toc">Contents</button><button id="b-find">Search</button><button id="b-rev">Practice</button><button id="b-notes">Notes</button><button id="b-set" aria-label="Text settings">Aa</button>
     </div>
   </header>
   <main id="stage"><p class="empty">Loading</p></main>
@@ -160,7 +175,7 @@ function h(tag, attrs, ...kids) {
     if (k === "class") el.className = v; else if (k === "html") el.innerHTML = v; else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
     else if (k === "disabled" || k === "value") el[k] = v; else el.setAttribute(k, v === true ? "" : v);
   }
-  for (const kid of kids.flat()) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
   return el;
 }
 const put = (el, ...kids) => el.replaceChildren(...kids.flat(3).filter((k) => k != null && k !== false));
@@ -288,8 +303,9 @@ function rearm(w) { handled = new Set(sectionsIn(pos.chapter).filter((s) => s.en
 async function render() {
   await chapter(pos.chapter);
   closeNote();
+  hideTip(); stage.querySelector(".offer")?.remove();
   view = { page: pageView, scroll: scrollView, rsvp: rsvpView }[mode]();
-  drawFoot();
+  paint(); drawFoot();
 }
 const due = (s) => s.prompts.length && !handled.has(s.id) && !(reread && reread.section.id === s.id);
 async function nextChapter(dir) {
@@ -355,6 +371,7 @@ function pageView() {
   const onResize = () => { layout(true); drawFoot(); };
   addEventListener("resize", onResize);
   wire(cols);
+  view_root = cols;
   return { next, prev, where, relayout: () => layout(true), label: () => `page ${screen + 1} of ${screens}`,
     toEnd() { screen = screens - 1; show(); settle(false); handled = new Set(sectionsIn(pos.chapter).filter((s) => (ends.get(s.id) ?? -1) < screen).map((s) => s.id)); },
     stop() { removeEventListener("resize", onResize); } };
@@ -410,6 +427,7 @@ function scrollView() {
   }, { passive: true });
   for (const img of text.querySelectorAll("img")) img.addEventListener("load", drawGates, { once: true });
   wire(text);
+  view_root = text;
   return { next: () => sv.scrollBy({ top: sv.clientHeight * 0.85 }), prev: () => sv.scrollBy({ top: -sv.clientHeight * 0.85 }), relayout: drawGates, refresh: drawGates,
     where: () => pos.word, toEnd() { sv.scrollTop = sv.scrollHeight; } };
 }
@@ -422,6 +440,12 @@ function rsvpView() {
   rearm(i);
   const wordEl = h("div", { class: "word", "aria-live": "off" }), ctx = h("div", { class: "ctx" }), ctl = h("div", { class: "ctl" });
   put(stage, h("div", { class: "rv" }, wordEl, ctl, ctx));
+  view_root = null;
+  const lit = (k) => NB.highlights.some((x) => x.chapter === pos.chapter && x.start <= k && k < x.end);
+  ctx.addEventListener("mouseup", () => {   // paused: select words of the paragraph to highlight them
+    const sel = getSelection(), spans = sel.isCollapsed ? [] : [...ctx.querySelectorAll("span[data-i]")].filter((x) => sel.containsNode(x, true));
+    if (spans.length) showTip(sel.getRangeAt(0).getBoundingClientRect(), { chapter: pos.chapter, start: +spans[0].dataset.i, end: +spans[spans.length - 1].dataset.i + 1 });
+  });
   const dom = h("div"); dom.innerHTML = data.html;
   const sentenceEnd = (k) => /[.!?]["'”’)\]]*$/.test(data.words[k]) || (data.flags[k] & PARA_END);
   const weight = (k) => { const w = data.words[k]; let x = 1 + (w.length > 8 ? 0.2 : 0); if (data.flags[k] & PARA_END) x += 1.4; else if (sentenceEnd(k)) x += 1.1; else if (/[,;:—–]$/.test(w)) x += 0.5; return x; };
@@ -437,7 +461,7 @@ function rsvpView() {
     if (group.length === 1) {
       const w = data.words[group[0]], core = w.replace(/^[^\p{L}\p{N}]+/u, ""), lead = w.length - core.length;
       const len = core.replace(/[^\p{L}\p{N}]+$/u, "").length, o = lead + (len <= 1 ? 0 : len <= 5 ? 1 : len <= 9 ? 2 : len <= 13 ? 3 : 4);
-      wordEl.className = "word";
+      wordEl.className = "word" + (lit(group[0]) ? " lit" : "");
       put(wordEl, h("span", { class: "pre" }, w.slice(0, o)), h("span", { class: "focus" }, w[o] || ""), h("span", { class: "post" }, w.slice(o + 1)));
       const f = wordEl.children[1].getBoundingClientRect(), box = wordEl.getBoundingClientRect();
       wordEl.style.setProperty("--fx", (f.left + f.width / 2 - box.left) + "px");
@@ -449,7 +473,8 @@ function rsvpView() {
     let a = i, b = i;
     while (a > 0 && !(data.flags[a - 1] & PARA_END) && i - a < 400) a--;
     while (b < N - 1 && !(data.flags[b] & PARA_END) && b - i < 400) b++;
-    put(ctx, Array.from({ length: Math.max(0, Math.min(N, b + 1) - a) }, (_, n) => [h("span", { class: a + n === skipTo(i) ? "cur" : "", onclick: () => { i = a + n; settle(); } }, data.words[a + n]), " "]));
+    put(ctx, Array.from({ length: Math.max(0, Math.min(N, b + 1) - a) }, (_, n) => [h("span", { "data-i": a + n, class: a + n === skipTo(i) ? "cur" : lit(a + n) ? "lit" : "",
+      onclick: () => { if (!getSelection().isCollapsed) return; i = a + n; settle(); } }, data.words[a + n]), " "]));
   }
   function controls() {
     const o = S.overrides;
@@ -500,7 +525,16 @@ function rsvpView() {
   }
   function toggle() { if (playing) return pause(); playing = true; t0 = performance.now(); n0 = 0; put(ctx); controls(); tick(); }
   draw(); context(); controls();
-  return { next: () => sentence(1), prev: () => sentence(-1), toggle, where: () => i, relayout() {}, toEnd() {},
+  async function mark(withNote) {     // highlight the sentence being shown; with a note, pause and open it
+    let k = Math.min(Math.max(0, i - (playing ? 1 : 0)), N - 1), a = k, b = k;
+    while (a > 0 && !sentenceEnd(a - 1)) a--;
+    while (b < N - 1 && !sentenceEnd(b)) b++;
+    if (withNote) pause();
+    const made = await addHighlight({ chapter: pos.chapter, start: a, end: b + 1 });
+    if (!playing) { draw(); context(); }
+    if (withNote && made) editItem(made);
+  }
+  return { next: () => sentence(1), prev: () => sentence(-1), toggle, mark, where: () => i, relayout() { if (!playing) { draw(); context(); } }, toEnd() {},
     get playing() { return playing; }, stop() { pause(); }, label: () => `${S.overrides.wpm} wpm` };
 }
 
@@ -569,6 +603,7 @@ async function closeCp() {
     S.position = { ...pos, mode };
   } else await render();
   save(true); drawFoot(); setTimeout(refreshPractice, 600);
+  if (was && !was.review && !reread) offerNote(was.section);
 }
 async function startReread(section, m) {
   const was = cp; cp = null; stage.querySelector(".cp")?.remove();
@@ -589,11 +624,172 @@ async function endReread() {
   persistCp(); drawCp(); drawFoot();
 }
 
+/* ---------- highlights and notes ---------- */
+// A highlight is a run of words of a chapter, [start, end) in the shared word positions. In the page and scroll
+// views the words are found in the text by splitting it as the engine does, block by block, and marked with the
+// CSS Custom Highlight API, which draws without changing the document.
+let NB = { highlights: [], notes: [] };
+let view_root = null;                 // the element holding the chapter's text in the page and scroll views
+let tipFor = null;                    // the word range the floating buttons act on
+const SEP = new Set([0x09, 0x0A, 0x0C, 0x0D, 0x20, 0xA0, 0x1680, 0x2028, 0x2029, 0x202F, 0x205F, 0x3000, ...Array.from({ length: 12 }, (_, n) => 0x2000 + n)]);
+const BLOCKY = new Set("P DIV LI UL OL DL DT DD TABLE TR TD TH THEAD TBODY TFOOT CAPTION BLOCKQUOTE H1 H2 H3 H4 H5 H6 PRE FIGURE FIGCAPTION SECTION ARTICLE ASIDE HEADER FOOTER MAIN HR BR IMG ADDRESS".split(" "));
+const maps = new WeakMap();
+function wordMap(block) {             // where each word of a block lies in its text nodes
+  if (maps.has(block)) return maps.get(block);
+  const out = []; let cur = null, last = "";
+  const flush = () => { if (cur) out.push(cur); cur = null; last = ""; };
+  (function walk(el) {
+    for (const n of el.childNodes) {
+      if (n.nodeType === 3) {
+        const t = n.data;
+        for (let k = 0; k < t.length;) {
+          const cp = t.codePointAt(k), len = cp > 0xFFFF ? 2 : 1;
+          if (SEP.has(cp)) flush();
+          else if (cp !== 0xAD && cp !== 0xFEFF) {
+            if (cur && (last === "–" || last === "—")) flush();
+            if (!cur) cur = { node: n, a: k };
+            cur.endNode = n; cur.b = k + len; last = t.substr(k, len);
+          }
+          k += len;
+        }
+      } else if (n.nodeType === 1 && !n.matches("a.noteref")) {
+        const blocky = BLOCKY.has(n.tagName);
+        if (blocky) flush();
+        walk(n);
+        if (blocky) flush();
+      }
+    }
+  })(block);
+  flush(); maps.set(block, out);
+  return out;
+}
+function rangesFor(start, end) {      // DOM ranges covering words [start, end) of the chapter on screen
+  const out = [];
+  if (!view_root) return out;
+  for (const block of view_root.querySelectorAll("[data-w]")) {
+    const w = +block.dataset.w, map = wordMap(block);
+    if (!map.length || w >= end || w + map.length <= start) continue;
+    const a = map[Math.max(start, w) - w], b = map[Math.min(end, w + map.length) - 1 - w];
+    const r = document.createRange(); r.setStart(a.node, a.a); r.setEnd(b.endNode, b.b); out.push(r);
+  }
+  return out;
+}
+function paint() {
+  if (!view_root) { if (view && view.relayout) view.relayout(); return; }
+  for (const el of view_root.querySelectorAll("[data-note]")) el.removeAttribute("data-note");
+  for (const n of NB.notes) if (n.on === "place" && n.chapter === pos.chapter) view_root.querySelector(`[data-w="${n.word}"]`)?.setAttribute("data-note", "");
+  if (!window.Highlight || !CSS.highlights) return;
+  const plain = new Highlight(), noted = new Highlight();
+  for (const x of NB.highlights) if (x.chapter === pos.chapter) for (const r of rangesFor(x.start, x.end)) (x.note ? noted : plain).add(r);
+  CSS.highlights.set("hl", plain); CSS.highlights.set("hln", noted);
+}
+function wordAt(node, offset) {       // the chapter word at a place in the text, or -1
+  const block = (node.nodeType === 1 ? node : node.parentElement)?.closest("[data-w]");
+  if (!block || !view_root || !view_root.contains(block)) return -1;
+  const k = wordMap(block).findIndex((m) => (m.node === node || m.endNode === node) && (m.node !== node || m.a <= offset) && (m.endNode !== node || offset <= m.b));
+  return k < 0 ? -1 : +block.dataset.w + k;
+}
+function selectionWords() {           // the words a text selection covers, as { chapter, start, end }
+  const sel = getSelection();
+  if (!view_root || sel.isCollapsed || !sel.rangeCount) return null;
+  const r = sel.getRangeAt(0);
+  let start = Infinity, end = -1;
+  for (const block of view_root.querySelectorAll("[data-w]")) {
+    if (!r.intersectsNode(block)) continue;
+    const w = +block.dataset.w;
+    wordMap(block).forEach((m, k) => {
+      const before = r.comparePoint(m.endNode, m.b) < 0 || (m.endNode === r.startContainer && m.b === r.startOffset);
+      const after = r.comparePoint(m.node, m.a) > 0 || (m.node === r.endContainer && m.a === r.endOffset);
+      if (!before && !after) { start = Math.min(start, w + k); end = Math.max(end, w + k + 1); }
+    });
+  }
+  return end > start ? { chapter: pos.chapter, start, end } : null;
+}
+function hideTip() { document.querySelector(".tip")?.remove(); tipFor = null; }
+function showTip(rect, range) {
+  hideTip(); tipFor = range;
+  const act = (withNote) => async () => { const r = tipFor; hideTip(); getSelection().removeAllRanges(); const made = await addHighlight(r); if (withNote && made) editItem(made); };
+  document.body.append(h("div", { class: "tip", style: `left:${rect.left + rect.width / 2}px;top:${Math.max(48, rect.top - 6)}px` },
+    h("button", { onmousedown: (e) => e.preventDefault(), onclick: act(false) }, "Highlight", h("kbd", {}, "h")),
+    h("button", { onmousedown: (e) => e.preventDefault(), onclick: act(true) }, "Note", h("kbd", {}, "n"))));
+}
+document.addEventListener("mouseup", (e) => {
+  if (e.target.closest(".tip, .drawer, .cp, .rv")) return;
+  setTimeout(() => { const range = selectionWords(); if (range) showTip(getSelection().getRangeAt(0).getBoundingClientRect(), range); else hideTip(); }, 0);
+});
+async function notesCall(path, options) {
+  try { NB = await api(`/jobs/${ID}/notes${path}`, options); } catch (e) { alert(e.message); return null; }
+  paint(); if (mode === "page" && view && view.relayout) view.relayout();
+  return NB;
+}
+async function addHighlight(range) {
+  const got = await notesCall("/highlight", { method: "POST", json: range });
+  return got ? NB.highlights.find((x) => x.id === got.made) : null;
+}
+function editor(title, quote, text, onSave, onRemove, removeLabel) {
+  const area = h("textarea", { placeholder: "Your note, in your own words. Markdown works.", "aria-label": "Note", value: text || "" });
+  const done = async (fn) => { if (await fn() !== null) closeDrawer(); };
+  area.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); done(() => onSave(area.value)); } });
+  openDrawer(title, h("div", { class: "ed" }, quote ? h("blockquote", {}, quote) : null, area,
+    h("div", { class: "acts" }, h("button", { class: "primary", onclick: () => done(() => onSave(area.value)) }, "Save", h("kbd", {}, "ctrl ↵")),
+      onRemove ? h("button", { class: "link", onclick: () => done(onRemove) }, removeLabel) : null)));
+  area.focus();
+}
+function editItem(x) {                // a highlight and its note
+  editor("Highlight", x.text, x.note,
+    (text) => notesCall(`/item/${x.id}`, { method: "PUT", json: { text } }),
+    () => (!x.note || confirm("Remove this highlight and its note?")) ? notesCall(`/item/${x.id}`, { method: "DELETE" }) : null, "Remove highlight");
+}
+function editTarget(title, target, quote) {
+  const match = (n) => n.on === target.on && (target.on !== "place" || (n.chapter === target.chapter && n.word === target.word))
+    && (target.on !== "section" || n.section === target.section) && (target.on !== "chapter" || n.chapter === target.chapter);
+  const existing = NB.notes.find(match);
+  editor(title, quote, existing ? existing.text : "",
+    (text) => notesCall("/target", { method: "PUT", json: { target, text } }),
+    existing ? () => confirm("Delete this note?") ? notesCall("/target", { method: "PUT", json: { target, text: "" } }) : null : null, "Delete note");
+}
+let hovered = null;
+document.addEventListener("mousemove", (e) => { hovered = e.target.closest ? e.target.closest(".text [data-w]") : null; }, { passive: true });
+function editPlace() {                // a note on the paragraph under the pointer, else the one at the reading position
+  const block = (hovered && view_root && view_root.contains(hovered) ? hovered : null)
+    || (view_root && [...view_root.querySelectorAll("[data-w]")].filter((b) => +b.dataset.w <= pos.word).pop());
+  if (!block) return;
+  const words = block.textContent.trim().split(/\s+/);
+  editTarget("Note on this paragraph", { on: "place", chapter: pos.chapter, word: +block.dataset.w }, words.slice(0, 24).join(" ") + (words.length > 24 ? " …" : ""));
+}
+function offerNote(section) {
+  stage.querySelector(".offer")?.remove();
+  const has = NB.notes.some((n) => n.on === "section" && n.section === section.id);
+  stage.append(h("div", { class: "offer" }, h("span", { class: "m" }, section.label),
+    h("span", { class: "row" }, h("button", { onclick: () => { stage.querySelector(".offer")?.remove(); editTarget("Note on " + section.label, { on: "section", section: section.id }); } }, has ? "Edit your note on this section" : "Add a note on this section"),
+      h("button", { class: "link", onclick: () => stage.querySelector(".offer")?.remove() }, "Not now"))));
+}
+function marks() {                    // this chapter's highlights and notes, and the ways to add the larger ones
+  const here = sectionAt(pos.chapter, pos.word);
+  const rows = [...NB.highlights.filter((x) => x.chapter === pos.chapter).map((x) => ({ w: x.start, x })),
+    ...NB.notes.filter((n) => n.on === "place" && n.chapter === pos.chapter).map((n) => ({ w: n.word, n }))].sort((a, b) => a.w - b.w);
+  openDrawer("Notes", [
+    h("div", { class: "row", style: "margin-bottom:14px" },
+      here ? h("button", { onclick: () => editTarget("Note on " + here.label, { on: "section", section: here.id }) }, "This section") : null,
+      h("button", { onclick: () => editTarget("Note on the book", { on: "book" }) }, "The book"),
+      h("a", { class: "m", href: "/#/notebook/" + ID, style: "margin-left:auto" }, "Open the notebook")),
+    h("p", { class: "mute", style: "margin:0 0 6px" }, "Select text and press h to highlight it, n to add a note. With nothing selected, n notes the paragraph under the pointer."),
+    h("div", { class: "marks" }, rows.length ? rows.map(({ w, x, n }) => h("a", { onclick: () => { jump(pos.chapter, w).then(() => x ? editItem(x) : editTarget("Note on this paragraph", { on: "place", chapter: n.chapter, word: n.word })); } },
+      x ? h("q", {}, x.text.length > 220 ? x.text.slice(0, 220) + " …" : x.text) : null, h("small", {}, x ? x.note : n.text))) : h("p", { class: "empty" }, "Nothing marked in this chapter yet."))]);
+}
+
 /* ---------- links, footnotes ---------- */
 function closeNote() { stage.querySelector(".notebox")?.remove(); }
 function wire(root) {
   root.addEventListener("click", async (e) => {
     const a = e.target.closest("a[data-go]");
+    if (!a && getSelection().isCollapsed) {
+      const at = document.caretPositionFromPoint ? document.caretPositionFromPoint(e.clientX, e.clientY) : null;
+      const cr = at ? null : document.caretRangeFromPoint?.(e.clientX, e.clientY);
+      const w = at ? wordAt(at.offsetNode, at.offset) : cr ? wordAt(cr.startContainer, cr.startOffset) : -1;
+      const hit = w < 0 ? null : NB.highlights.find((x) => x.chapter === pos.chapter && x.start <= w && w < x.end);
+      if (hit) { e.stopPropagation(); editItem(hit); }
+    }
     if (!a) return;
     e.preventDefault(); e.stopPropagation();
     const [c, id] = [+a.dataset.go.split(":")[0], a.dataset.go.slice(a.dataset.go.indexOf(":") + 1)];
@@ -659,6 +855,7 @@ function textSettings() {
     h("div", {}, h("span", { class: "m" }, "Colours"), pick("theme", [["system", "System"], ["light", "Light"], ["dark", "Dark"]])),
     h("p", { class: "mute" }, "Keys: ← → turn pages or step sentences, space plays RSVP, 1 2 3 change the view, c opens the contents, / searches.")));
 }
+$("b-notes").onclick = marks;
 $("b-toc").onclick = contents; $("b-find").onclick = search; $("b-set").onclick = textSettings;
 $("b-rev").onclick = () => { save(true); setTimeout(() => { location.href = "/#/practice/" + ID; }, 150); };
 
@@ -672,6 +869,14 @@ addEventListener("keydown", (e) => {
     return;
   }
   if (typing || e.ctrlKey || e.metaKey || e.altKey || !view) return;
+  if (e.key === "h" || e.key === "n") {
+    e.preventDefault();
+    if (tipFor) { const r = tipFor; hideTip(); getSelection().removeAllRanges(); addHighlight(r).then((made) => { if (e.key === "n" && made) editItem(made); }); }
+    else if (view.mark) view.mark(e.key === "n");
+    else if (e.key === "n") editPlace();
+    return;
+  }
+  stage.querySelector(".offer")?.remove();
   if (e.key === "ArrowRight" || e.key === "PageDown") { e.preventDefault(); view.next(); }
   else if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); view.prev(); }
   else if (e.key === " ") { e.preventDefault(); if (view.toggle) view.toggle(); else if (e.shiftKey) view.prev(); else view.next(); }
@@ -683,7 +888,7 @@ addEventListener("keydown", (e) => {
 /* ---------- start ---------- */
 (async function init() {
   try {
-    [book, S, settings] = await Promise.all([api(`/jobs/${ID}/book`), api(`/jobs/${ID}/reading`), api("/settings").then((s) => ({ ...settings, ...s }))]);
+    [book, S, settings, NB] = await Promise.all([api(`/jobs/${ID}/book`), api(`/jobs/${ID}/reading`), api("/settings").then((s) => ({ ...settings, ...s })), api(`/jobs/${ID}/notes`)]);
   } catch (e) { return put(stage, h("p", { class: "empty" }, e.message, " ", h("a", { href: "/" }, "Back to the library"))); }
   document.title = book.title; $("back").href = "/#/run/" + ID;
   applySettings();

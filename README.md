@@ -109,6 +109,20 @@ Also in the reader: contents by chapter and section, search, footnotes that open
 
 The strip at the bottom is the book: one block per section, with a square for each question (blue recalled, black missed, hollow not yet met). The book's page shows the same map, your time and pace per view, and lets you choose which cards go into the Anki deck and the text file: all, only those you missed on the first try, or only those you have met. Cards are tagged `recall::correct`, `recall::missed` or `recall::unseen`.
 
+### Highlights, notes and the notebook
+
+In the page and scroll views, select text and press **h** to highlight it, or **n** to highlight it and write a note. With nothing selected, **n** writes a note on the paragraph under the pointer. Click a highlight to edit its note or remove it. Highlights that touch become one.
+
+In RSVP, **h** highlights the sentence being shown without stopping, and **n** highlights it, pauses and opens a note. Paused, you can select words in the paragraph shown.
+
+Notes are Markdown. Besides notes on a highlight or a paragraph, there is one note per section, per chapter and for the book. When a checkpoint ends, the reader offers a note on the section you just finished; reading on passes it by. The **Notes** button lists the chapter's highlights and notes.
+
+A highlight is a run of words, in the same positions the three views share, so it shows in all of them and in the supporting passage of a Practice card. It stays in place when the book is processed again, because processing never changes the text.
+
+Each book has a **notebook**, opened from its page: the book's chapters and sections as an outline and, under each section, your note on it, your highlights and notes in reading order, and the answers you gave at its checkpoint (the question, what you typed, the reference answer, and whether you recalled it). Notes can be written and edited there too. **Export Markdown** downloads the notebook as one file, with or without the checkpoint answers; sections where you marked and wrote nothing are left out of the file.
+
+Highlights are drawn with the browser's CSS Custom Highlight API (Chrome and Edge 105, Safari 17.2, Firefox 140, or later). In an older browser, highlights are kept and listed but not drawn in the text. They live in `notes.json` in the book's folder.
+
 ### Practice (spaced repetition)
 
 A question becomes a **card** when you meet it at its checkpoint. From then on it comes back in **Practice**, in the library for every book together or on a book's page for that book alone, on a schedule that follows the default scheduler of [Mochi](https://mochi.cards/docs/reviewing):
@@ -195,6 +209,7 @@ The tests never call Claude: `tests/scripted.py` is a stand-in that answers from
 | `ebook_processor/visible.py` | The book with visible checkpoints |
 | `ebook_processor/exports.py` | `questions.json`, the Anki deck, the text file |
 | `ebook_processor/outputs.py` | Writes every output from the saved state, and the report |
+| `ebook_processor/notes.py` | Highlights and notes, the notebook made from them, and its Markdown export |
 | `ebook_processor/srs.py` | The spaced-repetition scheduler and a book's cards |
 | `ebook_processor/reading.py` | A prepared EPUB as the reader needs it (clean chapter HTML with word positions, sections, search) and the saved reading state |
 | `ebook_processor/web/` | The local web app: a standard-library HTTP server, the library page (`index.html`) and the reader (`reader.html`) |

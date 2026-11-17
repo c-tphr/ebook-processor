@@ -111,6 +111,21 @@ details.adv > summary { cursor: pointer; font: 12px/1.5 var(--mono); letter-spac
 .run .prog { grid-column: 2 / -1; height: 4px; margin-top: 6px; background: linear-gradient(to right, var(--ink) calc(var(--p) * 100%), var(--ghost) 0); }
 .btn.primary { background: var(--ink); color: var(--paper); padding: 15px 22px; font-size: 13px; }
 .btn.primary:hover { background: var(--blue); border-color: var(--blue); color: var(--on-blue); }
+.pr { max-width: 900px; margin: 0 auto; padding: 34px 0 10px; }
+.pr .head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; border-bottom: 1px solid var(--ink); padding-bottom: 8px; margin-bottom: 28px; }
+.pr h1 { font: 500 clamp(26px, 3.6vw, 44px)/1.12 var(--grot); letter-spacing: -0.035em; margin: 0 0 26px; text-wrap: balance; }
+.pr textarea { width: 100%; min-height: 110px; font: 17px/1.5 Georgia, "Iowan Old Style", serif; color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 12px 14px; resize: vertical; }
+.pr .two { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--ink); }
+.pr .two > div { padding: 14px 16px 18px; } .pr .two > div + div { border-left: 1px solid var(--ink); background: var(--sheet); }
+.pr .two p, .pr .passage p { margin: 8px 0 0; font: 18px/1.5 Georgia, "Iowan Old Style", serif; white-space: pre-wrap; }
+.pr .passage { margin-top: 16px; border-left: 8px solid var(--ghost); padding: 2px 0 2px 16px; } .pr .passage p { font-size: 16px; color: var(--mute); }
+.pr .acts { margin-top: 22px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: center; }
+.pr .ans { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; flex: 1; max-width: 520px; }
+.pr .ans button { text-align: left; padding: 14px 16px; } .pr .ans small { display: block; margin-top: 7px; opacity: 0.75; letter-spacing: 0.04em; }
+.pr .done b { display: block; font: 500 clamp(40px, 7vw, 84px)/0.95 var(--grot); letter-spacing: -0.05em; margin-bottom: 18px; }
+kbd { font: 11px/1 var(--mono); border: 1px solid currentColor; padding: 2px 4px; margin-left: 6px; opacity: 0.7; }
+.num { width: 9ch; font: 15px/1.2 var(--mono); color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); padding: 9px 10px; border-radius: 0; }
+@media (max-width: 760px) { .pr .two { grid-template-columns: 1fr; } .pr .two > div + div { border-left: 0; border-top: 1px solid var(--ink); } }
 .hero h1.book { font-size: clamp(40px, 7vw, 88px); line-height: 0.95; text-wrap: balance; margin-top: 10px; }
 .map .col > i.no { background: var(--ink); }
 .map .col > i.todo { background: transparent; box-shadow: inset 0 0 0 1.5px var(--blue); }
@@ -245,7 +260,8 @@ let info = null, timer = null, view = { removed: new Set(), saved: new Set(), fi
 function route() {
   clearTimeout(timer); $("sticky").classList.remove("on"); window.scrollTo(0, 0);
   const m = location.hash.match(/^#\/run\/([0-9a-z-]+)$/);
-  if (m) showRun(m[1]); else if (location.hash === "#/add") showAdd(); else showLibrary();
+  const p = location.hash.match(/^#\/practice(?:\/([0-9a-z-]+))?$/);
+  if (m) showRun(m[1]); else if (p) showPractice(p[1] || null); else if (location.hash === "#/add") showAdd(); else showLibrary();
 }
 window.addEventListener("hashchange", route);
 
@@ -384,8 +400,9 @@ const dur = (seconds) => { const m = Math.round(seconds / 60); return m >= 60 ? 
 function showLibrary() {
   const app = $("app");
   const hero = h("section", { class: "hero" }), runs = h("div", { class: "runs" });
+  const tools = h("div", { class: "row", style: "justify-content:flex-end;margin-bottom:16px" }, h("a", { class: "btn", href: "#/add" }, "Add book"));
   put(app, hero, band("Library",
-    h("div", { class: "row", style: "justify-content:flex-end;margin-bottom:16px" }, h("a", { class: "btn", href: "#/add" }, "Add book")),
+    tools,
     runs, info.data ? h("div", { style: "margin-top:14px" }, kv("Kept in", info.data)) : null));
   // Without a book in progress, the hero's picture is the product: stretches of text, and a stop after each.
   const widths = [9, 15, 7, 12, 18, 8, 13];
@@ -413,6 +430,10 @@ function showLibrary() {
           strip, h("div", { class: "legend m" }, h("span", {}, "Section"), h("span", { class: "cp" }, "Checkpoint")),
           jobs.length ? null : h("div", { class: "actions" }, h("a", { class: "btn primary", href: "#/add" }, "Add your first book"))));
     }
+    const waiting = jobs.reduce((n, j) => n + (j.practice ? j.practice.due + j.practice.again + j.practice.new : 0), 0);
+    const cards = jobs.reduce((n, j) => n + (j.practice ? j.practice.cards : 0), 0);
+    put(tools, cards ? h("a", { class: "btn" + (waiting ? " primary" : ""), href: "#/practice" }, waiting ? `Practice ${waiting}` : "Practice") : null,
+      h("a", { class: "btn", href: "#/add" }, "Add book"));
     put(runs, jobs.length ? jobs.map(runRow) : h("p", { class: "empty" }, "No books yet."));
     if (jobs.some((j) => j.status === "queued" || j.status === "running")) timer = setTimeout(refresh, 2500);
   }
@@ -428,6 +449,79 @@ function runRow(j) {
     j.can_read ? h("a", { class: "btn", href: "/read/" + j.id }, r ? "Continue" : "Read") : h("span", { class: STATUS_LAB[j.status] || "lab" }, STATUS[j.status] || j.status),
     h("span", { class: "sub" }, sub), r ? h("div", { class: "prog", style: `--p:${r.progress}` }) : null);
 }
+
+/* ---------- practice: spaced repetition ---------- */
+async function showPractice(only) {
+  const app = $("app");
+  const box = h("div", { class: "pr" }), tail = h("div");
+  put(app, h("a", { class: "back m", href: only ? "#/run/" + only : "#/" }, only ? "← Book page" : "← Library"), box, tail);
+  let data, revealed = false, text = "", busy = false;
+  const q = only ? "?job=" + encodeURIComponent(only) : "";
+  const when = (iso) => { const d = Math.round((new Date(iso) - new Date(data.today)) / 864e5); return d === 1 ? "tomorrow" : `in ${d} days`; };
+  async function load() {
+    try { data = await api("/practice" + q); } catch (e) { return put(box, h("p", { class: "msg err" }, e.message)); }
+    draw(); drawSettings();
+  }
+  async function answer(remembered) {
+    if (busy) return; busy = true;
+    try { data = await api("/practice/answer", { method: "POST", json: { job: data.card.job, id: data.card.id, remembered, text, only } }); }
+    catch (e) { busy = false; return alert(e.message); }
+    busy = false; revealed = false; text = ""; draw();
+  }
+  function draw() {
+    const c = data.card, n = data.counts;
+    const tally = [n.due ? `${n.due} due` : null, n.new ? `${n.new} new` : null, n.again ? `${n.again} to see again` : null].filter(Boolean).join(" / ");
+    if (!c) {
+      return put(box, h("div", { class: "done" },
+        h("div", { class: "head" }, h("span", { class: "m" }, "Practice"), h("span", { class: "m" }, `${fmt(n.cards)} card${n.cards === 1 ? "" : "s"}`)),
+        h("b", {}, n.cards ? "Nothing is due." : "No cards yet."),
+        h("p", { class: "lede" }, n.cards
+          ? (n.next_due ? `Next: ${n.next_count} card${n.next_count === 1 ? "" : "s"} ${when(n.next_due)}.` : "Every card is waiting to be met again in a book.")
+          : "A question becomes a card when you meet it at its checkpoint in the reader. Read a section, answer its questions, and they come back here on a schedule.")));
+    }
+    const area = h("textarea", { placeholder: "Type what you recall, if you like.", "aria-label": "Your recall", oninput: () => { text = area.value; } });
+    area.value = text;
+    put(box,
+      h("div", { class: "head" }, h("span", { class: "m" }, [c.book, c.chapter, c.section !== c.chapter ? c.section : null].filter(Boolean).join(" / ")), h("span", { class: "m" }, tally)),
+      h("h1", {}, c.question),
+      !revealed ? [area, h("div", { class: "acts" }, h("button", { class: "primary", onclick: () => { revealed = true; draw(); } }, "Reveal answer", h("kbd", {}, "ctrl ↵")),
+          h("span", { class: "m mute" }, c.state === "new" ? "New card" : c.again ? "Forgotten earlier today" : `Interval ${c.interval} days`))]
+      : [h("div", { class: "two" }, h("div", {}, h("span", { class: "m" }, "Your recall"), h("p", {}, text || "Nothing typed.")), h("div", {}, h("span", { class: "m" }, "Reference answer"), h("p", {}, c.answer))),
+        c.passage.length ? h("details", {}, h("summary", { class: "m", style: "margin-top:16px;cursor:pointer" }, "From the book"), h("div", { class: "passage" }, c.passage.map((t) => h("p", {}, t)))) : null,
+        h("div", { class: "acts" },
+          h("div", { class: "ans" },
+            h("button", { onclick: () => answer(false) }, "Forgot", h("kbd", {}, "1"), h("small", {}, c.preview.forgot)),
+            h("button", { class: "primary", onclick: () => answer(true) }, "Remembered", h("kbd", {}, "2"), h("small", {}, c.preview.remembered))),
+          h("a", { class: "btn", href: `/read/${c.job}?go=${encodeURIComponent(c.go)}` }, "Reread the section"))]);
+    (box.querySelector("textarea") || box.querySelector("button.primary"))?.focus();
+  }
+  function drawSettings() {
+    const s = data.settings;
+    const field = (key, label, hint, step) => h("label", { class: "field" }, h("span", { class: "m" }, label),
+      h("input", { class: "num", type: "number", step, value: s[key] ?? "", placeholder: "none", onchange: async (e) => {
+        const v = e.target.value.trim();
+        try { data.settings = await api("/practice/settings", { method: "PUT", json: { ...s, [key]: v === "" ? null : key === "new_per_day" ? parseInt(v, 10) : parseFloat(v) } }); await load(); }
+        catch (err) { alert(err.message); }
+      } }), h("small", {}, hint));
+    put(tail, band("Schedule",
+      h("p", { class: "lede" }, "Each Remembered multiplies a card's interval; each Forgot shortens it and brings the card back the same day. Forgetting it again that day starts it over. A question becomes a card when you meet it at its checkpoint."),
+      h("div", { class: "grid", style: "margin-top:8px" },
+        field("remember_multiplier", "Remembered multiplies by", "Mochi's default is 1.8.", "0.1"),
+        field("forget_multiplier", "Forgot multiplies by", "0.5 halves the interval.", "0.05"),
+        field("first_interval", "First interval, days", "After a card is first remembered.", "1"),
+        field("max_interval", "Longest interval, days", "No card waits longer than this.", "1"),
+        field("new_per_day", "New cards per day", "Questions you skipped at a checkpoint. Empty for no limit.", "1"))));
+  }
+  practiceKeys = (e) => {
+    if (!data || !data.card) return;
+    const typing = /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName);
+    if (!revealed && e.key === "Enter" && (e.ctrlKey || e.metaKey || !typing)) { e.preventDefault(); revealed = true; draw(); }
+    else if (revealed && !typing && (e.key === "1" || e.key === "2")) { e.preventDefault(); answer(e.key === "2"); }
+  };
+  load();
+}
+let practiceKeys = null;
+addEventListener("keydown", (e) => { if (practiceKeys && location.hash.startsWith("#/practice")) practiceKeys(e); });
 
 /* ---------- one run ---------- */
 async function showRun(id) {
@@ -466,7 +560,8 @@ async function showRun(id) {
           job.reading.last_read ? kv("Last read", day(job.reading.last_read)) : null] : null,
         h("div", { class: "row", style: "margin-top:14px" },
           job.can_read ? h("a", { class: "btn primary", href: "/read/" + id }, job.reading ? "Continue reading" : "Read") : null,
-          Object.values(job.results || {}).includes("missed") ? h("a", { class: "btn", href: `/read/${id}?review=1` }, "Review missed questions") : null,
+          job.practice && job.practice.cards ? h("a", { class: "btn", href: "#/practice/" + id },
+            (() => { const n = job.practice.due + job.practice.again + job.practice.new; return n ? `Practice ${n}` : "Practice"; })()) : null,
           active ? h("button", { onclick: act("/cancel") }, "Stop") : null,
           job.status === "stopped" || job.status === "failed" ? h("button", { onclick: act("/continue") }, "Continue") : null,
           !active ? h("button", { class: "text", onclick: async () => {

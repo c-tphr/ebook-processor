@@ -143,7 +143,7 @@ kbd { font: 11px/1 var(--mono); border: 1px solid currentColor; padding: 2px 4px
     <div class="where"><a class="m" href="/" id="back">← Book page</a><b id="t-book"></b><span class="m mute" id="t-chap"></span></div>
     <div class="row">
       <span class="seg" role="group" aria-label="Reading mode" id="modes"></span>
-      <button id="b-toc">Contents</button><button id="b-find">Search</button><button id="b-rev">Review</button><button id="b-set" aria-label="Text settings">Aa</button>
+      <button id="b-toc">Contents</button><button id="b-find">Search</button><button id="b-rev">Practice</button><button id="b-set" aria-label="Text settings">Aa</button>
     </div>
   </header>
   <main id="stage"><p class="empty">Loading</p></main>
@@ -188,6 +188,10 @@ let cp = null;                        // the open checkpoint: { section, index, 
 let reread = null;                    // { section, back: mode to return to }
 let view = null;                      // the current mode's controller
 let lastActive = Date.now();
+let practiceDue = 0;                  // cards of this book waiting in the practice queue
+function refreshPractice() {
+  api(`/practice?job=${encodeURIComponent(ID)}`).then((d) => { practiceDue = d.left; drawTop(); }).catch(() => {});
+}
 
 const sectionsIn = (c) => book.sections.filter((s) => s.chapter === c);
 const chapterAt = (c) => book.chapters.find((x) => x.index === c);
@@ -243,8 +247,7 @@ function drawTop() {
   const sec = sectionAt(pos.chapter, pos.word);
   $("t-chap").textContent = (chapterAt(pos.chapter)?.title || "") + (sec && sec.label !== chapterAt(pos.chapter)?.title ? " / " + sec.label : "");
   put($("modes"), MODES.map(([k, t], n) => h("button", { "aria-pressed": String(mode === k), title: `${t} view (${n + 1})`, onclick: () => setMode(k) }, t)));
-  const due = reviewQueue().length;
-  $("b-rev").textContent = due ? `Review ${due}` : "Review"; $("b-rev").disabled = !due;
+  $("b-rev").textContent = practiceDue ? `Practice ${practiceDue}` : "Practice";
 }
 function pace() {
   if (mode === "rsvp") return S.overrides.wpm;
@@ -502,15 +505,6 @@ function rsvpView() {
 }
 
 /* ---------- checkpoints ---------- */
-function reviewQueue() {
-  const skipped = new Set(S.x_attempts.filter((a) => a.grade === "skipped").map((a) => a.id));
-  const out = [];
-  for (const s of book.sections) for (const p of s.prompts) {
-    const g = S.grades[p.id];
-    if (!S.x_cleared[p.id] && ((g && g.first === "incorrect") || (!g && skipped.has(p.id)))) out.push({ s, p });
-  }
-  return out;
-}
 function persistCp() {
   if (!cp || cp.review) return;
   S.active_checkpoint = { id: cp.section.checkpoint, prompt_index: cp.index, resume: cp.resume };
@@ -520,13 +514,6 @@ function openCheckpoint(section, index = 0, resume = null) {
   if (view && view.stop) view.stop();
   cp = { section, index, revealed: false, missed: false, text: "", resume: resume || { chapter: pos.chapter, word: mode === "rsvp" ? section.end : pos.word, mode } };
   persistCp(); drawCp();
-}
-function openReview() {
-  const queue = reviewQueue();
-  if (!queue.length) return;
-  if (view && view.stop) view.stop();
-  cp = { review: true, queue, index: 0, revealed: false, missed: false, text: "" };
-  drawCp();
 }
 function drawCp() {
   stage.querySelector(".cp")?.remove();
@@ -581,7 +568,7 @@ async function closeCp() {
     else if (view.refresh) view.refresh();
     S.position = { ...pos, mode };
   } else await render();
-  save(true); drawFoot();
+  save(true); drawFoot(); setTimeout(refreshPractice, 600);
 }
 async function startReread(section, m) {
   const was = cp; cp = null; stage.querySelector(".cp")?.remove();
@@ -672,7 +659,8 @@ function textSettings() {
     h("div", {}, h("span", { class: "m" }, "Colours"), pick("theme", [["system", "System"], ["light", "Light"], ["dark", "Dark"]])),
     h("p", { class: "mute" }, "Keys: ← → turn pages or step sentences, space plays RSVP, 1 2 3 change the view, c opens the contents, / searches.")));
 }
-$("b-toc").onclick = contents; $("b-find").onclick = search; $("b-set").onclick = textSettings; $("b-rev").onclick = openReview;
+$("b-toc").onclick = contents; $("b-find").onclick = search; $("b-set").onclick = textSettings;
+$("b-rev").onclick = () => { save(true); setTimeout(() => { location.href = "/#/practice/" + ID; }, 150); };
 
 /* ---------- keys ---------- */
 addEventListener("keydown", (e) => {
@@ -704,7 +692,9 @@ addEventListener("keydown", (e) => {
   const p = S.position || { chapter: first.chapter, word: first.start, mode: "page" };
   mode = p.mode || "page"; pos = { chapter: chapterAt(p.chapter) ? p.chapter : first.chapter, word: p.word };
   const active = S.active_checkpoint, section = active && book.sections.find((s) => s.checkpoint === active.id);
-  if (want.get("review")) { await render(); return openReview(); }
+  const go = (want.get("go") || "").match(/^(\d+):(\d+)$/);
+  if (go && chapterAt(+go[1])) { delete S.active_checkpoint; pos = { chapter: +go[1], word: +go[2] }; await render(); refreshPractice(); return setPos(pos.chapter, pos.word, false); }
+  refreshPractice();
   if (section && active.reread) {      // closed during a reread: back into it, with the way back to the question intact
     reread = { section, held: { index: active.prompt_index, resume: active.resume } };
     mode = active.reread.mode; pos = { chapter: active.reread.chapter, word: active.reread.word };

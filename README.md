@@ -105,11 +105,25 @@ At the end of each section the reader stops for its **checkpoint**, one question
 
 Only your **first** grade for a question is kept: a Correct after a reread does not replace an earlier Incorrect. Jumping through the contents, the search or the map never sets off a checkpoint; reading through a section again does. Closing the window in the middle of a question or a reread brings you back to the same place.
 
-Also in the reader: contents by chapter and section, search, footnotes that open in place, text settings (serif or grotesk, size, line spacing, column width, light or dark), and **Review**, which goes back through the questions you missed or skipped until you get each one right.
+Also in the reader: contents by chapter and section, search, footnotes that open in place, and text settings (serif or grotesk, size, line spacing, column width, light or dark).
 
 The strip at the bottom is the book: one block per section, with a square for each question (blue recalled, black missed, hollow not yet met). The book's page shows the same map, your time and pace per view, and lets you choose which cards go into the Anki deck and the text file: all, only those you missed on the first try, or only those you have met. Cards are tagged `recall::correct`, `recall::missed` or `recall::unseen`.
 
-Reading state lives in `reading.json` in the book's folder. It follows the saved-state format of the Picco firmware (`position`, `grades`, `active_checkpoint`), with members of its own (prefixed `x_`) for every attempt with what you typed, time and pace.
+### Practice (spaced repetition)
+
+A question becomes a **card** when you meet it at its checkpoint. From then on it comes back in **Practice**, in the library for every book together or on a book's page for that book alone, on a schedule modelled on [Mochi](https://mochi.cards/docs/reviewing)'s default algorithm:
+
+- There are two answers, **Remembered** and **Forgot**. Each button says when the card would come back.
+- Remembered multiplies the card's interval (by 1.8, Mochi's default).
+- Forgot shortens it (by half) without resetting it, and the card comes back **the same day**. Forget it again that day and it starts over at the first interval.
+- Marked Correct at its checkpoint, a card is first due the next day. Marked Incorrect, it is due the same day. A question you skipped is a **new** card: it joins the schedule the first time you remember it.
+- Meeting a card early, by rereading its section, changes its schedule only if it was due.
+
+Questions of sections you have not read never appear. You can type your recall before revealing the answer, open the supporting passage from the book, and jump to reread the section. The multipliers, the first and the longest interval and a daily limit on new cards are settings on the Practice page. Mochi's documentation gives the 1.8; the other defaults (0.5, 1 day, 365 days, no limit) are this tool's. Mochi's alternative scheduler, FSRS, is not included.
+
+The Anki deck is still there for practising in Anki instead; the two do not share a schedule.
+
+Reading state lives in `reading.json` in the book's folder. It follows the saved-state format of the Picco firmware (`position`, `grades`, `active_checkpoint`), with members of its own (prefixed `x_`) for every attempt with what you typed, time and pace. Cards and their review history are in `srs.json` beside it.
 
 ## How it works
 
@@ -166,6 +180,7 @@ The tests never call Claude: `tests/scripted.py` is a stand-in that answers from
 | `ebook_processor/visible.py` | The book with visible checkpoints |
 | `ebook_processor/exports.py` | `questions.json`, the Anki deck, the text file |
 | `ebook_processor/outputs.py` | Writes every output from the saved state, and the report |
+| `ebook_processor/srs.py` | The spaced-repetition scheduler and a book's cards |
 | `ebook_processor/reading.py` | A prepared EPUB as the reader needs it (clean chapter HTML with word positions, sections, search) and the saved reading state |
 | `ebook_processor/web/` | The local web app: a standard-library HTTP server, the library page (`index.html`) and the reader (`reader.html`) |
 | `tests/data/` | A small made-up book with its expected results, broken prepared books the validator must reject, and Thomas Paine's *Essays* (Standard Ebooks, CC0) |

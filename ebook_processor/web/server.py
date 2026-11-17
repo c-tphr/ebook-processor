@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from .. import __version__, reading
+from .. import __version__, reading, srs
 from ..llm import BackendError, ClaudeCodeBackend, UsageLimitError
 from ..outputs import load_report, stem_of
 from ..pipeline import now, write_json
@@ -97,7 +97,101 @@ class Jobs:
                                        "done", "total", "counts", "words", "kind")}
         out["can_read"] = job["status"] == "done" and self.prepared(job["id"]).is_file()
         out["reading"] = reading.summary(reading.load_state(self.folder(job["id"]))) if out["can_read"] else None
+        out["practice"] = srs.counts(self.cards(job["id"]), self.today()) if out["can_read"] else None
         return out
+
+    # ---- practice (spaced repetition)
+
+    today = staticmethod(_dt.date.today)
+
+    def srs_settings(self) -> dict[str, Any]:
+        path = self.data / "srs-settings.json"
+        try:
+            return srs.clean_settings(json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None)
+        except ValueError:
+            return srs.clean_settings(None)
+
+    def cards(self, job_id: str) -> dict[str, Any]:
+        """The book's cards, brought up to date with what was answered in the reader."""
+        folder = self.folder(job_id)
+        with self.lock:
+            store = srs.load(folder)
+            if srs.take_in(store, reading.load_state(folder), self.srs_settings(), self.today()):
+                write_json(folder / srs.FILE, store)
+        return store
+
+    def practice(self, only: str | None = None) -> dict[str, Any]:
+        """What to practise now, across every book or in one: the counts and the next card."""
+        today, settings = self.today(), self.srs_settings()
+        with self.lock:
+            ids = [j["id"] for j in sorted(self.jobs.values(), key=lambda j: j["created"])
+                   if j["status"] == "done" and self.prepared(j["id"]).is_file() and (only is None or j["id"] == only)]
+        if only is not None and only not in ids:
+            self.get(only)
+            raise ApiError(HTTPStatus.CONFLICT, "this book cannot be practised yet")
+        total = {"due": 0, "again": 0, "new": 0, "cards": 0, "next_due": None, "next_count": 0}
+        stores, lists = {}, {"due": [], "new": [], "again": []}
+        new_done = 0
+        for job_id in ids:
+            store = self.cards(job_id)
+            if not store["cards"]:
+                continue
+            try:
+                manifest = self.book(job_id).manifest()
+            except ApiError:
+                continue
+            prompts = {p["id"]: (s, p) for s in manifest["sections"] for p in s["prompts"]}
+            order = {pid: n for n, pid in enumerate(prompts)}
+            stores[job_id] = (store, manifest, prompts)
+            new_done += srs.new_today(store, today)
+            c = srs.counts(store, today, set(prompts))
+            for key in ("due", "again", "new", "cards"):
+                total[key] += c[key]
+            if c["next_due"] and (total["next_due"] is None or c["next_due"] <= total["next_due"]):
+                total["next_count"] = c["next_count"] + (total["next_count"] if c["next_due"] == total["next_due"] else 0)
+                total["next_due"] = c["next_due"]
+            for pid in srs.queue(store, today, order, None):
+                card = store["cards"][pid]
+                kind = "new" if card["state"] == "new" else "again" if card["again"] else "due"
+                lists[kind].append((card["due"] or "", card["reviews"][-1]["at"] if card["reviews"] else "", job_id, pid))
+        limit = settings["new_per_day"]
+        fresh = lists["new"] if limit is None else lists["new"][:max(0, limit - new_done)]
+        total["new"] = len(fresh)
+        line = sorted(lists["due"]) + fresh + sorted(lists["again"], key=lambda t: t[1])
+        card = None
+        if line:
+            _, _, job_id, pid = line[0]
+            store, manifest, prompts = stores[job_id]
+            section, prompt = prompts[pid]
+            state = store["cards"][pid]
+            chapter = next((c["title"] for c in manifest["chapters"] if c["index"] == section["chapter"]), "")
+            card = {"job": job_id, "id": pid, "book": manifest["title"], "chapter": chapter, "section": section["label"],
+                    "question": prompt["prompt"], "answer": prompt["answer"], "passage": self.passage(job_id, pid),
+                    "state": state["state"], "again": state["again"], "interval": round(state["interval"], 1),
+                    "times": len(state["reviews"]), "go": f"{section['chapter']}:{section['start']}",
+                    "preview": srs.preview(state, today, settings)}
+        return {"counts": total, "left": len(line), "card": card, "settings": settings, "today": srs.day(today)}
+
+    def passage(self, job_id: str, pid: str) -> list[str]:
+        """The paragraphs that support a question's answer, when the book was processed here."""
+        path = self.folder(job_id) / f"{stem_of(self.jobs[job_id]['file'])}.questions.json"
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        return next(([p["text"] for p in q["passage"]] for q in doc.get("questions", []) if q["id"] == pid), [])
+
+    def practice_answer(self, job_id: str, pid: str, remembered: bool, text: str) -> None:
+        self.get(job_id)
+        with self.lock:
+            store = self.cards(job_id)
+            card = store["cards"].get(pid)
+            if card is None:
+                raise ApiError(HTTPStatus.NOT_FOUND, "no such card")
+            today = self.today()  # the stamp carries the same local day the schedule is counted in
+            at = f"{srs.day(today)}T{_dt.datetime.now().strftime('%H:%M:%S')}"
+            srs.answer(card, remembered, today, self.srs_settings(), at, "review", text)
+            write_json(self.folder(job_id) / srs.FILE, store)
 
     # ---- reading
 
@@ -174,7 +268,7 @@ class Jobs:
         if report is not None:
             job["report"] = {k: report.get(k) for k in ("counts", "files", "firmware_format_ok", "notes", "warnings",
                                                         "usage", "complete", "doubted_breaks", "excluded", "cards")}
-        job.update({k: v for k, v in self.summary(self.jobs[job_id]).items() if k in ("can_read", "reading")})
+        job.update({k: v for k, v in self.summary(self.jobs[job_id]).items() if k in ("can_read", "reading", "practice")})
         if job["can_read"]:
             job["results"] = reading.results(reading.load_state(self.folder(job_id)))
         return job
@@ -430,6 +524,19 @@ class Handler(BaseHTTPRequestHandler):
                     raise ApiError(HTTPStatus.BAD_REQUEST, "no file was sent")
                 return self.send_json(jobs.summary(jobs.import_prepared((query.get("name") or ["book.epub"])[0], data)),
                                       HTTPStatus.CREATED)
+            case ("GET", ["practice"]):
+                return self.send_json(jobs.practice((query.get("job") or [None])[0]))
+            case ("POST", ["practice", "answer"]):
+                request = self.json_body()
+                if not isinstance(request.get("job"), str) or not isinstance(request.get("id"), str) \
+                        or not isinstance(request.get("remembered"), bool):
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "an answer needs job, id and remembered")
+                jobs.practice_answer(request["job"], request["id"], request["remembered"], str(request.get("text") or ""))
+                return self.send_json(jobs.practice(request["only"] if isinstance(request.get("only"), str) else None))
+            case ("PUT", ["practice", "settings"]):
+                settings = srs.clean_settings(self.json_body())
+                write_json(jobs.data / "srs-settings.json", settings)
+                return self.send_json(settings)
             case ("GET", ["settings"]):
                 path = jobs.data / "reader-settings.json"
                 return self.send_json(json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {})

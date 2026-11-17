@@ -246,7 +246,8 @@ def render_chapter(book: Book, sd: SpineDoc) -> str:
 
 def new_state(sha256: str) -> dict[str, Any]:
     return {"version": STATE_VERSION, "book_sha256": sha256, "overrides": {"wpm": 240, "words_per_update": 1},
-            "position": None, "grades": {}, "x_attempts": [], "x_cleared": {}, "x_furthest": None, "x_progress": 0.0,
+            "position": None, "grades": {}, "x_attempts": [], "x_cleared": {}, "x_previewed": {}, "x_furthest": None,
+            "x_progress": 0.0,
             "x_stats": {"seconds": {m: 0 for m in MODES}, "words": {m: 0 for m in MODES}, "last_read": None}}
 
 
@@ -290,6 +291,10 @@ def clean_state(raw: Any, sha256: str, known: set[str]) -> dict[str, Any]:
     for pid, at in (raw.get("x_cleared") if isinstance(raw.get("x_cleared"), dict) else {}).items():
         if pid in known and isinstance(at, str):
             state["x_cleared"][pid] = at[:32]
+    # when each question was first shown ahead of its section (the reader's question previews)
+    for pid, at in (raw.get("x_previewed") if isinstance(raw.get("x_previewed"), dict) else {}).items():
+        if pid in known and isinstance(at, str):
+            state["x_previewed"][pid] = at[:32]
     stats = raw.get("x_stats") if isinstance(raw.get("x_stats"), dict) else {}
     for key in ("seconds", "words"):
         values = stats.get(key) if isinstance(stats.get(key), dict) else {}

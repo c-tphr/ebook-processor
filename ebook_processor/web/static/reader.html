@@ -161,6 +161,12 @@ body.pane .top { padding: 10px 0; } body.pane .top .where span { display: block;
 body.pane .foot { grid-template-columns: minmax(0, 1fr) auto; }
 body.pane .sv { padding-top: 20px; }
 .text .aim { animation: aim 2.4s ease-out; }
+/* a section's questions, shown before it when previews are on */
+.text .pre { font-family: var(--grot); font-size: 0.82em; line-height: 1.4; text-indent: 0; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--ink); margin: 1.2em 0 1.4em; padding: 0.8em 0 0.9em; break-inside: avoid; }
+.text .pre .m { display: block; font-size: 11px; margin-bottom: 0.7em; }
+.text .pre ul { list-style: none; margin: 0; padding: 0; } .text .pre li { margin: 0.45em 0; font-weight: 600; text-wrap: pretty; }
+.text .pre small { display: block; margin-top: 0.7em; color: var(--mute); font-size: 0.92em; }
+.text .pre + p { text-indent: 0; }
 @keyframes aim { from { background: color-mix(in srgb, var(--blue) 22%, transparent); } to { background: transparent; } }
 </style>
 <script src="/static/settings.js"></script>
@@ -351,6 +357,54 @@ async function render() {
 const completed = (s) => s.prompts.length > 0 && s.prompts.every((p) => S.grades[p.id]);
 const unanswered = (s) => s.prompts.filter((p) => !S.grades[p.id]).length;
 const due = (s) => !PANE && s.prompts.length && !completed(s) && !handled.has(s.id) && !(reread && reread.section.id === s.id);
+// Question previews (a setting): a section whose checkpoint still has unanswered questions begins with them, as
+// a box in the text of the page and scroll views and as a pause in RSVP. When a question is first shown this way
+// is kept in S.x_previewed, so that an answer to it can be told from unprimed recall.
+const previewing = () => !PANE && settings.read_preview && !reread;
+let previewWatch = null;
+function sawPreview(ids) {
+  let fresh = false;
+  for (const id of ids) if (!S.x_previewed[id]) { S.x_previewed[id] = stamp(); fresh = true; }
+  if (fresh) save();
+}
+function previewBox(s) {
+  const open = s.prompts.filter((p) => !S.grades[p.id]);
+  return h("aside", { class: "pre", "data-ids": open.map((p) => p.id).join(" "), "aria-label": "Questions for this section" },
+    h("span", { class: "m" }, open.length === 1 ? "A question for this section" : `${open.length} questions for this section`),
+    h("ul", {}, open.map((p) => h("li", {}, p.prompt))),
+    h("small", {}, "Read with " + (open.length === 1 ? "it" : "these") + " in mind. You are asked at the end of the section."));
+}
+function addPreviews(root) {          // put the boxes into a chapter's text; a box counts as shown once it is on screen
+  for (const old of root.querySelectorAll(".pre")) old.remove();
+  if (previewWatch) previewWatch.disconnect();
+  previewWatch = null;
+  if (!previewing()) return;
+  previewWatch = new IntersectionObserver((entries) => {
+    const ids = entries.filter((e) => e.isIntersecting).flatMap((e) => e.target.dataset.ids.split(" ")).filter(Boolean);
+    if (ids.length) sawPreview(ids);
+  }, { root: stage, threshold: 0.5 });
+  const blocks = [...root.querySelectorAll("[data-w]")];
+  for (const s of sectionsIn(pos.chapter)) {
+    if (!unanswered(s)) continue;
+    let k = blocks.findIndex((b) => +b.dataset.w >= s.start);
+    if (k < 0 || +blocks[k].dataset.w >= s.end) continue;
+    while (blocks[k].dataset.kind === "heading" && blocks[k + 1] && +blocks[k + 1].dataset.w < s.end) k++;   // below the section's own heading
+    let el = blocks[k];
+    while (el.parentElement !== root && !/^(DIV|SECTION|ARTICLE|MAIN|BLOCKQUOTE|ASIDE)$/.test(el.parentElement.tagName)) el = el.parentElement;
+    const box = previewBox(s);
+    el.before(box); previewWatch.observe(box);
+  }
+}
+function refreshPreviews() {          // after an answer or a change of the setting
+  if (!view_root) return;
+  // In the scroll view a box that comes or goes above the reader must not move the text under their eyes.
+  const sv = stage.querySelector(".sv"), edge = sv ? sv.getBoundingClientRect().top : 0;
+  const held = sv ? [...view_root.querySelectorAll("[data-w]")].find((b) => b.getBoundingClientRect().bottom > edge) : null;
+  const was = held ? held.getBoundingClientRect().top : 0;
+  addPreviews(view_root);
+  if (view && view.relayout) view.relayout();
+  if (held) sv.scrollTop += held.getBoundingClientRect().top - was;
+}
 function passed(s) {                  // the reader has been beyond the end of this section
   const f = S.x_furthest;
   return !!f && (chapterOrder(s.chapter) < chapterOrder(f.chapter) || (s.chapter === f.chapter && s.end <= f.word));
@@ -378,6 +432,7 @@ function pageView() {
   });
   pv.addEventListener("scroll", () => { pv.scrollLeft = 0; pv.scrollTop = 0; });   // find-in-page must not shift the columns
   fill(cols, data.html);
+  addPreviews(cols);
   let screen = 0, screens = 1, step = 1, blocks = [], ends = new Map(), n = 1, colStep = 1;
   const gap = 56;
   function layout(keep) {
@@ -440,6 +495,7 @@ function scrollView() {
     i < book.chapters.length - 1 ? h("button", { class: "primary", onclick: () => nextChapter(1) }, "Next chapter") : h("span", { class: "m mute" }, "End of the book")));
   put(stage, sv);
   fill(text, data.html);
+  addPreviews(text);
   rearm(pos.word);
   const gates = [];
   for (const s of PANE ? [] : sectionsIn(pos.chapter)) {
@@ -576,12 +632,21 @@ function rsvpView() {
     const box = h("div", { class: "text" });
     if (el) { fill(box, el.outerHTML); } put(ctx, box); controls();
   }
+  const primed = new Set();           // sections whose questions were shown on this pass
+  function showPreview(s) {
+    put(wordEl, h("span", { class: "m" }, "Before this section: read the questions, then press play"));
+    wordEl.className = "word group";
+    put(ctx, h("div", { class: "text" }, previewBox(s))); controls();
+    sawPreview(s.prompts.filter((p) => !S.grades[p.id]).map((p) => p.id));
+  }
   function tick() {
     if (!playing) return;
     if (i >= N) { pause(); nextChapter(1).then((ok) => { if (!ok) settle(); }); return; }
     const sec = sectionsIn(pos.chapter).find((s) => s.end === i);
     if (sec && reread && reread.section.id === sec.id) { pause(); return endReread(); }
     if (sec && due(sec)) { pause(); return openCheckpoint(sec); }
+    const ahead = previewing() ? sectionsIn(pos.chapter).find((s) => s.start === i && unanswered(s) && !primed.has(s.id)) : null;
+    if (ahead) { primed.add(ahead.id); pause(); return showPreview(ahead); }
     if (data.stops.has(i) && !shown.has(i)) { shown.add(i); pause(); return showStop(data.stops.get(i)); }
     const group = draw();
     if (!group.length) { i = N; return tick(); }
@@ -677,6 +742,7 @@ async function closeCp() {
     else if (view.refresh) view.refresh();
     S.position = { ...pos, mode };
   } else await render();
+  refreshPreviews();                  // what was answered is no longer previewed
   save(true); drawFoot(); setTimeout(refreshPractice, 600);
   if (was && !was.review && !reread) offerNote(was.section);
 }
@@ -946,6 +1012,7 @@ AppSettings.onChange((key) => {
   if (["face", "size", "leading", "measure"].includes(key)) { applySettings(); if (view && view.relayout) view.relayout(); }
   if (PANE && key === "nb_view" && mode !== settings.nb_view) setMode(settings.nb_view === "page" ? "page" : "scroll");
   if (PANE && key === "nb_side") drawFoot();
+  if (key === "read_preview") refreshPreviews();
 });
 function aim(w) {                     // show the reader where a place is: bring it into view and light its paragraph
   if (!view_root) return;
@@ -1003,6 +1070,7 @@ addEventListener("keydown", (e) => {
     return put(stage, h("p", { class: "empty" }, "The book could not be opened: ", e.message, ". ",
       e.message === "not found" ? "The app may have been updated while it was running: stop it and start it again. " : "", h("a", { href: "/" }, "Back to the library")));
   }
+  S.x_previewed = S.x_previewed || {};   // a state saved before previews existed
   document.title = book.title; $("back").href = "/#/run/" + ID;
   applySettings();
   const want = new URLSearchParams(location.search);

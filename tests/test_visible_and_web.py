@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from ebook_processor import content, prompts
+from ebook_processor import cli, content, prompts
 from ebook_processor.llm import ClaudeCodeBackend, extract_json
 from ebook_processor.prep.draft import check_draft
 from ebook_processor.prep.epub import load_book, load_book_bytes
@@ -26,6 +26,7 @@ from tests.scripted import Script
 from tests.test_pipeline import FIXTURE, run
 
 BLOCK_RE = re.compile(rb'<div class="ebp-checkpoint".*?</div></div>', re.S)
+PREVIEW_RE = re.compile(rb'<div class="ebp-preview" id="ebp-preview-(c\d+)".*?</div>', re.S)
 
 
 def visible_of(epub: Path, sections: list[tuple[str, str]], suffix: str = " (checkpoints)"):
@@ -70,6 +71,38 @@ def test_each_question_and_answer_gets_its_own_page_and_the_text_is_untouched(tm
     for name in original.archive.names():
         if name not in changed and name != original.opf_path:
             assert original.archive.read(name) == visible.archive.read(name), name
+
+
+def test_previews_put_a_page_of_questions_before_each_section_and_can_be_switched_by_a_rebuild(tmp_path):
+    from ebook_processor.runner import rebuild
+    report, _, _ = run(tmp_path, settings=from_options(density="short", preview=True))
+    out = tmp_path / "out"
+    assert report["settings"]["preview"] is True and "a page before each section" in (out / "fixture.report.md").read_text(encoding="utf-8")
+    original, visible = load_book(FIXTURE), load_book(out / "fixture.checkpoints.epub")
+    state = json.loads((out / "work" / "state.json").read_text(encoding="utf-8"))
+    asked = {q["id"]: q["prompt"] for q in state["questions"]}
+    previews = 0
+    for before, after in zip(original.spine, visible.spine):
+        if before.doc is None:
+            continue
+        data = after.doc.data
+        for found in PREVIEW_RE.finditer(data):
+            previews += 1
+            page, cid = found.group(0), found.group(1).decode()
+            assert page.count(b"page-break-before: always") == 1 and b"page-break-after: always" in page  # a page of its own
+            mine = [text for qid, text in asked.items() if qid.startswith(cid + "-")]
+            assert mine and all(text.encode() in page for text in mine)  # the questions, and none of the answers
+            assert b"ebp-answer" not in page and b"Keep these in mind as you read." in page
+            # the preview stands before its section's text and the checkpoint after it
+            assert data.index(found.group(0)) < data.index(b'id="ebp-' + cid.encode() + b'"')
+        assert BLOCK_RE.sub(b"", PREVIEW_RE.sub(b"", data)) == before.doc.data  # nothing else was added
+    assert previews == report["counts"]["checkpoints"] == 8
+    # the firmware edition has no previews, and a rebuild takes them out of the visible one again
+    assert not any(b"ebp-preview" in sd.doc.data for sd in load_book(out / "fixture.prepared.epub").spine if sd.doc is not None)
+    assert rebuild(out, preview=False)["settings"]["preview"] is False
+    assert not any(b"ebp-preview" in sd.doc.data for sd in load_book(out / "fixture.checkpoints.epub").spine if sd.doc is not None)
+    assert cli.main(["rebuild", str(out), "--preview-questions", "on"]) == 0
+    assert any(b"ebp-preview" in sd.doc.data for sd in load_book(out / "fixture.checkpoints.epub").spine if sd.doc is not None)
 
 
 def test_text_is_escaped_and_multi_line_answers_become_paragraphs(tmp_path):
@@ -208,6 +241,13 @@ def test_the_web_app_runs_a_book_and_serves_review_rebuild_and_downloads(app):
     assert status == 200 and rebuilt["report"]["counts"]["questions"] == 7
     status, data = app("GET", f"/api/jobs/{job['id']}/files/fixture.checkpoints.epub")
     assert status == 200 and zipfile.is_zipfile(__import__("io").BytesIO(data))
+    # question previews in the exported book are switched by a rebuild, and the page is told which way they are
+    assert rebuilt["report"]["preview"] is False and b"ebp-preview" not in zipfile.ZipFile(__import__("io").BytesIO(data)).read("OEBPS/text/chapter-1.xhtml")
+    status, rebuilt = app("POST", f"/api/jobs/{job['id']}/rebuild", json_body={"preview": True})
+    assert status == 200 and rebuilt["report"]["preview"] is True and rebuilt["report"]["counts"]["questions"] == 7
+    with zipfile.ZipFile(__import__("io").BytesIO(app("GET", f"/api/jobs/{job['id']}/files/fixture.checkpoints.epub")[1])) as z:
+        assert sum(z.read(n).count(b'class="ebp-preview"') for n in z.namelist()) == 7
+    assert app("POST", f"/api/jobs/{job['id']}/rebuild", json_body={"preview": "yes"})[0] == 400
     assert app("GET", f"/api/jobs/{job['id']}/files/job.json")[0] == 404  # only the outputs can be downloaded
     assert app("GET", f"/api/jobs/{job['id']}/files/..%2Fjob.json")[0] == 404
     assert app("GET", "/api/jobs")[1]["jobs"][0]["counts"]["questions"] == 7

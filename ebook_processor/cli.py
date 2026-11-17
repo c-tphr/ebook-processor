@@ -55,6 +55,8 @@ def add_run_options(p: argparse.ArgumentParser) -> None:
     g = p.add_argument_group("output")
     g.add_argument("--epubcheck", action="store_true", default=None,
                    help="also run EPUBCheck on both books (needs Java; downloads EPUBCheck once)")
+    g.add_argument("--preview-questions", action="store_true", default=None,
+                   help="in the book with visible checkpoints, begin each section with a page that lists its questions")
     g.add_argument("--title-suffix", help="added to the title of the book with visible checkpoints "
                                           f"(default: {d.title_suffix!r}; '' for none)")
 
@@ -64,7 +66,7 @@ def settings_from(args: argparse.Namespace) -> Settings:
         density=args.density, section_words=args.section_words, max_questions=args.max_questions,
         content=args.content, kind=args.kind, rounds=args.rounds, model=args.model,
         checker_model=args.checker_model, effort=args.effort, jobs=args.jobs, part_words=args.part_words,
-        epubcheck=args.epubcheck, title_suffix=args.title_suffix)
+        epubcheck=args.epubcheck, title_suffix=args.title_suffix, preview=args.preview_questions)
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -91,6 +93,9 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--remove", nargs="+", default=[], metavar="ID", help="question ids to take out (c0004-p2)")
     p.add_argument("--restore", nargs="+", default=[], metavar="ID", help="question ids to put back")
     p.add_argument("--epubcheck", action="store_true", default=None, help="also run EPUBCheck on both books")
+    p.add_argument("--preview-questions", choices=("on", "off"),
+                   help="in the book with visible checkpoints, begin each section with a page that lists its "
+                        "questions, or stop doing so (default: as before)")
     p.add_argument("--cards", choices=("all", "missed", "reached"),
                    help="which questions go into the Anki deck and the text file, by your results in the web "
                         "reader: all, those you missed on the first try, or those you have met (default: as before)")
@@ -168,7 +173,8 @@ def cmd_process(args: argparse.Namespace) -> int:
 
 def cmd_rebuild(args: argparse.Namespace) -> int:
     out_dir = args.output.resolve()
-    report = rebuild(out_dir, args.remove, args.restore, epubcheck=args.epubcheck, cards=args.cards)
+    report = rebuild(out_dir, args.remove, args.restore, epubcheck=args.epubcheck, cards=args.cards,
+                     preview=None if args.preview_questions is None else args.preview_questions == "on")
     print_summary(report, out_dir)
     return EXIT_OK
 

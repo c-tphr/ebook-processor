@@ -528,7 +528,8 @@ async function showNotebook(id) {
     return h("div", { class: "ans" },
       h("p", { class: "asked" }, h("span", { class: "hang" }, h("span", { class: a.first === "correct" ? "lab blue" : a.first ? "lab inv" : "lab" }, a.first === "correct" ? "Recalled" : a.first ? "Missed" : "Not graded")), a.question),
       typed.map((t) => h("p", {}, h("span", { class: "hang m mute" }, "Answered"), t)), h("p", {}, h("span", { class: "hang m mute" }, "Reference"), a.answer),
-      h("div", { class: "row" }, h("a", { class: "m", ...openAt(a.go.chapter, a.go.word) }, "Open the passage")));
+      h("div", { class: "row" }, h("a", { class: "m", ...openAt(a.go.chapter, a.go.word) }, "Open the passage"),
+        a.previewed ? h("span", { class: "m mute", title: "The question was shown at the start of its section, before you read it" }, "Previewed before reading") : null));
   }
   function section(c, s) {
     const empty = !s.note && !s.items.length && !s.answers.length;
@@ -800,6 +801,12 @@ async function showRun(id) {
               e.target.disabled = true;
               try { job = await api(`/jobs/${id}/rebuild`, { method: "POST", json: { cards: k } }); drawHead(); await loadReview(); } catch (err) { alert(err.message); }
             } }, t)))) : null,
+        h("div", { class: "row", style: "margin-bottom:16px" }, h("span", { class: "m" }, "A page of questions before each section, in the book with visible checkpoints"),
+          h("div", { class: "filters", role: "group", style: "margin:0" }, [[false, "Off"], [true, "On"]].map(([v, t]) =>
+            h("button", { type: "button", "aria-pressed": String(!!r.preview === v), onclick: async (e) => {
+              e.target.disabled = true;
+              try { job = await api(`/jobs/${id}/rebuild`, { method: "POST", json: { preview: v } }); drawHead(); await loadReview(); } catch (err) { alert(err.message); }
+            } }, t)))),
         h("div", { class: "files" }, FILES.map(([key, title, what]) => {
           const name = r.files[key];
           return h("div", { class: "file" }, h("b", {}, title), h("small", {}, name ? what : "Not written. The report says why."),

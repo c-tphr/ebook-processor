@@ -4,6 +4,9 @@ After the last paragraph of each section that has a checkpoint, the chapter gets
 question alone on a page, then its answer on the next page. Pages are forced with CSS page breaks written as inline
 styles, which every mainstream reading system honours and which need no stylesheet added to the book.
 
+With previews switched on, each of those sections also begins with a page that lists its questions, to read with
+them in mind.
+
 Like the firmware-format build, this splices bytes into the original documents and re-serialises nothing: outside
 the inserted blocks every byte of every document is the original's. The only other change is the title in the
 package document, which gets a suffix so that the two editions can be told apart in a library.
@@ -33,6 +36,7 @@ QUESTION = "font-size: 1.15em; font-weight: bold; line-height: 1.4; margin: 0 0 
 HINT = "font-size: 0.9em; font-style: italic; margin: 0; text-indent: 0;"
 RECAP = "font-size: 0.9em; font-style: italic; margin: 0 0 1.2em 0; text-indent: 0;"
 ANSWER = "line-height: 1.5; margin: 0 0 0.8em 0; text-indent: 0;"
+PREVIEW = "font-weight: bold; line-height: 1.4; margin: 0 0 1.2em 0; text-indent: 0;"
 
 
 def insertion_point(block: Block) -> tuple[int, Element, bool] | None:
@@ -46,6 +50,21 @@ def insertion_point(block: Block) -> tuple[int, Element, bool] | None:
             return el.end_end, parent, moved
         if el.local in FLOW and not el.is_empty_tag:
             return el.end, el, moved
+        if parent is None:
+            return None
+        el, moved = parent, True
+
+
+def insertion_point_before(block: Block) -> tuple[int, Element, bool] | None:
+    """As ``insertion_point``, for a ``div`` that goes before the block: the first of a section."""
+    el = block.element
+    moved = False
+    while True:
+        parent = el.parent
+        if parent is not None and parent.local in FLOW:
+            return el.start, parent, moved
+        if el.local in FLOW and not el.is_empty_tag:
+            return el.start_end, el, moved
         if parent is None:
             return None
         el, moved = parent, True
@@ -80,6 +99,20 @@ def checkpoint_html(host: Element, checkpoint: dict[str, Any], label: str, numbe
     return html.encode("utf-8")
 
 
+def preview_html(host: Element, checkpoint: dict[str, Any], label: str) -> bytes:
+    """One page before a section: the questions its checkpoint will ask, without their answers."""
+    div, p, br = host.qname("div"), host.qname("p"), host.qname("br")
+    prompts = checkpoint["prompts"]
+    count = f"{len(prompts)} questions to read for" if len(prompts) > 1 else "A question to read for"
+    kicker = f"Coming up · {label}" if label else "Coming up"
+    html = (f'<{div} class="ebp-preview" id="ebp-preview-{checkpoint["id"]}" style="{PAGE}{PAGE_END}">'
+            f'<{p} class="ebp-kicker" style="{KICKER}">{escape(kicker, quote=False)}<{br}/>{count}</{p}>'
+            + "".join(_paragraphs(q["prompt"], PREVIEW, p, "ebp-prompt") for q in prompts)
+            + f'<{p} class="ebp-hint" style="{HINT}">Keep these in mind as you read. They are asked at the end of '
+              f"the section.</{p}></{div}>")
+    return html.encode("utf-8")
+
+
 def retitled_opf(book: Book, suffix: str) -> bytes | None:
     """The package document with ``suffix`` added to its first title, or ``None`` when there is nothing to change."""
     if not suffix:
@@ -91,12 +124,15 @@ def retitled_opf(book: Book, suffix: str) -> bytes | None:
 
 
 def build_visible(book: Book, draft: dict[str, Any], plan: list[PlannedSection],
-                  title_suffix: str = " (checkpoints)") -> tuple[bytes, list[str]]:
-    """The EPUB with visible checkpoints, and notes about checkpoints that could not be placed exactly."""
+                  title_suffix: str = " (checkpoints)", preview: bool = False) -> tuple[bytes, list[str]]:
+    """The EPUB with visible checkpoints, and notes about checkpoints that could not be placed exactly.
+
+    With ``preview``, each section that has a checkpoint begins with a page listing its questions."""
     sections = {s.id: s for s in plan}
     notes: list[str] = []
     by_doc: dict[str, list[tuple[int, int, bytes]]] = {}
     placed: list[str] = []
+    previews: list[str] = []
     for number, checkpoint in enumerate(draft["checkpoints"], start=1):
         section = sections[checkpoint["section"]]
         last = section.blocks[-1]
@@ -112,9 +148,18 @@ def build_visible(book: Book, draft: dict[str, Any], plan: list[PlannedSection],
             notes.append(f"Checkpoint {checkpoint['id']} appears a little after the end of its section "
                          f"({last.ref}), because the section ends inside a <{host.local}>.")
         more = section.end < len(doc.words)  # text follows in this document: it must start on a new page
+        # Where two insertions meet, they go in reading order: checkpoint 1, preview 2, checkpoint 2, ...
         by_doc.setdefault(doc.zip_path, []).append(
-            (offset, number, checkpoint_html(host, checkpoint, section.label, number, more)))
+            (offset, 2 * number, checkpoint_html(host, checkpoint, section.label, number, more)))
         placed.append(checkpoint["id"])
+        if preview:
+            before = insertion_point_before(section.blocks[0])
+            if before is None:
+                notes.append(f"The preview of checkpoint {checkpoint['id']} is missing from the book with visible "
+                             f"checkpoints: nothing around {section.blocks[0].ref} can hold it.")
+            else:
+                by_doc[doc.zip_path].append((before[0], 2 * number - 1, preview_html(before[1], checkpoint, section.label)))
+                previews.append(checkpoint["id"])
     replace = {}
     for sd in book.spine:
         if sd.zip_path in by_doc:
@@ -129,6 +174,6 @@ def build_visible(book: Book, draft: dict[str, Any], plan: list[PlannedSection],
     except EpubError as exc:  # pragma: no cover - a fault of this tool
         raise AssertionError(f"the book with visible checkpoints does not open: {exc}") from exc
     ids = {i for sd in result.spine if sd.doc is not None for i in sd.doc.ids}
-    missing = [c for c in placed if f"ebp-{c}" not in ids]
+    missing = [c for c in placed if f"ebp-{c}" not in ids] + [f"preview of {c}" for c in previews if f"ebp-preview-{c}" not in ids]
     assert not missing, f"checkpoints {missing} are not in the built book"
     return data, notes

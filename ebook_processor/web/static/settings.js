@@ -17,10 +17,10 @@
 
 const DEFAULTS = {
   theme: "system",                                    // general
-  face: "serif", size: 19, leading: 1.6, measure: "medium", read_mode: "page",   // reader
+  face: "serif", size: 19, leading: 1.6, measure: "medium", read_mode: "page", read_preview: false,   // reader
   nb_beside: true, nb_side: "left", nb_view: "scroll", nb_split: 0.5,            // notebook and its side reader
 };
-const RUN_KEYS = ["density", "max_questions", "kind", "content", "rounds", "model", "checker_model", "effort", "jobs", "epubcheck"];
+const RUN_KEYS = ["density", "max_questions", "kind", "content", "rounds", "model", "checker_model", "effort", "jobs", "epubcheck", "preview"];
 const TABS = [["general", "General"], ["add", "Add a book"], ["reader", "Reader"], ["notebook", "Notebook"], ["practice", "Practice"]];
 const values = { ...DEFAULTS };
 const listeners = new Set();
@@ -86,7 +86,7 @@ let serial = 0;
 function processing(inf, initial, onchange) {
   const d = inf.defaults || {}, dens = inf.densities || {}, models = inf.models || [];
   const v = { density: "medium", max_questions: d.max_questions, kind: d.kind, content: d.content, rounds: d.rounds, jobs: d.jobs,
-    model: "", checker_model: "", effort: "", epubcheck: false };
+    model: "", checker_model: "", effort: "", epubcheck: false, preview: false };
   for (const [k, x] of Object.entries(initial || {})) if (x != null && k in v) v[k] = x;
   const name = "st-density-" + (++serial);
   const fire = (key) => { if (onchange) onchange(key, read()[key]); };
@@ -150,6 +150,7 @@ function processing(inf, initial, onchange) {
     effort: select("effort", [["", "Each tool's default"], ...Object.entries(EFFORT)], v.effort),
     jobs: select("jobs", [[1, "1"], [2, "2"], [3, "3"], [4, "4"], [6, "6"]], v.jobs),
     epubcheck: select("epubcheck", [["", "Skip"], ["1", "Run on both books (needs Java)"]], v.epubcheck ? "1" : ""),
+    preview: select("preview", [["", "None"], ["1", "A page of questions before each section"]], v.preview ? "1" : ""),
   };
   function sync(byUser) {
     if (!models.length) return;
@@ -172,14 +173,14 @@ function processing(inf, initial, onchange) {
   function read() {
     return { density: density.querySelector("input:checked").value, max_questions: +c.max_questions.value, kind: c.kind.value,
       content: c.content.value, rounds: +c.rounds.value, model: c.model.value.trim(), checker_model: c.checker_model.value.trim(),
-      effort: c.effort.value, jobs: +c.jobs.value, epubcheck: c.epubcheck.value === "1" };
+      effort: c.effort.value, jobs: +c.jobs.value, epubcheck: c.epubcheck.value === "1", preview: c.preview.value === "1" };
   }
   function setOne(key, value) {
-    if (value == null) value = { density: "medium", model: "", checker_model: "", effort: "", epubcheck: false }[key] ?? d[key];
+    if (value == null) value = { density: "medium", model: "", checker_model: "", effort: "", epubcheck: false, preview: false }[key] ?? d[key];
     if (key === "density") { const box = density.querySelector(`input[value="${value}"]`); if (box) box.checked = true; return; }
     if (!c[key]) return;
     if (c[key].have) c[key].have(String(value));
-    c[key].value = key === "epubcheck" ? (value ? "1" : "") : String(value);
+    c[key].value = key === "epubcheck" || key === "preview" ? (value ? "1" : "") : String(value);
     if (c[key].tagName === "SELECT" && c[key].selectedIndex < 0) c[key].selectedIndex = 0;
     if (key === "model" || key === "checker_model") sync(false);
   }
@@ -191,7 +192,8 @@ function processing(inf, initial, onchange) {
     field("Independent check", c.rounds, "A question that fails its last check is left out and listed in the report."));
   const advanced = el("div", { class: "st-grid" },
     field("Model", c.model, modelHint), field("Model for checking", c.checker_model, checkerHint), field("Reasoning effort", c.effort, effortHint),
-    field("Calls at the same time", c.jobs), field("EPUBCheck", c.epubcheck));
+    field("Calls at the same time", c.jobs), field("EPUBCheck", c.epubcheck),
+    field("Question previews in the exported book", c.preview, "For the book with visible checkpoints. The reader in this app has its own setting, on the Reader tab of Settings."));
   return { main, advanced, read, set: setOne };
 }
 
@@ -300,6 +302,7 @@ const DRAW = {
       row("Line spacing", choice("leading", [[1.4, "Tight"], [1.6, "Normal"], [1.8, "Open"]])),
       row("Column width", choice("measure", [["narrow", "Narrow"], ["medium", "Medium"], ["wide", "Wide"]])),
       row("A new book opens in", choice("read_mode", [["page", "Pages"], ["scroll", "Scroll"], ["rsvp", "RSVP"]]), "A book you have started opens in the view you left it in."),
+      row("Preview questions", choice("read_preview", [[false, "Off"], [true, "On"]]), "A section begins with the questions of its checkpoint that you have not answered yet, to read with them in mind. RSVP pauses there to show them. Answers to previewed questions are marked as such in the notebook."),
       el("h4", {}, "Keys"),
       el("p", { style: "margin:12px 0 0;max-width:62ch" }, "← → turn pages or step sentences. Space plays RSVP. 1 2 3 change the view. c opens the contents, / searches. With text selected, h highlights it and n adds a note; with nothing selected, n notes the paragraph under the pointer.")];
   },

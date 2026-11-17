@@ -85,6 +85,7 @@ Things that work in tests but have not been confirmed in real use, and facts tha
 | Usage-limit handling | A run recognises the plan's usage limit by the wording of Claude Code's error. No real limit message has been seen |
 | Codex with a real login | The Codex side was built against the real program (codex-cli 0.169.0): it accepts every option the tool passes, its model list is read, and the instructions it would show the model were inspected. No call reached a model, because the machine it was built on had no ChatGPT login and no route to OpenAI. Unconfirmed: that the reply schema is accepted as it is, the wording of a real usage-limit message, the token counts, and that Codex opens pictures in figures mode |
 | macOS, WSL and Windows itself | Everything has run on Linux only. On Windows itself, starting Claude Code and Codex by their full paths (npm installs them as `.cmd` scripts there) is covered by tests of the path lookup, not by a run on Windows. Whether Codex's read-only sandbox needs any setup on Windows is unknown |
+| Preview pages in the exported book | They pass EPUBCheck and are built like the checkpoint pages, but were not looked at in a reading app or on a device |
 | The visible-checkpoints book on a real reader | Page breaks were checked by rendering to pages in a browser engine, not in a reading app or on a device |
 | The Anki deck in Anki | The deck was checked by reading its database, not by importing it |
 | Fiction and technical books | The rules are written; no such book has been processed |

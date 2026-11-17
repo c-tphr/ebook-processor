@@ -37,6 +37,7 @@ class Settings:
     part_words: int = 10000  # about how much text one drafting call reads
     epubcheck: bool = False  # run EPUBCheck on both output books (needs Java and a one-time download)
     title_suffix: str = " (checkpoints)"  # added to the title of the book with visible checkpoint pages
+    preview: bool = False  # the book with visible checkpoints also shows a section's questions before the section
 
     def validate(self) -> None:
         if not 50 <= self.min_words < self.max_words <= 20000:

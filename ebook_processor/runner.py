@@ -65,8 +65,10 @@ def _open_run(out_dir: Path) -> tuple[Any, bytes, dict[str, Any]]:
 
 def rebuild(out_dir: Path, remove: Iterable[str] = (), restore: Iterable[str] = (),
             removed: Iterable[str] | None = None, epubcheck: bool | None = None,
-            cards: str | None = None) -> dict[str, Any]:
-    """Build the outputs again from the saved run, without calling Claude.
+            cards: str | None = None, preview: bool | None = None) -> dict[str, Any]:
+    """Build the outputs again from the saved run, without calling a model.
+
+    ``preview`` switches the question previews of the book with visible checkpoints on or off.
 
     ``remove`` and ``restore`` change which questions the user has taken out; ``removed``, when given, is the
     complete list instead. Only questions that passed (or were kept unchecked) can be restored: a question the
@@ -90,6 +92,8 @@ def rebuild(out_dir: Path, remove: Iterable[str] = (), restore: Iterable[str] = 
         if cards not in CARD_CHOICES:
             raise PipelineError(f"cards must be one of {', '.join(CARD_CHOICES)}")
         state["cards"] = cards
+    if preview is not None:
+        state["settings"]["preview"] = bool(preview)
     write_json(work_dir(out_dir) / STATE_FILE, state)
     return build_outputs(book, original, state, out_dir,
                          state["settings"].get("epubcheck", False) if epubcheck is None else epubcheck)

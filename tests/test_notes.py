@@ -96,6 +96,13 @@ def test_the_notebook_follows_the_book_and_the_export_leaves_out_what_is_empty(b
     assert md.startswith("# The Lighthouse Keeper's Almanac\n\nMara Ellery Quill\n\nAbout the book.\n\n## The Lamp Room\n\n### Arrival at Gannet Rock\n\nMy summary.")
     assert "> " + store["highlights"][0]["text"] + "\n\nWhy *this* matters.\n\nA margin note\n" in md
     assert "(missed)\n  - Answered: what I said\n  - Reference: " in md
+    assert first["answers"][0]["previewed"] is False
+    # A question shown at the start of its section before it was graded is marked; one first shown afterwards is not.
+    early = notes.notebook(book, store, {**state, "x_previewed": {"c0001-p1": "s"}})   # "s" sorts before the grade's "t"
+    late = notes.notebook(book, store, {**state, "x_previewed": {"c0001-p1": "u"}})
+    answer_of = lambda d: next(c for c in d["chapters"] if c["index"] == 2)["sections"][0]["answers"][0]
+    assert answer_of(early)["previewed"] is True and answer_of(late)["previewed"] is False
+    assert "(missed, previewed)\n" in notes.markdown(early) and "previewed" not in notes.markdown(late)
     assert "Winding the Clockwork" not in md and "The Fog Season" not in md  # nothing marked there
     plain = notes.markdown(data, answers=False)
     assert "Checkpoint" not in plain and "My summary." in plain

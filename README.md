@@ -101,6 +101,7 @@ That processes the book with the default options and prints where the files are.
 | `--model`, `--checker-model`, `--effort` | The model that drafts, the model that checks, and the reasoning effort. `ebook-processor models` lists the models your logins can use. See "Choosing the models" below | Claude Code's defaults |
 | `--jobs N` | Calls to Claude at the same time | 3 |
 | `--epubcheck` | Also run EPUBCheck on both books (needs Java; downloads EPUBCheck once) | off |
+| `--preview-questions` | In the book with visible checkpoints, begin each section with a page that lists its questions (see "Previewing the questions") | off |
 
 `ebook-processor process --help` lists them all.
 
@@ -160,6 +161,13 @@ Only your **first** grade for a question is kept: a Correct after a reread does 
 Also in the reader: contents by chapter and section, search, and footnotes that open in place. How the text is set (serif or grotesk, size, line spacing, column width) is in **Settings**, on the Reader tab.
 
 The strip at the bottom is the book: one block per section, with a square for each question (blue recalled, black missed, hollow not yet met). The book's page shows the same map, your time and pace per view, and lets you choose which cards go into the Anki deck and the text file: all, only those you missed on the first try, or only those you have met. Cards are tagged `recall::correct`, `recall::missed` or `recall::unseen`.
+
+### Previewing the questions
+
+Reading with the questions in mind can help. Two separate switches show a section's questions before the section:
+
+- **In the reader.** Settings, Reader tab, **Preview questions**. A section then begins with a box listing the questions of its checkpoint that you have not answered yet; a completed checkpoint has none. In RSVP, playback pauses at the section's start and shows them until you press play. The first time a question is shown this way is recorded, and an answer given after that is labelled "Previewed before reading" in the notebook and "previewed" in its Markdown export. It is graded and scheduled like any other.
+- **In the exported book.** The book with visible checkpoints can begin each section with a page that lists its questions, without the answers: `--preview-questions` when processing, **Question previews in the exported book** under Advanced in the app, or afterwards on the book's page and with `ebook-processor rebuild Book-processed --preview-questions on` (or `off`). The Picco firmware edition is not changed.
 
 ### Highlights, notes and the notebook
 

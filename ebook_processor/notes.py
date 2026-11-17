@@ -169,6 +169,12 @@ def notebook(book: ReadingBook, store: dict[str, Any], reading_state: dict[str, 
     manifest = book.manifest()
     sources = sources or {}
     grades = (reading_state or {}).get("grades") or {}
+    shown = (reading_state or {}).get("x_previewed") or {}
+
+    def previewed(pid: str) -> bool:
+        """The question was shown ahead of its section before it was first graded (or has no grade yet)."""
+        return pid in shown and (pid not in grades or shown[pid] <= grades[pid].get("at", ""))
+
     attempts: dict[str, list[dict[str, Any]]] = {}
     for a in (reading_state or {}).get("x_attempts") or []:
         attempts.setdefault(a["id"], []).append({"at": a["at"], "grade": a["grade"], "text": a.get("text") or ""})
@@ -189,6 +195,7 @@ def notebook(book: ReadingBook, store: dict[str, Any], reading_state: dict[str, 
             used.update(i["id"] for i in mine)
             answers = [{"id": p["id"], "question": p["prompt"], "answer": p["answer"],
                         "first": grades.get(p["id"], {}).get("first"), "attempts": attempts.get(p["id"], []),
+                        "previewed": previewed(p["id"]),
                         "go": sources.get(p["id"]) or {"chapter": c["index"], "word": s["start"]}}
                        for p in s["prompts"] if p["id"] in grades or p["id"] in attempts]
             rows.append({"id": s["id"], "label": s["label"], "start": s["start"], "end": s["end"],
@@ -238,7 +245,7 @@ def markdown(data: dict[str, Any], answers: bool = True) -> str:
                 part += ["**Checkpoint**", ""]
                 for a in s["answers"]:
                     grade = {"correct": "recalled", "incorrect": "missed"}.get(a["first"] or "", "not graded")
-                    part += [f"- **{a['question']}** ({grade})"]
+                    part += [f"- **{a['question']}** ({grade}{', previewed' if a.get('previewed') else ''})"]
                     typed = next((t["text"] for t in a["attempts"] if t["text"]), "")
                     if typed:
                         part += ["  - Answered: " + typed.replace("\n", " ")]

@@ -381,6 +381,7 @@ class Jobs:
         if report is not None:
             job["report"] = {k: report.get(k) for k in ("counts", "files", "firmware_format_ok", "notes", "warnings",
                                                         "usage", "complete", "doubted_breaks", "excluded", "cards")}
+            job["report"]["preview"] = bool((report.get("settings") or {}).get("preview"))
         job.update({k: v for k, v in self.summary(self.jobs[job_id]).items() if k in ("can_read", "reading", "practice", "notes")})
         if job["can_read"]:
             job["results"] = reading.results(reading.load_state(self.folder(job_id)))
@@ -484,13 +485,14 @@ class Jobs:
                     self.cancels.pop(job_id, None)
                     self._store(job)
 
-    def rebuild(self, job_id: str, removed: list[str] | None, cards: str | None = None) -> dict[str, Any]:
+    def rebuild(self, job_id: str, removed: list[str] | None, cards: str | None = None,
+                preview: bool | None = None) -> dict[str, Any]:
         with self.lock:
             job = self.get(job_id)
             if job["status"] != "done" or job.get("kind") == "imported":
                 raise ApiError(HTTPStatus.CONFLICT, "this book has no finished run to rebuild from")
         try:
-            report = rebuild(self.folder(job_id), removed=removed, cards=cards)
+            report = rebuild(self.folder(job_id), removed=removed, cards=cards, preview=preview)
         except PipelineError as exc:
             raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
         with self.lock:
@@ -572,7 +574,7 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(raw, dict):
             raise ApiError(HTTPStatus.BAD_REQUEST, "settings must be an object")
         allowed = {"density", "section_words", "max_questions", "content", "kind", "rounds", "model", "checker_model",
-                   "effort", "jobs", "epubcheck"}
+                   "effort", "jobs", "epubcheck", "preview"}
         options = {k: (v if v != "" else None) for k, v in raw.items() if k in allowed}
         try:
             return from_options(**options)
@@ -764,12 +766,14 @@ class Handler(BaseHTTPRequestHandler):
                     raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
             case ("POST", ["jobs", job_id, "rebuild"]):
                 request = self.json_body()
-                removed, cards = request.get("removed"), request.get("cards")
+                removed, cards, preview = request.get("removed"), request.get("cards"), request.get("preview")
+                if preview is not None and not isinstance(preview, bool):
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "'preview' must be true or false")
                 if removed is not None and (not isinstance(removed, list) or not all(isinstance(r, str) for r in removed)):
                     raise ApiError(HTTPStatus.BAD_REQUEST, "'removed' must be a list of question ids")
                 if cards is not None and not isinstance(cards, str):
                     raise ApiError(HTTPStatus.BAD_REQUEST, "'cards' must be all, missed or reached")
-                return self.send_json(jobs.rebuild(job_id, removed, cards))
+                return self.send_json(jobs.rebuild(job_id, removed, cards, preview))
             case ("GET", ["jobs", job_id, "files", name]):
                 job = jobs.get(job_id)
                 folder = jobs.folder(job_id)

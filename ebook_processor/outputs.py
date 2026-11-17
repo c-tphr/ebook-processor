@@ -97,7 +97,8 @@ def build_outputs(book: Book, original: bytes, state: dict[str, Any], out_dir: P
 
     # 2. visible checkpoints
     name = f"{stem}.checkpoints.epub"
-    visible, visible_notes = build_visible(book, draft, plan, state["settings"].get("title_suffix", " (checkpoints)"))
+    visible, visible_notes = build_visible(book, draft, plan, state["settings"].get("title_suffix", " (checkpoints)"),
+                                           preview=bool(state["settings"].get("preview")))
     (out_dir / name).write_bytes(visible)
     files["visible"] = name
     notes += visible_notes
@@ -295,6 +296,7 @@ def report_markdown(r: dict[str, Any]) -> str:
                                              "figures": "shown as text; figures viewed"}[s["content"]]),
         ("Kind of book", s["kind"]),
         ("Checks per question", "none" if s["rounds"] == 0 else f"up to {s['rounds']}"),
+        ("Question previews", "a page before each section, in the book with visible checkpoints" if s.get("preview") else "none"),
         ("Instructions version", r["instructions_version"]),
         ("Models", models),
         ("Calls to the models", f"{u['calls']} ({u['input_tokens']:,} tokens in, {u['output_tokens']:,} out; "

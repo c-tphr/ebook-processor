@@ -57,6 +57,8 @@ codex login
 
 Claude Code and Codex are independent: with only Codex installed, name a Codex model for the run (`--model codex`, or the Model field in the app).
 
+On Windows itself (not WSL), npm installs Codex as a `codex.cmd` script. The tool looks up its full path and, when it finds the `codex.exe` that the script starts, runs that directly.
+
 ## Updating
 
 ```bash

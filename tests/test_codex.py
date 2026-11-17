@@ -17,7 +17,7 @@ import pytest
 
 from ebook_processor import cli, prompts
 from ebook_processor.llm import (BackendError, Backends, BackendUnavailable, CodexBackend, Completion, ScriptedBackend,
-                                 UsageLimitError, available_models, split_model)
+                                 UsageLimitError, available_models, find_program, native_codex, split_model)
 from ebook_processor.outputs import _price
 from ebook_processor.settings import from_options
 from ebook_processor.web.server import make_server
@@ -64,7 +64,7 @@ config = dict(a.split("=", 1) for a in args if "=" in a and args[args.index(a) -
 calls = os.path.join(here, "calls.json")
 seen = json.load(open(calls)) if os.path.exists(calls) else []
 seen.append({"args": args, "stdin": sys.stdin.read(), "cwd": os.getcwd(), "cwd_holds": sorted(os.listdir(".")),
-             "instructions": open(json.loads(config["model_instructions_file"])).read(),
+             "instructions": open(config["model_instructions_file"]).read(),
              "schema": json.load(open(value("--output-schema")))})
 json.dump(seen, open(calls, "w"))
 step = plan["steps"][min(len(seen), len(plan["steps"])) - 1]
@@ -159,7 +159,8 @@ def test_codex_is_asked_with_our_instructions_in_a_read_only_empty_folder(tmp_pa
     for flag in ("--json", "--ephemeral", "--skip-git-repo-check", "--ignore-user-config", "--ignore-rules"):
         assert flag in args
     config = [args[n + 1] for n, a in enumerate(args) if a == "-c"]
-    assert 'model_reasoning_effort="high"' in config and "project_doc_max_bytes=0" in config
+    assert "model_reasoning_effort=high" in config and "project_doc_max_bytes=0" in config
+    assert not any('"' in c for c in config)  # no quotes inside an argument: they do not survive a Windows .cmd script
     assert "include_environment_context=false" in config  # nothing to open, so nothing is said about folders
     assert not Path(call["cwd"]).exists()  # the temporary folder is gone afterwards
 
@@ -225,6 +226,30 @@ def test_codex_must_be_installed_and_signed_in(tmp_path):
         CodexBackend(executable=exe).check_available()
     with pytest.raises(BackendUnavailable, match="npm install -g @openai/codex"):
         CodexBackend(executable=str(tmp_path / "missing")).check_available()
+
+
+def test_on_windows_a_program_is_started_by_its_full_path_and_codex_by_its_exe(tmp_path, monkeypatch):
+    """npm writes ``codex.cmd`` on Windows, which cannot be started by the bare name ``codex``."""
+    npm = tmp_path / "npm"
+    vendor = npm / "node_modules" / "@openai" / "codex" / "node_modules" / "@openai" / "codex-win32-x64" / "vendor"
+    for triple in ("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"):
+        (vendor / triple / "bin").mkdir(parents=True)
+        (vendor / triple / "bin" / "codex.exe").write_bytes(b"")
+    for name in ("codex", "codex.cmd", "codex.ps1", "claude.cmd"):  # what npm puts beside each other
+        (npm / name).write_text("", encoding="utf-8")
+        (npm / name).chmod(0o755)
+    monkeypatch.setenv("PATH", str(npm))
+    assert find_program("codex", windows=True) == str(npm / "codex.cmd")  # not the script for other shells
+    assert find_program("claude", windows=True) == str(npm / "claude.cmd") and find_program("nothing", windows=True) is None
+    monkeypatch.setattr("platform.machine", lambda: "AMD64")
+    assert native_codex(str(npm / "codex.cmd"), windows=True) == str(vendor / "x86_64-pc-windows-msvc" / "bin" / "codex.exe")
+    monkeypatch.setattr("platform.machine", lambda: "ARM64")
+    assert native_codex(str(npm / "codex.cmd"), windows=True) == str(vendor / "aarch64-pc-windows-msvc" / "bin" / "codex.exe")
+    assert native_codex(str(tmp_path / "elsewhere" / "codex.cmd"), windows=True) is None  # nothing beside that script
+    assert native_codex(str(npm / "codex.cmd"), windows=False) is None and native_codex("C:/tools/codex.exe", windows=True) is None
+    (npm / "codex.exe").write_bytes(b"")  # another kind of install: the program itself is on PATH
+    (npm / "codex.exe").chmod(0o755)
+    assert find_program("codex", windows=True) == str(npm / "codex.exe")
 
 
 def test_the_models_are_read_from_codexs_catalogue(tmp_path):

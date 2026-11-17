@@ -15,6 +15,8 @@ also where a backend that calls an API directly would go.
 from __future__ import annotations
 
 import json
+import os
+import platform
 import queue
 import re
 import shutil
@@ -75,6 +77,36 @@ def split_model(spec: str | None) -> tuple[str, str | None]:
     return ("codex" if spec.lower().startswith("gpt-") else "claude"), spec
 
 
+def find_program(name: str, windows: bool | None = None) -> str | None:
+    """The full path of a program on PATH, or ``None``.
+
+    On Windows a program can only be started by its bare name when it is an ``.exe``. Tools installed with npm
+    are a ``.cmd`` script there, which has to be started by its full path. So the path is looked up, and an
+    ``.exe`` is preferred to a script of the same name.
+    """
+    windows = os.name == "nt" if windows is None else windows
+    if windows and not os.path.splitext(name)[1]:
+        for ext in (".exe", ".cmd", ".bat"):
+            found = shutil.which(name + ext)
+            if found:
+                return found
+    return shutil.which(name)
+
+
+def native_codex(script: str, windows: bool | None = None) -> str | None:
+    """The ``codex.exe`` behind the ``codex.cmd`` that npm writes on Windows, when it can be found beside it.
+
+    The script starts Node, which starts the real program. Started directly, the program gets its arguments
+    untouched by the Windows command interpreter, and it is the process that a timeout stops.
+    """
+    windows = os.name == "nt" if windows is None else windows
+    if not windows or not script.lower().endswith((".cmd", ".bat", ".ps1")):
+        return None
+    found = sorted(str(f) for f in (Path(script).parent / "node_modules" / "@openai").glob("**/vendor/*/bin/codex.exe"))
+    wanted = "aarch64" if platform.machine().lower() in ("arm64", "aarch64") else "x86_64"
+    return next((f for f in found if wanted in f), found[0] if found else None)
+
+
 def _with_retries(tool: str, role: str, retries: int, backoff: tuple[float, ...], sleep: Callable[[float], None],
                   once: Callable[[], "Completion"]) -> "Completion":
     """Call ``once`` again after a failure that looks temporary. Limits and a missing login are not retried."""
@@ -130,9 +162,13 @@ class ClaudeCodeBackend:
     backoff: tuple[float, ...] = (15.0, 60.0, 180.0)
     sleep: Callable[[float], None] = field(default=time.sleep, repr=False)
 
+    def program(self) -> str:
+        """What to start: on Windows the full path, as only an .exe starts by its bare name there."""
+        return (find_program(self.executable) or self.executable) if os.name == "nt" else self.executable
+
     def check_available(self) -> str:
         """Claude Code's version, or ``BackendUnavailable`` with what to do."""
-        path = shutil.which(self.executable)
+        path = find_program(self.executable)
         if path is None:
             raise BackendUnavailable(
                 f"Claude Code was not found ('{self.executable}' is not on PATH). Install it "
@@ -152,7 +188,7 @@ class ClaudeCodeBackend:
         Claude Code's default. Returns an empty list when Claude Code cannot say (too old, not signed in).
         """
         request = json.dumps({"type": "control_request", "request_id": "models", "request": {"subtype": "initialize"}})
-        cmd = [self.executable, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+        cmd = [self.program(), "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
                "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands", "--setting-sources", "",
                "--tools", ""]
         try:
@@ -182,7 +218,7 @@ class ClaudeCodeBackend:
 
     def command(self, system: str, schema: dict[str, Any], model: str | None, read_dir: Path | None) -> list[str]:
         cmd = [
-            self.executable, "-p",
+            self.program(), "-p",
             "--output-format", "json",
             "--json-schema", json.dumps(schema, separators=(",", ":")),
             "--system-prompt", system,
@@ -290,10 +326,18 @@ class CodexBackend:
     sleep: Callable[[float], None] = field(default=time.sleep, repr=False)
     models_note: str = field(default="", repr=False)  # why ``list_models`` last came back empty
 
+    def program(self) -> str:
+        """What to start. On Windows that is the full path, and the real program in place of npm's script when
+        it is found (see ``native_codex``)."""
+        if os.name != "nt":
+            return self.executable
+        found = find_program(self.executable)
+        return (native_codex(found) if found else None) or found or self.executable
+
     def check_available(self) -> str:
         """Codex's version, or ``BackendUnavailable`` with what to do."""
-        path = shutil.which(self.executable)
-        if path is None:
+        path = find_program(self.executable) and self.program()
+        if not path:
             raise BackendUnavailable(
                 f"Codex was not found ('{self.executable}' is not on PATH). Install it "
                 "(npm install -g @openai/codex), run 'codex login' and sign in with your ChatGPT account, then "
@@ -334,7 +378,7 @@ class CodexBackend:
 
     def _models_from_app_server(self, timeout: float) -> list[dict[str, Any]]:
         """Ask ``codex app-server`` over its standard input and output: one JSON message per line."""
-        proc = subprocess.Popen([self.executable, "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        proc = subprocess.Popen([self.program(), "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL, text=True, encoding="utf-8")
         lines: queue.Queue[str | None] = queue.Queue()
 
@@ -405,7 +449,7 @@ class CodexBackend:
         """``codex debug models``: first as Codex refreshes it, then as shipped with the program."""
         said = ""
         for extra in ([], ["--bundled"]):
-            proc = subprocess.run([self.executable, "debug", "models", *extra], capture_output=True, text=True,
+            proc = subprocess.run([self.program(), "debug", "models", *extra], capture_output=True, text=True,
                                   encoding="utf-8", timeout=timeout)
             try:
                 catalogue = json.loads(proc.stdout).get("models")
@@ -427,8 +471,10 @@ class CodexBackend:
 
     def command(self, system_file: Path, schema_file: Path, answer_file: Path, model: str | None,
                 read_dir: Path | None) -> list[str]:
+        # Values given with -c are written without quotes: Codex takes a value that is not valid TOML as plain
+        # text, and an argument with quotes inside it does not survive a Windows .cmd script.
         cmd = [
-            self.executable, "exec", "--json", "--color", "never",
+            self.program(), "exec", "--json", "--color", "never",
             "--ephemeral",  # nothing of the book is kept in Codex's session history
             "--skip-git-repo-check",  # the working folder is not a repository
             "--ignore-user-config",  # no user settings, MCP servers or profiles (the login is still used)
@@ -436,7 +482,7 @@ class CodexBackend:
             "--sandbox", "read-only",  # the agent can change nothing, and nobody is there to approve anything
             "--output-schema", str(schema_file),
             "--output-last-message", str(answer_file),
-            "-c", f"model_instructions_file={json.dumps(str(system_file))}",  # in place of Codex's own instructions
+            "-c", f"model_instructions_file={system_file}",  # in place of Codex's own instructions
             "-c", "project_doc_max_bytes=0",  # no AGENTS.md of the working folder
             "-c", "include_apps_instructions=false",
             "-c", "include_collaboration_mode_instructions=false",
@@ -446,7 +492,7 @@ class CodexBackend:
         if model:
             cmd += ["--model", model]
         if self.effort:
-            cmd += ["-c", f"model_reasoning_effort={json.dumps(self.effort)}"]
+            cmd += ["-c", f"model_reasoning_effort={self.effort}"]
         return cmd + ["-"]  # the task is read from standard input
 
     def complete(self, *, role: str, system: str, prompt: str, schema: dict[str, Any], model: str | None = None,
@@ -457,7 +503,7 @@ class CodexBackend:
     def _once(self, system: str, prompt: str, schema: dict[str, Any], model: str | None,
               read_dir: Path | None) -> Completion:
         started = time.monotonic()
-        with tempfile.TemporaryDirectory(prefix="ebook-processor-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="ebook-processor-", ignore_cleanup_errors=True) as tmp:
             folder = Path(tmp)
             (folder / "instructions.md").write_text(system, encoding="utf-8")
             (folder / "schema.json").write_text(json.dumps(schema), encoding="utf-8")

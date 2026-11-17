@@ -10,7 +10,7 @@ These were chosen as later work by the project owner.
 | --- | --- | --- |
 | Personal knowledge system | Grow the per-book notebook into a full system in the spirit of Zettelkasten: conceptual "permanent notes" that stand apart from any one book, links between notes with back-links, and other features familiar from Obsidian | The first step, a notebook per book for "literature notes", is the current highlights and notes work |
 | Notebook across all books | One place for every book's highlights and notes, with search and filtering | Part of the knowledge system above |
-| Questions from highlights | Generate a practice question automatically from a passage you highlighted, and add it to Practice | Named when highlights were first put off. Whether it comes with the first version of highlights is still to be decided |
+| Questions from highlights | Turn a highlighted passage into a practice card: Claude drafts a question and answer from the passage for you to accept, reword or discard, or you type your own | Deferred again when highlights were scoped: the first version of highlights uses no Claude. To follow once highlights have been in use for a while |
 
 ## Considered and not chosen for now
 
@@ -52,6 +52,8 @@ Options that came up in the interviews and were passed over. They are not planne
 | --- | --- |
 | Colours or named kinds of highlight | One kind of highlight was chosen. Named kinds (Key idea, Question, Quote) would let the notebook filter and let question generation treat them differently |
 | Export for other tools | A CSV in the layout Readwise imports, and JSON. Markdown export was chosen |
+| Links between notes | `[[double-bracket]]` links resolved in the notebook. Notes are Markdown, so this has a format to build on; it belongs with the knowledge system above |
+| A summary required at every checkpoint | The reader will offer a section note after a checkpoint; it will not insist on one |
 
 ### Narration
 

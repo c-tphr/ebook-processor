@@ -58,7 +58,7 @@ a { color: inherit; }
 
 /* a titled band: black square, title on the left, content on the right */
 .band { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 20px var(--gut); padding: 36px 0; border-bottom: 1px solid var(--ghost); }
-.band > h2 { font: 500 26px/1.1 var(--grot); letter-spacing: -0.035em; margin: 0; display: flex; gap: 10px; align-items: baseline; }
+.band > h2 { font: 500 26px/1.1 var(--grot); letter-spacing: -0.035em; margin: 0; display: flex; gap: 10px; align-items: baseline; align-self: start; }
 .band > h2::before { content: ""; width: 11px; height: 11px; background: var(--ink); flex: none; transform: translateY(-1px); }
 .band > h2 small { display: block; }
 .band .side { grid-column: 1; }
@@ -132,13 +132,19 @@ mark { background: color-mix(in srgb, var(--blue) 24%, transparent); color: inhe
 .md ul, .md ol { padding-left: 1.4em; } .md blockquote { padding-left: 12px; border-left: 3px solid var(--ghost); color: var(--mute); }
 .md code, .md pre { font: 0.85em/1.5 var(--mono); } .md pre { background: var(--sheet); border: 1px solid var(--ghost); padding: 10px 12px; white-space: pre-wrap; }
 .md h4, .md h5, .md h6 { font: 600 1em/1.3 var(--grot); margin: 0.8em 0 0.4em; }
-.nb .slot { margin: 10px 0 14px; } .nb .slot > .row { margin-top: 8px; }
+.nb .slot { margin: 10px 0 14px; } .nb .slot > .row { margin-top: 8px; gap: 20px; }
+.nb button.text { padding-left: 0; padding-right: 0; }   /* the links start at the column's edge, like the text */
 .nb textarea { width: 100%; min-height: 120px; font: 16px/1.5 Georgia, "Iowan Old Style", serif; color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 10px 12px; resize: vertical; }
 .nb .quote { margin: 16px 0 6px; padding: 2px 0 2px 14px; border-left: 8px solid color-mix(in srgb, var(--blue) 40%, transparent); font: 17px/1.55 Georgia, "Iowan Old Style", serif; max-width: 72ch; }
 .nb .quote a { text-decoration: none; } .nb .quote a:hover { color: var(--blue); }
 .nb .ans { margin: 14px 0 0; padding-top: 12px; border-top: 1px dotted var(--mute); max-width: 76ch; }
-.nb .ans p { margin: 6px 0 0; } .nb .ans .asked { font-weight: 600; margin-top: 0; text-wrap: pretty; }
-.nb .ans .asked .lab { font-weight: 400; margin-right: 10px; vertical-align: 2px; } .nb .ans .m { margin-right: 6px; }
+.nb .ans p { margin: 8px 0 0; text-wrap: pretty; } .nb .ans .asked { font-weight: 600; margin-top: 0; }
+/* The labels hang in the margin to the left of the text, right-aligned on one line, so that questions and answers
+   start at the same edge as everything else in the column. Each sits on the baseline of its paragraph's first line. */
+.nb .ans .hang { display: inline-block; width: 104px; margin-left: -120px; margin-right: 16px; text-align: right; white-space: nowrap; text-indent: 0; }
+.nb .ans .hang .lab { font-weight: 400; vertical-align: 1px; }
+.nb .ans.tight .hang { width: auto; margin-left: 0; margin-right: 10px; }   /* no room: beside a tall chapter title */
+@media (max-width: 760px) { .nb .ans .hang { width: auto; margin-left: 0; margin-right: 10px; } }
 .nb .section.bare { padding: 10px 0 6px; } .nb .section.bare > header b { font-size: 16px; color: var(--mute); }
 .hero h1.book { font-size: clamp(40px, 7vw, 88px); line-height: 0.95; text-wrap: balance; margin-top: 10px; }
 .map .col > i.no { background: var(--ink); }
@@ -534,8 +540,8 @@ async function showNotebook(id) {
   function answer(a) {
     const typed = a.attempts.filter((t) => t.text).map((t) => t.text);
     return h("div", { class: "ans" },
-      h("p", { class: "asked" }, h("span", { class: a.first === "correct" ? "lab blue" : a.first ? "lab inv" : "lab" }, a.first === "correct" ? "Recalled" : a.first ? "Missed" : "Not graded"), a.question),
-      typed.map((t) => h("p", {}, h("span", { class: "m mute" }, "Mine "), t)), h("p", {}, h("span", { class: "m mute" }, "Answer "), a.answer));
+      h("p", { class: "asked" }, h("span", { class: "hang" }, h("span", { class: a.first === "correct" ? "lab blue" : a.first ? "lab inv" : "lab" }, a.first === "correct" ? "Recalled" : a.first ? "Missed" : "Not graded")), a.question),
+      typed.map((t) => h("p", {}, h("span", { class: "hang m mute" }, "Mine"), t)), h("p", {}, h("span", { class: "hang m mute" }, "Answer"), a.answer));
   }
   function section(c, s) {
     const empty = !s.note && !s.items.length && !s.answers.length;
@@ -556,6 +562,11 @@ async function showNotebook(id) {
       data.chapters.filter((c) => c.sections.length || c.note || c.loose.length).map((c) => band(c.title,
         c.sections.length !== 1 || c.note ? target({ on: "chapter", chapter: c.index }, c.note && c.note.text, "Add a note on this chapter") : null,
         c.loose.map(item), c.sections.map((s) => section(c, s)))));
+    // A label must not run into a chapter title that reaches down beside it: there it stays in the text.
+    for (const part of body.querySelectorAll(".band")) {
+      const title = part.querySelector("h2").getBoundingClientRect().bottom;
+      for (const a of part.querySelectorAll(".ans")) a.classList.toggle("tight", a.getBoundingClientRect().top < title + 8);
+    }
   }
   load();
 }

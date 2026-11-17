@@ -197,6 +197,7 @@ def test_pages_are_the_ones_the_app_started_with(tmp_path, monkeypatch):
     static.mkdir()
     (static / "index.html").write_text("<title>library, first version</title>", encoding="utf-8")
     (static / "reader.html").write_text("<title>reader, first version</title>", encoding="utf-8")
+    (static / "settings.js").write_text("// settings, first version", encoding="utf-8")
     monkeypatch.setattr(web, "STATIC", static)
     server = web.make_server(tmp_path / "data", "127.0.0.1", 0, claude={"ok": True, "version": "test"}, models=[])
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -206,6 +207,50 @@ def test_pages_are_the_ones_the_app_started_with(tmp_path, monkeypatch):
         with urllib.request.urlopen(base + "/", timeout=10) as response:
             assert response.read() == b"<title>library, first version</title>"
             assert response.headers["Content-Type"] == "text/html; charset=utf-8"
+            assert response.headers["Content-Security-Policy"] == "frame-ancestors 'self'"  # no other site frames it
+        (static / "settings.js").write_text("// settings, second version", encoding="utf-8")
+        with urllib.request.urlopen(base + "/static/settings.js", timeout=10) as response:
+            assert response.read() == b"// settings, first version"
+            assert response.headers["Content-Type"] == "text/javascript; charset=utf-8"
+        with pytest.raises(urllib.error.HTTPError):  # only the script is served this way, not the pages or other files
+            urllib.request.urlopen(base + "/static/index.html", timeout=10)
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_settings_are_merged_key_by_key_so_two_pages_do_not_undo_each_other(app):
+    assert app("PUT", "/api/settings", json_body={"size": 21, "nb_side": "right"})[1] == {"size": 21, "nb_side": "right"}
+    assert app("PUT", "/api/settings", json_body={"theme": "dark"})[1] == {"size": 21, "nb_side": "right", "theme": "dark"}
+    # null puts a default back by removing the key; what is not a plain value, or is too long, is left out
+    kept = app("PUT", "/api/settings", json_body={"size": None, "nb_beside": False, "add_model": "x" * 201, "list": [1]})[1]
+    assert kept == {"nb_side": "right", "theme": "dark", "nb_beside": False}
+    assert app("GET", "/api/settings")[1] == kept
+    status, reply = app("PUT", "/api/settings", json_body={f"k{n}": "v" * 200 for n in range(30)})
+    assert status == 400 and app("GET", "/api/settings")[1] == kept
+    assert app("GET", "/api/practice/settings")[1]["remember_multiplier"] == 1.8
+
+
+def test_the_place_in_a_book_can_be_set_from_outside_the_reader(app):
+    jid = app("POST", "/api/books/import?name=fixture.prepared.epub", PREPARED.read_bytes())[1]["id"]
+    state = app("GET", f"/api/jobs/{jid}/reading")[1]
+    state.update(position={"chapter": 3, "word": 100, "mode": "scroll"}, x_furthest={"chapter": 3, "word": 100},
+                 active_checkpoint={"id": "c0001", "prompt_index": 0, "resume": {"chapter": 2, "word": 233, "mode": "scroll"}},
+                 grades={"c0001-p1": {"first": "correct", "at": "2026-12-01T10:00:00"}})
+    app("PUT", f"/api/jobs/{jid}/reading", json_body=state)
+    status, reply = app("PUT", f"/api/jobs/{jid}/reading/place", json_body={"chapter": 2, "word": 61})
+    assert status == 200 and reply["position"] == {"chapter": 2, "word": 61, "mode": "scroll"}  # the view is kept
+    after = app("GET", f"/api/jobs/{jid}/reading")[1]
+    assert after["x_furthest"] == {"chapter": 3, "word": 100}        # going back does not undo how far you got
+    assert "active_checkpoint" not in after and after["grades"] == state["grades"]
+    assert 0 < after["x_progress"] < 0.2
+    app("PUT", f"/api/jobs/{jid}/reading/place", json_body={"chapter": 3, "word": 400})
+    assert app("GET", f"/api/jobs/{jid}/reading")[1]["x_furthest"] == {"chapter": 3, "word": 400}
+    for bad in ({"chapter": 77, "word": 0}, {"chapter": 2, "word": 99999}, {"chapter": 2}, {"chapter": "2", "word": 1}):
+        assert app("PUT", f"/api/jobs/{jid}/reading/place", json_body=bad)[0] == 400
+
+
+def test_a_place_can_be_set_in_a_book_not_yet_opened():
+    book = reading.open_reading_book(PREPARED)
+    state = reading.place(reading.new_state("x"), book.manifest(), 2, 0)
+    assert state["position"] == {"chapter": 2, "word": 0, "mode": "page"} and state["x_furthest"] == {"chapter": 2, "word": 0}

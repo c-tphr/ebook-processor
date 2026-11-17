@@ -38,6 +38,13 @@ Options that came up in the interviews and were passed over. They are not planne
 | Calling the Anthropic API directly | Runs use Claude Code and a Claude plan. `ebook_processor/llm.py` is where an API-key backend would go; it would allow parallel calls and running without Claude Code |
 | Retiring the copy in eink-learner-aid | `tools/prep` there was left untouched. Pointing that repository at this one was an option |
 
+### Settings and the reader beside the notebook
+
+- **A place to return to after "Full reader".** Opening the full reader at a looked-up passage moves your place there, as a link into the reader always has. A "back to where I was" was not built.
+- **The side reader remembered as open.** It opens when you press Open and is closed again when you leave the notebook.
+- **The same side reader on the Practice page**, for "Reread the section". That button still opens the full reader.
+- **Settings per book.** Every setting is for the whole app.
+
 ### Practice
 
 | Item | What it means |

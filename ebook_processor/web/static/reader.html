@@ -147,13 +147,21 @@ kbd { font: 11px/1 var(--mono); border: 1px solid currentColor; padding: 2px 4px
 .toc .sq { display: inline-flex; gap: 2px; align-items: center; flex: none; }
 .toc .sq i { width: 7px; height: 7px; box-shadow: inset 0 0 0 1px var(--mute); } .toc .sq i.ok { background: var(--blue); box-shadow: none; } .toc .sq i.no { background: var(--ink); box-shadow: none; }
 .hits a b { background: color-mix(in srgb, var(--blue) 22%, transparent); font-weight: inherit; }
-.set { display: grid; gap: 18px; } .set > div > .m { display: block; margin-bottom: 6px; }
 .notebox { position: absolute; left: 0; right: 0; bottom: 0; z-index: 6; background: var(--sheet); border-top: 1px solid var(--ink); padding: 14px 18px 18px; max-height: 45%; overflow: auto; }
 .notebox .text { max-width: 44em; margin: 0 auto; font-size: 16px; } .notebox .text p { text-indent: 0; }
 .empty { color: var(--mute); padding: 30px 0; text-align: center; }
 @media (max-width: 720px) { .cp .two { grid-template-columns: 1fr; } .cp .two > div + div { border-left: 0; border-top: 1px solid var(--ink); } .top .where span { display: none; } }
 @media (prefers-reduced-motion: no-preference) { .pv .cols { transition: none; } }
+/* beside the notebook: the same text, for looking a passage up. No book title, no map, no checkpoints. */
+body.pane .shell { max-width: none; border: 0; padding: 0 16px; }
+body.pane #back, body.pane #t-book, body.pane #b-rev, body.pane #b-notes, body.pane #b-set { display: none; }
+body.pane .top { padding: 10px 0; } body.pane .top .where span { display: block; }
+body.pane .foot { grid-template-columns: minmax(0, 1fr) auto; }
+body.pane .sv { padding-top: 20px; }
+.text .aim { animation: aim 2.4s ease-out; }
+@keyframes aim { from { background: color-mix(in srgb, var(--blue) 22%, transparent); } to { background: transparent; } }
 </style>
+<script src="/static/settings.js"></script>
 </head>
 <body>
 <div class="shell">
@@ -161,7 +169,7 @@ kbd { font: 11px/1 var(--mono); border: 1px solid currentColor; padding: 2px 4px
     <div class="where"><a class="m" href="/" id="back">← Book page</a><b id="t-book"></b><span class="m mute" id="t-chap"></span></div>
     <div class="row">
       <span class="seg" role="group" aria-label="Reading mode" id="modes"></span>
-      <button id="b-toc">Contents</button><button id="b-find">Search</button><button id="b-rev">Practice</button><button id="b-notes">Notes</button><button id="b-set" aria-label="Text settings">Aa</button>
+      <button id="b-toc">Contents</button><button id="b-find">Search</button><button id="b-rev">Practice</button><button id="b-notes">Notes</button><button id="b-set">Settings</button><button id="b-close" hidden>Close</button>
     </div>
   </header>
   <main id="stage"><p class="empty">Loading</p></main>
@@ -196,9 +204,16 @@ const MODES = [["page", "Page"], ["scroll", "Scroll"], ["rsvp", "RSVP"]];
 const PARA_END = 2, NONPROSE = 8;
 const ID = decodeURIComponent(location.pathname.split("/").pop());
 const stage = $("stage");
+// Beside the notebook the page is a place to look a passage up: nothing about your reading is changed or saved,
+// no checkpoint stops you, and the two views on offer are scroll and pages. It talks to the notebook around it.
+const PANE = new URLSearchParams(location.search).has("pane") && parent !== window;
+if (PANE) { document.body.classList.add("pane"); $("b-close").hidden = false; }
+const tell = (message) => { if (PANE) parent.postMessage(message, location.origin); };
 
 /* ---------- what is loaded ---------- */
-let book, S, settings = { face: "serif", size: 19, leading: 1.6, measure: "medium", theme: "system" };
+let book, S;
+const settings = AppSettings.values;   // typeface, size and the rest: see settings.js
+let placed = null;                    // side reader: the place "Continue here" last set, as "chapter:word"
 const chapters = new Map();           // chapter index -> { html, words, flags, markers, skip, stops }
 let mode = "page", pos = { chapter: 0, word: 0 };
 let handled = new Set();              // sections whose checkpoint is behind the reader on this pass
@@ -236,11 +251,13 @@ function fill(container, html) {
 /* ---------- saving ---------- */
 let saveTimer = null;
 function save(now) {
+  if (PANE) return;
   clearTimeout(saveTimer);
   const send = () => fetch(`/api/jobs/${ID}/reading`, { method: "PUT", keepalive: true, headers: { "X-Ebook-Processor": "1", "Content-Type": "application/json" }, body: JSON.stringify(S) }).catch(() => {});
   if (now) send(); else saveTimer = setTimeout(send, 700);
 }
 function setPos(c, w, forward) {
+  if (PANE) { pos = { chapter: c, word: w }; return drawFoot(); }
   if (forward && c === pos.chapter && w > pos.word && mode !== "rsvp") S.x_stats.words[mode] += Math.min(w - pos.word, 4000);
   pos = { chapter: c, word: w };
   if (!reread) {
@@ -253,7 +270,7 @@ function setPos(c, w, forward) {
   drawFoot(); save();
 }
 setInterval(() => {
-  if (!S) return;                     // the book did not load
+  if (!S || PANE) return;             // the book did not load, or this is the side reader
   const playing = view && view.playing;
   if (document.visibilityState === "visible" && !cp && (playing || Date.now() - lastActive < 60000)) { S.x_stats.seconds[mode] += 5; save(); }
 }, 5000);
@@ -265,7 +282,8 @@ function drawTop() {
   $("t-book").textContent = book.title;
   const sec = sectionAt(pos.chapter, pos.word);
   $("t-chap").textContent = (chapterAt(pos.chapter)?.title || "") + (sec && sec.label !== chapterAt(pos.chapter)?.title ? " / " + sec.label : "");
-  put($("modes"), MODES.map(([k, t], n) => h("button", { "aria-pressed": String(mode === k), title: `${t} view (${n + 1})`, onclick: () => setMode(k) }, t)));
+  if (PANE) put($("modes"), [["scroll", "Scroll"], ["page", "Pages"]].map(([k, t]) => h("button", { "aria-pressed": String(mode === k), title: `${t} view`, onclick: () => AppSettings.set("nb_view", k) }, t)));
+  else put($("modes"), MODES.map(([k, t], n) => h("button", { "aria-pressed": String(mode === k), title: `${t} view (${n + 1})`, onclick: () => setMode(k) }, t)));
   $("b-rev").textContent = practiceDue ? `Practice ${practiceDue}` : "Practice";
 }
 function pace() {
@@ -273,8 +291,23 @@ function pace() {
   const s = S.x_stats.seconds[mode], w = S.x_stats.words[mode];
   return s >= 120 && w > 200 ? Math.max(80, Math.min(700, 60 * w / s)) : 240;
 }
+async function continueHere() {
+  const at = { chapter: pos.chapter, word: pos.word };
+  try { await api(`/jobs/${ID}/reading/place`, { method: "PUT", json: at }); } catch (e) { return alert(e.message); }
+  placed = `${at.chapter}:${at.word}`; drawFoot();
+}
 function drawFoot() {
   const foot = $("foot"), f = S.x_furthest;
+  if (PANE) {
+    const other = settings.nb_side === "right" ? "left" : "right", here = placed === `${pos.chapter}:${pos.word}`;
+    put(foot, h("span", { class: "row" },
+        h("button", { onclick: continueHere, disabled: here, title: "Make this your place in the book" }, here ? "Your place is here" : "Continue here"),
+        h("button", { onclick: () => tell({ ep: "full", chapter: pos.chapter, word: pos.word }), title: "Open the full reader at this place" }, "Full reader"),
+        h("button", { onclick: () => AppSettings.set("nb_side", other), title: `Show the reader on the ${other}` }, other === "right" ? "Move right" : "Move left")),
+      mode === "page" && view ? h("span", { class: "row" }, h("span", { class: "m" }, view.label()),
+        h("span", { class: "seg" }, h("button", { "aria-label": "Previous page", onclick: () => view.prev() }, "←"), h("button", { "aria-label": "Next page", onclick: () => view.next() }, "→"))) : h("span"));
+    return drawTop();
+  }
   const map = h("div", { class: "map" });
   let last = null;
   for (const s of book.sections) {
@@ -311,7 +344,7 @@ async function render() {
   view = { page: pageView, scroll: scrollView, rsvp: rsvpView }[mode]();
   paint(); drawFoot();
 }
-const due = (s) => s.prompts.length && !handled.has(s.id) && !(reread && reread.section.id === s.id);
+const due = (s) => !PANE && s.prompts.length && !handled.has(s.id) && !(reread && reread.section.id === s.id);
 async function nextChapter(dir) {
   const i = chapterOrder(pos.chapter) + dir;
   if (i < 0 || i >= book.chapters.length) return false;
@@ -335,16 +368,17 @@ function pageView() {
   });
   pv.addEventListener("scroll", () => { pv.scrollLeft = 0; pv.scrollTop = 0; });   // find-in-page must not shift the columns
   fill(cols, data.html);
-  let screen = 0, screens = 1, step = 1, blocks = [], ends = new Map();
+  let screen = 0, screens = 1, step = 1, blocks = [], ends = new Map(), n = 1, colStep = 1;
   const gap = 56;
   function layout(keep) {
     const W = pv.clientWidth, H = pv.clientHeight;
     const em = parseFloat(getComputedStyle(cols).fontSize), measure = { narrow: 28, medium: 34, wide: 42 }[settings.measure] * em;
-    const n = W >= 2 * measure * 0.86 + gap ? 2 : 1, colW = Math.min(n === 1 ? measure : Infinity, (W - gap * (n - 1)) / n);
+    n = W >= 2 * measure * 0.86 + gap ? 2 : 1;
+    const colW = Math.min(n === 1 ? measure : Infinity, (W - gap * (n - 1)) / n);
     const pad = n === 1 ? Math.max(0, (W - colW) / 2) : 0;
     cols.style.cssText = `column-width:${colW}px;column-gap:${n === 1 ? gap + 2 * pad : gap}px;width:${n === 1 ? colW : W}px;margin-left:${pad}px;--img-h:${H - 2 * em * settings.leading}px`;
     step = (n === 1 ? colW + gap + 2 * pad : W + gap);
-    const colStep = n === 1 ? step : colW + gap;
+    colStep = n === 1 ? step : colW + gap;
     const left = cols.getBoundingClientRect().left;
     const at = (el) => { const r = el.getClientRects()[0] || el.parentElement.getBoundingClientRect(); return Math.floor(Math.floor((r.left - left + 2) / colStep) / n); };
     blocks = [...cols.querySelectorAll("[data-w]")].map((el) => ({ w: +el.dataset.w, s: at(el) }));
@@ -376,7 +410,12 @@ function pageView() {
   addEventListener("resize", onResize);
   wire(cols);
   view_root = cols;
-  return { next, prev, where, relayout: () => layout(true), label: () => `page ${screen + 1} of ${screens}`,
+  function reveal(w) {                // the page that holds a word, which may be past its paragraph's first page
+    const rect = rangesFor(w, w + 1)[0]?.getClientRects()[0];
+    if (!rect) return;
+    screen = Math.floor(Math.floor((rect.left - cols.getBoundingClientRect().left + 2) / colStep) / n); show(); drawFoot();
+  }
+  return { next, prev, where, reveal, relayout: () => layout(true), label: () => `page ${screen + 1} of ${screens}`,
     toEnd() { screen = screens - 1; show(); settle(false); handled = new Set(sectionsIn(pos.chapter).filter((s) => (ends.get(s.id) ?? -1) < screen).map((s) => s.id)); },
     stop() { removeEventListener("resize", onResize); } };
 }
@@ -393,7 +432,7 @@ function scrollView() {
   fill(text, data.html);
   rearm(pos.word);
   const gates = [];
-  for (const s of sectionsIn(pos.chapter)) {
+  for (const s of PANE ? [] : sectionsIn(pos.chapter)) {
     const anchor = text.querySelector(`[data-anchor="${s.id}-end"]`);
     if (!anchor) continue;
     const isReread = reread && reread.section.id === s.id;
@@ -432,7 +471,11 @@ function scrollView() {
   for (const img of text.querySelectorAll("img")) img.addEventListener("load", drawGates, { once: true });
   wire(text);
   view_root = text;
-  return { next: () => sv.scrollBy({ top: sv.clientHeight * 0.85 }), prev: () => sv.scrollBy({ top: -sv.clientHeight * 0.85 }), relayout: drawGates, refresh: drawGates,
+  function reveal(w) {                // bring a word into view when its paragraph is taller than the window
+    const rect = rangesFor(w, w + 1)[0]?.getClientRects()[0], box = sv.getBoundingClientRect();
+    if (rect && (rect.top < box.top + 30 || rect.bottom > box.bottom - 80)) sv.scrollTop += rect.top - box.top - box.height * 0.25;
+  }
+  return { next: () => sv.scrollBy({ top: sv.clientHeight * 0.85 }), prev: () => sv.scrollBy({ top: -sv.clientHeight * 0.85 }), relayout: drawGates, refresh: drawGates, reveal,
     where: () => pos.word, toEnd() { sv.scrollTop = sv.scrollHeight; } };
 }
 
@@ -737,10 +780,12 @@ document.addEventListener("mouseup", (e) => {
 async function notesCall(path, options) {
   try { NB = await api(`/jobs/${ID}/notes${path}`, options); } catch (e) { alert(e.message); return null; }
   paint(); if (mode === "page" && view && view.relayout) view.relayout();
+  tell({ ep: "notes" });
   return NB;
 }
 async function addHighlight(range) {
   const got = await notesCall("/highlight", { method: "POST", json: range });
+  if (got) tell({ ep: "show", id: got.made });
   return got ? NB.highlights.find((x) => x.id === got.made) : null;
 }
 function editor(title, quote, text, onSave, onRemove, removeLabel) {
@@ -802,6 +847,8 @@ function wire(root) {
     const a = e.target.closest("a[data-go]"), pin = e.target.closest(".pin");
     if (pin) {                        // the square of a paragraph note: the same as pressing n over that paragraph
       e.preventDefault(); e.stopPropagation();
+      const note = PANE && NB.notes.find((x) => x.on === "place" && x.chapter === pos.chapter && x.word === +pin.dataset.word);
+      if (note) return tell({ ep: "show", id: note.id });   // beside the notebook, the note is read and edited there
       const block = root.querySelector(`[data-w="${pin.dataset.word}"]`), words = (block ? block.textContent : "").trim().split(/\s+/);
       return editTarget("Note on this paragraph", { on: "place", chapter: pos.chapter, word: +pin.dataset.word }, words.slice(0, 24).join(" ") + (words.length > 24 ? " …" : ""));
     }
@@ -810,7 +857,7 @@ function wire(root) {
       const cr = at ? null : document.caretRangeFromPoint?.(e.clientX, e.clientY);
       const w = at ? wordAt(at.offsetNode, at.offset) : cr ? wordAt(cr.startContainer, cr.startOffset) : -1;
       const hit = w < 0 ? null : NB.highlights.find((x) => x.chapter === pos.chapter && x.start <= w && w < x.end);
-      if (hit) { e.stopPropagation(); editItem(hit); }
+      if (hit) { e.stopPropagation(); if (PANE) tell({ ep: "show", id: hit.id }); else editItem(hit); }
     }
     if (!a) return;
     e.preventDefault(); e.stopPropagation();
@@ -864,26 +911,38 @@ function applySettings() {
   r.style.setProperty("--face", settings.face === "sans" ? "var(--grot)" : "var(--serif)");
   r.style.setProperty("--size", settings.size + "px"); r.style.setProperty("--lead", settings.leading);
   r.style.setProperty("--measure", { narrow: "28em", medium: "34em", wide: "42em" }[settings.measure]);
-  if (settings.theme === "system") r.removeAttribute("data-theme"); else r.dataset.theme = settings.theme;
 }
-function textSettings() {
-  const pick = (key, options) => h("span", { class: "seg" }, options.map(([v, t]) => h("button", { "aria-pressed": String(settings[key] === v), onclick: () => change(key, v) }, t)));
-  function change(key, v) { settings[key] = v; applySettings(); api("/settings", { method: "PUT", json: settings }).catch(() => {}); textSettings(); if (view && view.relayout) view.relayout(); }
-  openDrawer("Text", h("div", { class: "set" },
-    h("div", {}, h("span", { class: "m" }, "Typeface"), pick("face", [["serif", "Serif"], ["sans", "Grotesk"]])),
-    h("div", {}, h("span", { class: "m" }, `Size / ${settings.size} px`), h("span", { class: "seg" }, h("button", { onclick: () => change("size", Math.max(14, settings.size - 1)) }, "Smaller"), h("button", { onclick: () => change("size", Math.min(30, settings.size + 1)) }, "Larger"))),
-    h("div", {}, h("span", { class: "m" }, "Line spacing"), pick("leading", [[1.4, "Tight"], [1.6, "Normal"], [1.8, "Open"]])),
-    h("div", {}, h("span", { class: "m" }, "Column width"), pick("measure", [["narrow", "Narrow"], ["medium", "Medium"], ["wide", "Wide"]])),
-    h("div", {}, h("span", { class: "m" }, "Colours"), pick("theme", [["system", "System"], ["light", "Light"], ["dark", "Dark"]])),
-    h("p", { class: "mute" }, "Keys: ← → turn pages or step sentences, space plays RSVP, 1 2 3 change the view, c opens the contents, / searches.")));
+AppSettings.onChange((key) => {
+  if (!book) return;
+  if (["face", "size", "leading", "measure"].includes(key)) { applySettings(); if (view && view.relayout) view.relayout(); }
+  if (PANE && key === "nb_view" && mode !== settings.nb_view) setMode(settings.nb_view === "page" ? "page" : "scroll");
+  if (PANE && key === "nb_side") drawFoot();
+});
+function aim(w) {                     // show the reader where a place is: bring it into view and light its paragraph
+  if (!view_root) return;
+  if (view.reveal) view.reveal(w);
+  const block = [...view_root.querySelectorAll("[data-w]")].filter((b) => +b.dataset.w <= w).pop();
+  if (!block) return;
+  block.classList.remove("aim"); void block.offsetWidth; block.classList.add("aim");
+  setTimeout(() => block.classList.remove("aim"), 2500);
 }
+if (PANE) addEventListener("message", async (e) => {
+  if (e.origin !== location.origin || e.source !== parent || !e.data || !book) return;
+  if (e.data.ep === "go" && chapterAt(e.data.chapter)) { await jump(e.data.chapter, e.data.word); aim(e.data.word); }
+  else if (e.data.ep === "notes") {   // the notebook changed a note or a highlight
+    try { NB = await api(`/jobs/${ID}/notes`); } catch (err) { return; }
+    paint(); if (mode === "page" && view && view.relayout) view.relayout();
+  }
+});
+$("b-close").onclick = () => tell({ ep: "close" });
 $("b-notes").onclick = marks;
-$("b-toc").onclick = contents; $("b-find").onclick = search; $("b-set").onclick = textSettings;
+$("b-toc").onclick = contents; $("b-find").onclick = search; $("b-set").onclick = () => AppSettings.open("reader");
 $("b-rev").onclick = () => { save(true); setTimeout(() => { location.href = "/#/practice/" + ID; }, 150); };
 
 /* ---------- keys ---------- */
 addEventListener("keydown", (e) => {
   const typing = /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName);
+  if (AppSettings.isOpen) return;      // the settings window has the keys
   if (e.key === "Escape") { if ($("drawer").classList.contains("on")) return closeDrawer(); if (stage.querySelector(".notebox")) return closeNote(); }
   if (cp) {
     if (!cp.revealed && e.key === "Enter" && (e.ctrlKey || e.metaKey || !typing)) { e.preventDefault(); cp.revealed = true; return drawCp(); }
@@ -902,7 +961,7 @@ addEventListener("keydown", (e) => {
   if (e.key === "ArrowRight" || e.key === "PageDown") { e.preventDefault(); view.next(); }
   else if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); view.prev(); }
   else if (e.key === " ") { e.preventDefault(); if (view.toggle) view.toggle(); else if (e.shiftKey) view.prev(); else view.next(); }
-  else if (e.key === "1" || e.key === "2" || e.key === "3") setMode(MODES[+e.key - 1][0]);
+  else if (!PANE && (e.key === "1" || e.key === "2" || e.key === "3")) setMode(MODES[+e.key - 1][0]);
   else if (e.key === "c") contents(); else if (e.key === "/") { e.preventDefault(); search(); }
   else if (mode === "rsvp" && (e.key === "ArrowUp" || e.key === "ArrowDown")) { e.preventDefault(); stage.querySelector(e.key === "ArrowUp" ? ".ctl [aria-label=Faster]" : ".ctl [aria-label=Slower]")?.click(); }
 });
@@ -910,7 +969,7 @@ addEventListener("keydown", (e) => {
 /* ---------- start ---------- */
 (async function init() {
   try {
-    [book, S, settings, NB] = await Promise.all([api(`/jobs/${ID}/book`), api(`/jobs/${ID}/reading`), api("/settings").then((s) => ({ ...settings, ...s })), api(`/jobs/${ID}/notes`)]);
+    [book, S, NB] = await Promise.all([api(`/jobs/${ID}/book`), api(`/jobs/${ID}/reading`), api(`/jobs/${ID}/notes`), AppSettings.ready]);
   } catch (e) {
     return put(stage, h("p", { class: "empty" }, "The book could not be opened: ", e.message, ". ",
       e.message === "not found" ? "The app may have been updated while it was running: stop it and start it again. " : "", h("a", { href: "/" }, "Back to the library")));
@@ -919,10 +978,16 @@ addEventListener("keydown", (e) => {
   applySettings();
   const want = new URLSearchParams(location.search);
   const first = book.sections[0] || { chapter: book.chapters[0].index, start: 0 };
-  const p = S.position || { chapter: first.chapter, word: first.start, mode: "page" };
-  mode = p.mode || "page"; pos = { chapter: chapterAt(p.chapter) ? p.chapter : first.chapter, word: p.word };
+  const p = S.position || { chapter: first.chapter, word: first.start, mode: settings.read_mode };
+  mode = MODES.some(([k]) => k === p.mode) ? p.mode : "page"; pos = { chapter: chapterAt(p.chapter) ? p.chapter : first.chapter, word: p.word };
   const active = S.active_checkpoint, section = active && book.sections.find((s) => s.checkpoint === active.id);
   const go = (want.get("go") || "").match(/^(\d+):(\d+)$/);
+  if (PANE) {
+    mode = settings.nb_view === "page" ? "page" : "scroll";
+    if (go && chapterAt(+go[1])) pos = { chapter: +go[1], word: +go[2] };
+    await render(); aim(pos.word);
+    return tell({ ep: "ready" });
+  }
   if (go && chapterAt(+go[1])) { delete S.active_checkpoint; pos = { chapter: +go[1], word: +go[2] }; await render(); refreshPractice(); return setPos(pos.chapter, pos.word, false); }
   refreshPractice();
   if (section && active.reread) {      // closed during a reread: back into it, with the way back to the question intact

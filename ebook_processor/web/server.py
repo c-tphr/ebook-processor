@@ -1,6 +1,6 @@
 """The local web app: pick an EPUB, watch the run, review the questions, download the results.
 
-It is a small HTTP server from the standard library plus one page of HTML. It listens on this computer only
+It is a small HTTP server from the standard library plus its own pages (the files in ``static/``). It listens on this computer only
 (127.0.0.1) unless told otherwise, and runs one book at a time.
 
 Each run lives in its own folder under the data folder:
@@ -41,6 +41,9 @@ MAX_UPLOAD = 300 * 1024 * 1024
 JOB_ID_RE = re.compile(r"^[0-9]{8}-[0-9]{6}-[a-z0-9-]{1,40}$")
 ACTIVE = ("queued", "running")
 EVENTS_KEPT = 300
+PAGES = {"index.html": "text/html; charset=utf-8", "reader.html": "text/html; charset=utf-8",
+         "settings.js": "text/javascript; charset=utf-8"}   # the app's own files, by content type
+SETTINGS_FILE = "reader-settings.json"  # what the settings window keeps, for every page of the app
 CSRF_HEADER = "X-Ebook-Processor"  # a page of another site cannot send this header, so it cannot start runs
 
 
@@ -211,6 +214,55 @@ class Jobs:
             out.append(runs)
         return out
 
+    def sources(self, job_id: str) -> dict[str, dict[str, int]]:
+        """For each question, where the passage behind its answer begins: ``{"chapter", "word"}``."""
+        path = self.folder(job_id) / f"{stem_of(self.jobs[job_id]['file'])}.questions.json"
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        where = {b.ref: (sd, b) for sd in self.book(job_id).book.spine for b in sd.blocks}
+        out = {}
+        for q in doc.get("questions", []):
+            for entry in q.get("passage") or []:
+                if entry.get("ref") in where:
+                    sd, block = where[entry["ref"]]
+                    out[q["id"]] = {"chapter": sd.index, "word": block.start}
+                    break
+        return out
+
+    def notebook(self, job_id: str) -> dict[str, Any]:
+        return notes.notebook(self.book(job_id), self.notes_do(job_id), reading.load_state(self.folder(job_id)),
+                              self.sources(job_id))
+
+    # ---- what the settings window keeps
+
+    def ui_settings(self, change: Any = None) -> dict[str, Any]:
+        """The stored settings, after merging ``change`` into them. A value of ``None`` removes its key."""
+        path = self.data / SETTINGS_FILE
+        with self.lock:
+            try:
+                stored = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+            except ValueError:
+                stored = {}
+            if not isinstance(stored, dict):
+                stored = {}
+            if change is None:
+                return stored
+            if not isinstance(change, dict):
+                raise ApiError(HTTPStatus.BAD_REQUEST, "settings are an object of names and values")
+            for key, value in change.items():
+                if not isinstance(key, str) or not 0 < len(key) <= 32:
+                    continue
+                if value is None:
+                    stored.pop(key, None)
+                elif isinstance(value, (bool, int, float)) or (isinstance(value, str) and len(value) <= 200):
+                    stored[key] = value
+            if len(json.dumps(stored)) > 4000:
+                raise ApiError(HTTPStatus.BAD_REQUEST, "too many settings")
+            write_json(path, stored)
+        return stored
+
     # ---- highlights and notes
 
     def notes_do(self, job_id: str, change: Any = None) -> dict[str, Any]:
@@ -271,6 +323,21 @@ class Jobs:
         with self.lock:
             old = reading.load_state(self.folder(job_id))
             state = reading.merge_state(old, reading.clean_state(raw, book.data["book"]["source_sha256"], known))
+            write_json(self.folder(job_id) / reading.STATE_FILE, state)
+        return state
+
+    def set_place(self, job_id: str, raw: Any) -> dict[str, Any]:
+        """Move the reader's place in a book, from outside the reader."""
+        book = self.book(job_id)
+        if not isinstance(raw, dict) or not isinstance(raw.get("chapter"), int) or not isinstance(raw.get("word"), int) \
+                or isinstance(raw["chapter"], bool) or isinstance(raw["word"], bool):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "a place needs a chapter and a word")
+        with self.lock:
+            state = reading.load_state(self.folder(job_id)) or reading.new_state(book.data["book"]["source_sha256"])
+            try:
+                reading.place(state, book.manifest(), raw["chapter"], raw["word"])
+            except ValueError as exc:
+                raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
             write_json(self.folder(job_id) / reading.STATE_FILE, state)
         return state
 
@@ -458,9 +525,11 @@ class Handler(BaseHTTPRequestHandler):
         """One of the app's own pages, as it was when the app started (see ``make_server``)."""
         data = self.pages[name]
         self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Type", PAGES[name])
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        # The notebook shows the reader in a frame beside it. No other site may put these pages in a frame.
+        self.send_header("Content-Security-Policy", "frame-ancestors 'self'")
         self.end_headers()
         self.wfile.write(data)
 
@@ -545,6 +614,9 @@ class Handler(BaseHTTPRequestHandler):
         if method == "GET" and len(parts) == 2 and parts[0] == "read":
             jobs.get(parts[1])
             return self.send_page("reader.html")
+        if method == "GET" and len(parts) == 2 and parts[0] == "static" and parts[1] in PAGES \
+                and not parts[1].endswith(".html"):
+            return self.send_page(parts[1])
         if not parts or parts[0] != "api":
             raise ApiError(HTTPStatus.NOT_FOUND, "not found")
         match (method, parts[1:]):
@@ -602,16 +674,12 @@ class Handler(BaseHTTPRequestHandler):
                 settings = srs.clean_settings(self.json_body())
                 write_json(jobs.data / "srs-settings.json", settings)
                 return self.send_json(settings)
+            case ("GET", ["practice", "settings"]):
+                return self.send_json(jobs.srs_settings())
             case ("GET", ["settings"]):
-                path = jobs.data / "reader-settings.json"
-                return self.send_json(json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {})
+                return self.send_json(jobs.ui_settings())
             case ("PUT", ["settings"]):
-                settings = {k: v for k, v in self.json_body().items()
-                            if isinstance(k, str) and len(k) <= 32 and isinstance(v, (str, int, float, bool))}
-                if len(json.dumps(settings)) > 4000:
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "too many settings")
-                write_json(jobs.data / "reader-settings.json", settings)
-                return self.send_json(settings)
+                return self.send_json(jobs.ui_settings(self.json_body()))
             case ("GET", ["jobs", job_id, "notes"]):
                 return self.send_json(jobs.notes_do(job_id))
             case ("POST", ["jobs", job_id, "notes", "highlight"]):
@@ -630,10 +698,9 @@ class Handler(BaseHTTPRequestHandler):
             case ("DELETE", ["jobs", job_id, "notes", "item", item]):
                 return self.send_json(jobs.notes_do(job_id, lambda st, bk: notes.remove_item(st, item)))
             case ("GET", ["jobs", job_id, "notebook"]):
-                return self.send_json(notes.notebook(jobs.book(job_id), jobs.notes_do(job_id),
-                                                     reading.load_state(jobs.folder(job_id))))
+                return self.send_json(jobs.notebook(job_id))
             case ("GET", ["jobs", job_id, "notebook.md"]):
-                data = notes.notebook(jobs.book(job_id), jobs.notes_do(job_id), reading.load_state(jobs.folder(job_id)))
+                data = jobs.notebook(job_id)
                 text = notes.markdown(data, (query.get("answers") or ["1"])[0] != "0").encode("utf-8")
                 name = stem_of(jobs.get(job_id)["file"]).encode("ascii", "replace").decode("ascii").replace('"', "_")
                 self.send_response(HTTPStatus.OK)
@@ -671,6 +738,9 @@ class Handler(BaseHTTPRequestHandler):
             case ("PUT", ["jobs", job_id, "reading"]):
                 state = jobs.save_reading(job_id, self.json_body())
                 return self.send_json({"saved": True, "grades": state["grades"]})
+            case ("PUT", ["jobs", job_id, "reading", "place"]):
+                state = jobs.set_place(job_id, self.json_body())
+                return self.send_json({"saved": True, "position": state["position"], "progress": state["x_progress"]})
             case ("GET", ["jobs", job_id]):
                 return self.send_json(jobs.detail(job_id))
             case ("DELETE", ["jobs", job_id]):
@@ -728,7 +798,7 @@ def make_server(data: Path, host: str = "127.0.0.1", port: int = 8765, backend_f
     # The pages are read once, now. A page and the server behind it then always come from the same version of
     # the tool: updating the files while the app runs changes nothing until it is started again. Read on every
     # request, a new page would be served by old code, and fail on whatever the new page asks for.
-    pages = {name: (STATIC / name).read_bytes() for name in ("index.html", "reader.html")}
+    pages = {name: (STATIC / name).read_bytes() for name in PAGES}
     handler = type("BoundHandler", (Handler,), {"jobs": Jobs(data, backend_factory), "claude": claude,
                                                 "models": models, "pages": pages, "shutdown_token": shutdown_token})
     server = ThreadingHTTPServer((host, port), handler)

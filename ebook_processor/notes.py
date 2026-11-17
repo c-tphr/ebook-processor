@@ -162,8 +162,12 @@ def marked(store: dict[str, Any], chapter: int, start: int, end: int) -> list[tu
 # The notebook
 
 
-def notebook(book: ReadingBook, store: dict[str, Any], reading_state: dict[str, Any] | None) -> dict[str, Any]:
+def notebook(book: ReadingBook, store: dict[str, Any], reading_state: dict[str, Any] | None,
+             sources: dict[str, dict[str, int]] | None = None) -> dict[str, Any]:
+    """``sources`` gives, for a question id, the place of the passage its answer comes from. A question without
+    one points at the start of its section."""
     manifest = book.manifest()
+    sources = sources or {}
     grades = (reading_state or {}).get("grades") or {}
     attempts: dict[str, list[dict[str, Any]]] = {}
     for a in (reading_state or {}).get("x_attempts") or []:
@@ -184,7 +188,8 @@ def notebook(book: ReadingBook, store: dict[str, Any], reading_state: dict[str, 
             mine = [i for i in items if s["start"] <= i["word"] < s["end"]]
             used.update(i["id"] for i in mine)
             answers = [{"id": p["id"], "question": p["prompt"], "answer": p["answer"],
-                        "first": grades.get(p["id"], {}).get("first"), "attempts": attempts.get(p["id"], [])}
+                        "first": grades.get(p["id"], {}).get("first"), "attempts": attempts.get(p["id"], []),
+                        "go": sources.get(p["id"]) or {"chapter": c["index"], "word": s["start"]}}
                        for p in s["prompts"] if p["id"] in grades or p["id"] in attempts]
             rows.append({"id": s["id"], "label": s["label"], "start": s["start"], "end": s["end"],
                          "note": on["section"].get(s["id"]), "items": mine, "answers": answers})

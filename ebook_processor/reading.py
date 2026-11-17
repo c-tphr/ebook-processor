@@ -318,6 +318,30 @@ def merge_state(old: dict[str, Any] | None, new: dict[str, Any]) -> dict[str, An
     return new
 
 
+def place(state: dict[str, Any], manifest: dict[str, Any], chapter: int, word: int) -> dict[str, Any]:
+    """Move the reader's place in ``state`` to a word of a chapter, as "continue here" in the side reader does.
+
+    The reading mode stays as it was. The furthest point only moves forward. A question left open in the reader
+    is closed: its place no longer applies. Raises ``ValueError`` for a place the book does not have.
+    """
+    order = [c["index"] for c in manifest["chapters"]]
+    if chapter not in order:
+        raise ValueError("the book has no such chapter")
+    words = {c["index"]: c["words"] for c in manifest["chapters"]}
+    if not 0 <= word <= words[chapter]:
+        raise ValueError("the chapter has no such word")
+    mode = (state.get("position") or {}).get("mode")
+    state["position"] = {"chapter": chapter, "word": word, "mode": mode if mode in MODES else "page"}
+    far = state.get("x_furthest")
+    if not far or far.get("chapter") not in order \
+            or (order.index(chapter), word) > (order.index(far["chapter"]), far.get("word", 0)):
+        state["x_furthest"] = {"chapter": chapter, "word": word}
+    before = sum(words[c] for c in order[:order.index(chapter)]) + word
+    state["x_progress"] = round(min(1.0, before / manifest["words"]), 4) if manifest["words"] else 0.0
+    state.pop("active_checkpoint", None)
+    return state
+
+
 def load_state(folder: Path) -> dict[str, Any] | None:
     path = folder / STATE_FILE
     if not path.is_file():

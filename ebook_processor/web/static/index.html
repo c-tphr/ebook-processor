@@ -13,8 +13,9 @@
   --gut: clamp(16px, 3vw, 32px);
 }
 @media (prefers-color-scheme: dark) {
-  :root { --paper: #0e0e0e; --sheet: #171717; --ink: #eceae4; --ghost: #303030; --mute: #9b9992; --blue: #7f89ff; --on-blue: #0e0e0e; }
+  :root:not([data-theme=light]) { --paper: #0e0e0e; --sheet: #171717; --ink: #eceae4; --ghost: #303030; --mute: #9b9992; --blue: #7f89ff; --on-blue: #0e0e0e; }
 }
+:root[data-theme=dark] { --paper: #0e0e0e; --sheet: #171717; --ink: #eceae4; --ghost: #303030; --mute: #9b9992; --blue: #7f89ff; --on-blue: #0e0e0e; }
 * { box-sizing: border-box; }
 html { background: var(--paper); }
 body { margin: 0; color: var(--ink); background: var(--paper); font: 16px/1.5 var(--grot); -webkit-font-smoothing: antialiased; }
@@ -42,7 +43,8 @@ a { color: inherit; }
 .reg::before { top: -11px; left: -11px; } .reg::after { bottom: -11px; right: -11px; }
 
 /* top strip */
-.top { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; padding: 18px 0; border-bottom: 1px solid var(--ink); }
+/* It stays in view while the page scrolls, so that Settings is always at hand. */
+.top { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; padding: 18px 0; border-bottom: 1px solid var(--ink); position: sticky; top: 0; z-index: 4; background: var(--paper); }
 .brand { display: inline-flex; align-items: center; gap: 12px; text-decoration: none; font: 500 17px/1 var(--grot); letter-spacing: -0.02em; }
 .mark { display: inline-flex; gap: 3px; align-items: stretch; height: 16px; }
 .mark i { background: var(--ink); width: 14px; } .mark i:nth-child(2) { width: 8px; } .mark i:last-child { width: 16px; background: var(--blue); }
@@ -79,20 +81,10 @@ input::placeholder { color: var(--mute); }
 .field { display: block; }
 .field > .m { display: block; margin-bottom: 6px; }
 .field > small { display: block; color: var(--mute); margin-top: 6px; font-size: 13px; line-height: 1.35; }
-.grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px var(--gut); margin-top: 26px; }
-.grid > .wide { grid-column: 1 / -1; }
 .drop { background: var(--sheet); padding: 34px 20px; text-align: center; border: 1px solid var(--ghost); }
 .drop.over { border-color: var(--blue); box-shadow: inset 0 0 0 2px var(--blue); }
 .drop strong { display: block; font: 500 24px/1.1 var(--grot); letter-spacing: -0.03em; margin-bottom: 14px; }
 .drop .row { justify-content: center; }
-.seg { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--ink); }
-.seg label { text-align: center; padding: 11px 4px 10px; cursor: pointer; border-right: 1px solid var(--ink); font: 12px/1.3 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
-.seg label:last-child { border-right: 0; }
-.seg input { position: absolute; opacity: 0; pointer-events: none; }
-.seg small { display: block; font-size: 10.5px; letter-spacing: 0; color: var(--mute); font-variant-numeric: tabular-nums; }
-.seg label:has(input:checked) { background: var(--ink); color: var(--paper); }
-.seg label:has(input:checked) small { color: var(--paper); opacity: 0.75; }
-.seg label:has(input:focus-visible) { outline: 2px solid var(--blue); outline-offset: 2px; }
 details.adv { margin-top: 26px; border-top: 1px solid var(--ghost); padding-top: 14px; }
 details.adv > summary { cursor: pointer; font: 12px/1.5 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; }
 .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -124,7 +116,6 @@ details.adv > summary { cursor: pointer; font: 12px/1.5 var(--mono); letter-spac
 .pr .ans button { text-align: left; padding: 14px 16px; } .pr .ans small { display: block; margin-top: 7px; opacity: 0.75; letter-spacing: 0.04em; }
 .pr .done b { display: block; font: 500 clamp(40px, 7vw, 84px)/0.95 var(--grot); letter-spacing: -0.05em; margin-bottom: 18px; }
 kbd { font: 11px/1 var(--mono); border: 1px solid currentColor; padding: 2px 4px; margin-left: 6px; opacity: 0.7; }
-.num { width: 9ch; font: 15px/1.2 var(--mono); color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); padding: 9px 10px; border-radius: 0; }
 @media (max-width: 760px) { .pr .two { grid-template-columns: 1fr; } .pr .two > div + div { border-left: 0; border-top: 1px solid var(--ink); } }
 mark { background: color-mix(in srgb, var(--blue) 24%, transparent); color: inherit; }
 .md { font: 17px/1.55 Georgia, "Iowan Old Style", serif; max-width: 72ch; }
@@ -145,6 +136,22 @@ mark { background: color-mix(in srgb, var(--blue) 24%, transparent); color: inhe
 .nb .ans .hang .lab { font-weight: 400; vertical-align: 1px; }
 .nb .ans.tight .hang { width: auto; margin-left: 0; margin-right: 10px; }   /* no room: beside a tall chapter title */
 @media (max-width: 760px) { .nb .ans .hang { width: auto; margin-left: 0; margin-right: 10px; } }
+.nb .flash { animation: flash 2.4s ease-out; }
+@keyframes flash { from { background: color-mix(in srgb, var(--blue) 22%, transparent); } to { background: transparent; } }
+.nb .ans .row { margin: 10px 0 4px; }
+/* The reader beside the notebook: a fixed column on one side, the notebook in the rest of the window. */
+.side { position: fixed; top: 0; bottom: 0; left: 0; width: var(--side); background: var(--paper); border-right: 1px solid var(--ink); z-index: 5; }
+.side iframe { display: block; width: 100%; height: 100%; border: 0; }
+.side .grip { position: absolute; top: 0; bottom: 0; right: -5px; width: 9px; cursor: col-resize; z-index: 1; touch-action: none; }
+.side .grip:hover, .side .grip:focus-visible, body.dragging .side .grip { background: color-mix(in srgb, var(--blue) 50%, transparent); outline: 0; }
+body.split .frame { max-width: none; margin: 0 0 0 var(--side); border-left: 0; }
+body.split-right .side { left: auto; right: 0; border-right: 0; border-left: 1px solid var(--ink); }
+body.split-right .side .grip { right: auto; left: -5px; }
+body.split-right .frame { margin: 0 var(--side) 0 0; border-left: 1px solid var(--ghost); border-right: 0; }
+body.dragging { cursor: col-resize; user-select: none; } body.dragging .side iframe { pointer-events: none; }
+/* a notebook made narrow by the reader beside it is laid out as on a narrow screen */
+.frame.narrow .band, .frame.narrow .title { grid-template-columns: minmax(0, 1fr); } .frame.narrow .band { padding: 28px 0; }
+.frame.narrow .nb .ans .hang { width: auto; margin-left: 0; margin-right: 10px; }
 .nb .section.bare { padding: 10px 0 6px; } .nb .section.bare > header b { font-size: 16px; color: var(--mute); }
 .hero h1.book { font-size: clamp(40px, 7vw, 88px); line-height: 0.95; text-wrap: balance; margin-top: 10px; }
 .map .col > i.no { background: var(--ink); }
@@ -191,7 +198,7 @@ mark { background: color-mix(in srgb, var(--blue) 24%, transparent); color: inhe
 .filters button { margin-right: -1px; }
 .filters button[aria-pressed=true] { background: var(--ink); color: var(--paper); }
 .chap { margin: 34px 0 0; padding-bottom: 8px; border-bottom: 1px solid var(--ink); }
-.section { border-bottom: 1px solid var(--ghost); padding: 18px 0 6px; scroll-margin-top: 16px; }
+.section { border-bottom: 1px solid var(--ghost); padding: 18px 0 6px; scroll-margin-top: 90px; }
 .section > header { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; flex-wrap: wrap; margin-bottom: 4px; }
 .section > header b { font: 500 21px/1.2 var(--grot); letter-spacing: -0.03em; }
 .q { display: grid; grid-template-columns: 30px minmax(0, 1fr); padding: 12px 0; }
@@ -212,7 +219,7 @@ mark { background: color-mix(in srgb, var(--blue) 24%, transparent); color: inhe
 .sticky button.go { background: var(--blue); border-color: var(--blue); color: var(--on-blue); }
 
 @media (max-width: 760px) {
-  .hero, .band, .title, .grid { grid-template-columns: minmax(0, 1fr); }
+  .hero, .band, .title { grid-template-columns: minmax(0, 1fr); }
   .band { padding: 28px 0; }
   .stats { grid-template-columns: repeat(2, 1fr); } .stat:nth-child(3) { border-left: 0; padding-left: 0; }
   .stat:nth-child(n+3) { border-top: 1px solid var(--ghost); }
@@ -220,12 +227,13 @@ mark { background: color-mix(in srgb, var(--blue) 24%, transparent); color: inhe
   .reg::before, .reg::after { display: none; }
 }
 </style>
+<script src="/static/settings.js"></script>
 </head>
 <body>
 <div class="frame">
   <header class="top">
     <a class="brand" href="#/"><span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>ebook-processor</a>
-    <span class="m" id="claude">Checking Claude Code</span>
+    <span class="row"><span class="m" id="claude">Checking Claude Code</span><button type="button" id="b-settings">Settings</button></span>
   </header>
   <main id="app"></main>
 </div>
@@ -278,7 +286,7 @@ const FILES = [
 let info = null, timer = null, view = { removed: new Set(), saved: new Set(), filter: "all" };
 
 function route() {
-  clearTimeout(timer); $("sticky").classList.remove("on"); window.scrollTo(0, 0);
+  clearTimeout(timer); $("sticky").classList.remove("on"); sideClose(); addForm = nbReload = practiceReload = null; window.scrollTo(0, 0);
   const m = location.hash.match(/^#\/run\/([0-9a-z-]+)$/);
   const p = location.hash.match(/^#\/practice(?:\/([0-9a-z-]+))?$/), nb = location.hash.match(/^#\/notebook\/([0-9a-z-]+)$/);
   if (nb) return showNotebook(nb[1]);
@@ -286,8 +294,20 @@ function route() {
 }
 window.addEventListener("hashchange", route);
 
+// The settings window opens on the tab of the page it was called from.
+$("b-settings").onclick = () => AppSettings.open(location.hash.startsWith("#/notebook") ? "notebook"
+  : location.hash.startsWith("#/practice") ? "practice" : location.hash === "#/add" ? "add" : "general");
+let addForm = null, nbReload = null, practiceReload = null;   // what the open page offers a changed setting
+AppSettings.onChange((key, value) => {
+  if (key.startsWith("add_") && addForm) addForm.set(key.slice(4), value);
+  if (key === "practice" && practiceReload) practiceReload();
+  if (key === "nb_side" || key === "nb_split") sideLayout();
+  if (key === "nb_beside" && !value) sideClose();
+});
+
 async function init() {
-  try { info = await api("/info"); }
+  await AppSettings.ready;
+  try { info = await AppSettings.info(); }
   catch (e) { info = { claude: { ok: false, error: String(e) }, densities: {}, defaults: {}, version: "", data: "" }; }
   const pill = $("claude");
   pill.textContent = info.claude.ok ? "Claude Code " + info.claude.version.replace(/\s*\(.*/, "") + " / ready" : "Claude Code / not ready";
@@ -315,75 +335,21 @@ function showAdd() {
     h("strong", {}, "Drop an EPUB here"),
     h("div", { class: "row" }, h("button", { type: "button", onclick: () => input.click() }, "Choose a file"), name), input);
 
-  const d = info.defaults, dens = info.densities;
-  const density = h("div", { class: "seg", role: "radiogroup", "aria-label": "Section length" },
-    ["short", "medium", "long"].map((k) => h("label", {},
-      h("input", { type: "radio", name: "density", value: k, checked: k === "medium" }), k,
-      h("small", {}, dens[k] ? `${fmt(dens[k][0])}–${fmt(dens[k][1])} words` : ""))));
-  const sel = (id, options, value) => h("select", { id }, options.map(([v, t]) => {
-    const o = h("option", { value: v }, t); if (String(v) === String(value)) o.selected = true; return o; }));
   const field = (label, control, hint) => h("label", { class: "field" }, h("span", { class: "m" }, label), control, hint ? h("small", {}, hint) : null);
-  // Models come from Claude Code (what this login may use). Without a list, the two fields are free text.
-  const models = info.models || [];
-  const defaultModel = models.find((m) => m.value === "default");
-  const named = models.filter((m) => m.value !== "default");
-  const EFFORT = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Maximum" };
-  const modelHint = h("span", {}, models.length ? "" : "An alias such as opus or sonnet, or a full model name.");
-  const checkerHint = h("span", {}), effortHint = h("span", {});
-  const modelSel = models.length
-    ? sel("model", [["", defaultModel ? `Claude Code's default (${defaultModel.description})` : "Claude Code's default"], ...named.map((m) => [m.value, m.name])], "")
-    : h("input", { type: "text", id: "model", placeholder: "Claude Code's default" });
-  const checkerSel = models.length
-    ? sel("checker_model", [["", "Same as the model above"], ...named.map((m) => [m.value, m.name])], "")
-    : h("input", { type: "text", id: "checker_model", placeholder: "Same as above" });
-  const effortSel = sel("effort", [["", "Claude Code's default"], ...Object.entries(EFFORT)], "");
-  function syncModels() {
-    if (!models.length) return;
-    const pick = (value) => (value ? named.find((m) => m.value === value) : defaultModel);
-    const drafting = pick(modelSel.value), checking = checkerSel.value ? pick(checkerSel.value) : drafting;
-    const about = (m) => (m ? [m.description, m.resolved && m.resolved !== m.value ? m.resolved : ""].filter(Boolean).join(" / ") : "");
-    modelHint.textContent = modelSel.value ? about(drafting) : "Drafts and revises the questions.";
-    checkerHint.textContent = checkerSel.value ? about(checking) : "Checks them, in a separate session.";
-    // effort is one setting for the whole run, so offer only the levels both models take
-    const levels = (drafting?.efforts || []).filter((e) => (checking?.efforts || []).includes(e));
-    const keep = levels.includes(effortSel.value) ? effortSel.value : "";
-    put(effortSel, h("option", { value: "" }, levels.length ? "Claude Code's default" : "Not adjustable for this choice"),
-      levels.map((e) => h("option", { value: e }, EFFORT[e] || e)));
-    effortSel.value = keep; effortSel.disabled = !levels.length;
-    effortHint.textContent = levels.length ? "" : "At least one chosen model has no effort setting.";
-  }
-  modelSel.addEventListener("change", syncModels); checkerSel.addEventListener("change", syncModels);
-  syncModels();
+  const options = addForm = AppSettings.processing(info, AppSettings.runDefaults());   // starts from the defaults in Settings
   const form = h("form", { onsubmit: submit },
     drop,
     h("div", { style: "margin-top:18px" }, field("Or the path of a file on this computer", pathInput)),
-    h("div", { class: "grid" },
-      h("div", { class: "field wide" }, h("span", { class: "m", id: "len" }, "Section length"), density,
-        h("small", {}, "A checkpoint follows each section. Breaks fall at natural boundaries, so lengths vary.")),
-      field("Questions per checkpoint", sel("max_questions", [[1, "1"], [2, "Up to 2"], [3, "Up to 3"], [4, "Up to 4"]], d.max_questions)),
-      field("Kind of book", sel("kind", [["auto", "Decide section by section"], ["expository", "Exposition (essays, science, history)"],
-        ["narrative", "Narrative (novels, stories, memoir)"], ["technical", "Technical (textbooks, manuals)"]], d.kind)),
-      field("Tables, code, formulas, figures", sel("content", [["text", "Read tables, code and formulas"],
-        ["figures", "Also look at the pictures (slower)"], ["prose", "Prose only"]], d.content), "What Claude may see and ask about beyond the running text."),
-      field("Independent check", sel("rounds", [[3, "Check, revise, check again (up to 3 checks)"], [2, "Up to 2 checks"],
-        [1, "One check, no revision"], [0, "No check (fastest)"]], d.rounds), "A question that fails its last check is left out and listed in the report.")),
-    h("details", { class: "adv" }, h("summary", {}, "Advanced"),
-      h("div", { class: "grid" },
-        field("Model", modelSel, modelHint),
-        field("Model for checking", checkerSel, checkerHint),
-        field("Reasoning effort", effortSel, effortHint),
-        field("Calls at the same time", sel("jobs", [[1, "1"], [2, "2"], [3, "3"], [4, "4"], [6, "6"]], d.jobs)),
-        field("EPUBCheck", sel("epubcheck", [["", "Skip"], ["1", "Run on both books (needs Java)"]], "")))),
+    options.main,
+    h("details", { class: "adv" }, h("summary", {}, "Advanced"), options.advanced),
     error,
     h("div", { class: "actions" }, h("button", { class: "primary", type: "submit", id: "go" }, "Process book"),
-      h("span", { class: "mute", style: "font-size:14px" }, "The original file is only read. Runs use your Claude plan.")));
+      h("span", { class: "mute", style: "font-size:14px" }, "The original file is only read. Runs use your Claude plan."),
+      h("button", { class: "text", type: "button", style: "margin-left:auto", onclick: () => AppSettings.open("add") }, "Change what this form starts with")));
 
   async function submit(e) {
     e.preventDefault(); error.hidden = true;
-    const val = (id) => document.getElementById(id).value;
-    const settings = { density: form.querySelector("input[name=density]:checked").value, max_questions: +val("max_questions"),
-      kind: val("kind"), content: val("content"), rounds: +val("rounds"), model: val("model").trim(),
-      checker_model: val("checker_model").trim(), effort: val("effort"), jobs: +val("jobs"), epubcheck: val("epubcheck") === "1" };
+    const settings = options.read();
     const path = pathInput.value.trim();
     if (!file && !path) { error.textContent = "Choose an EPUB first."; error.hidden = false; return; }
     $("go").disabled = true; $("go").textContent = "Reading the book";
@@ -506,13 +472,29 @@ function md(text) {                     // a small, safe Markdown: paragraphs, l
 async function showNotebook(id) {
   const app = $("app"), body = h("div", { class: "nb" });
   put(app, h("a", { class: "back m", href: "#/run/" + id }, "← Book page"), body);
-  let data;
-  const call = async (path, options) => { try { await api(`/jobs/${id}/notes${path}`, options); } catch (e) { alert(e.message); } await load(); };
+  let data, wanted = null;
+  const call = async (path, options) => { try { await api(`/jobs/${id}/notes${path}`, options); } catch (e) { alert(e.message); } await load(); sideTell({ ep: "notes" }); };
   async function load() {
     const y = window.scrollY;
     try { data = await api(`/jobs/${id}/notebook`); } catch (e) { return put(body, h("p", { class: "msg err" }, e.message)); }
     draw(); window.scrollTo(0, y);
+    if (wanted) show(wanted);
   }
+  function show(itemId) {               // the reader beside asks for an entry: bring it into view and light it
+    const entry = document.getElementById("nb-" + itemId);
+    wanted = entry ? null : itemId;     // not drawn yet: a highlight just made, shown after the next load
+    if (!entry) return;
+    entry.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    for (const lit of body.querySelectorAll(".flash")) lit.classList.remove("flash");
+    void entry.offsetWidth; entry.classList.add("flash");
+  }
+  nbReload = load; nbShow = show; nbTidy = () => { if (data) tidy(); };
+  // "Open" shows the place beside the notebook when there is room and the setting asks for it; otherwise, and
+  // with a modifier key, the link goes to the full reader as before.
+  const openAt = (chapter, word) => ({ href: `/read/${id}?go=${chapter}:${word}`, onclick: (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || !sideFits()) return;
+    e.preventDefault(); sideOpen(id, chapter, word, e.currentTarget);
+  } });
   // One note: shown formatted, edited in place. `save(text)` writes it; an emptied note is removed.
   function slot(text, save, addLabel, extra) {
     const box = h("div", { class: "slot" });
@@ -530,10 +512,9 @@ async function showNotebook(id) {
   }
   const target = (t, text, label) => slot(text, (v) => call("/target", { method: "PUT", json: { target: t, text: v } }), label);
   function item(i) {
-    const go = `/read/${id}?go=${i.chapter}:${i.word}`;
-    if (i.type === "note") return h("div", {}, h("div", { class: "row", style: "margin-top:14px" }, h("span", { class: "m mute" }, "On a paragraph"), h("a", { class: "m", href: go }, "Open")),
+    if (i.type === "note") return h("div", { id: "nb-" + i.id }, h("div", { class: "row", style: "margin-top:14px" }, h("span", { class: "m mute" }, "On a paragraph"), h("a", { class: "m", ...openAt(i.chapter, i.word) }, "Open")),
       slot(i.text, (v) => call(`/item/${i.id}`, { method: "PUT", json: { text: v } }), "Add a note"));
-    return h("div", {}, h("div", { class: "quote" }, h("a", { href: go, title: "Open in the reader" }, i.text)),
+    return h("div", { id: "nb-" + i.id }, h("div", { class: "quote" }, h("a", { ...openAt(i.chapter, i.word), title: "Open in the reader" }, i.text)),
       slot(i.note, (v) => call(`/item/${i.id}`, { method: "PUT", json: { text: v } }), "Add a note",
         () => h("button", { class: "text", onclick: () => { if (!i.note || confirm("Remove this highlight and its note?")) call(`/item/${i.id}`, { method: "DELETE" }); } }, "Remove highlight")));
   }
@@ -541,12 +522,13 @@ async function showNotebook(id) {
     const typed = a.attempts.filter((t) => t.text).map((t) => t.text);
     return h("div", { class: "ans" },
       h("p", { class: "asked" }, h("span", { class: "hang" }, h("span", { class: a.first === "correct" ? "lab blue" : a.first ? "lab inv" : "lab" }, a.first === "correct" ? "Recalled" : a.first ? "Missed" : "Not graded")), a.question),
-      typed.map((t) => h("p", {}, h("span", { class: "hang m mute" }, "Answered"), t)), h("p", {}, h("span", { class: "hang m mute" }, "Reference"), a.answer));
+      typed.map((t) => h("p", {}, h("span", { class: "hang m mute" }, "Answered"), t)), h("p", {}, h("span", { class: "hang m mute" }, "Reference"), a.answer),
+      h("div", { class: "row" }, h("a", { class: "m", ...openAt(a.go.chapter, a.go.word) }, "Open the passage")));
   }
   function section(c, s) {
     const empty = !s.note && !s.items.length && !s.answers.length;
     return h("section", { class: "section" + (empty ? " bare" : "") },
-      h("header", {}, h("b", {}, s.label), h("span", { class: "row" }, h("span", { class: "m mute raw" }, `${s.id} / ${fmt(s.end - s.start)} words`), h("a", { class: "m", href: `/read/${id}?go=${c.index}:${s.start}` }, "Open"))),
+      h("header", {}, h("b", {}, s.label), h("span", { class: "row" }, h("span", { class: "m mute raw" }, `${s.id} / ${fmt(s.end - s.start)} words`), h("a", { class: "m", ...openAt(c.index, s.start) }, "Open"))),
       target({ on: "section", section: s.id }, s.note && s.note.text, "Add a note on this section"), s.items.map(item), s.answers.map(answer));
   }
   function draw() {
@@ -562,7 +544,9 @@ async function showNotebook(id) {
       data.chapters.filter((c) => c.sections.length || c.note || c.loose.length).map((c) => band(c.title,
         c.sections.length !== 1 || c.note ? target({ on: "chapter", chapter: c.index }, c.note && c.note.text, "Add a note on this chapter") : null,
         c.loose.map(item), c.sections.map((s) => section(c, s)))));
-    // A label must not run into a chapter title that reaches down beside it: there it stays in the text.
+    tidy();
+  }
+  function tidy() {                     // a label must not run into a chapter title that reaches down beside it: there it stays in the text
     for (const part of body.querySelectorAll(".band")) {
       const title = part.querySelector("h2").getBoundingClientRect().bottom;
       for (const a of part.querySelectorAll(".ans")) a.classList.toggle("tight", a.getBoundingClientRect().top < title + 8);
@@ -570,6 +554,73 @@ async function showNotebook(id) {
   }
   load();
 }
+
+/* ---------- the reader beside the notebook ---------- */
+// One frame holding the reader page in its lookup form (see PANE in reader.html), fixed to one side of the window.
+// The two pages talk by messages: this one sends the place to show and "notes changed"; the reader sends "notes
+// changed", the entry to show, and the wishes to close or to go to the full reader.
+let nbShow = null, nbTidy = null;
+const side = { el: null, frame: null, id: null, ready: false, wants: null };
+const SIDE_MIN_WINDOW = 1100;
+const sideFits = () => AppSettings.values.nb_beside && window.innerWidth >= SIDE_MIN_WINDOW;
+const sideShare = (x) => Math.max(Math.max(0.28, 380 / window.innerWidth), Math.min(Math.min(0.7, 1 - 440 / window.innerWidth), x));
+function sideTell(message) { if (side.frame && side.ready) side.frame.contentWindow.postMessage(message, location.origin); }
+function keepPlace(change, anchor) {    // change the layout without losing the reader's place in the notebook
+  const frame = document.querySelector(".frame").getBoundingClientRect();
+  const el = anchor || document.elementFromPoint(frame.left + frame.width / 2, 140), top = el ? el.getBoundingClientRect().top : 0;
+  change();
+  if (el && el.isConnected) window.scrollBy(0, el.getBoundingClientRect().top - top);
+}
+function sideLayout(anchor) {
+  keepPlace(() => {
+    const on = !!side.el, v = AppSettings.values, frame = document.querySelector(".frame");
+    document.body.classList.toggle("split", on);
+    document.body.classList.toggle("split-right", on && v.nb_side === "right");
+    document.documentElement.style.setProperty("--side", on ? (100 * sideShare(+v.nb_split || 0.5)).toFixed(2) + "vw" : "0px");
+    frame.classList.toggle("narrow", on && frame.clientWidth < 820);
+    if (nbTidy) nbTidy();
+  }, anchor);
+}
+function sideOpen(id, chapter, word, anchor) {
+  if (side.el && side.id === id) {
+    if (side.ready) sideTell({ ep: "go", chapter, word }); else side.wants = { ep: "go", chapter, word };
+    return;
+  }
+  sideClose();
+  const frame = h("iframe", { src: `/read/${id}?pane=1&go=${chapter}:${word}`, title: "The text of the book" });
+  const grip = h("div", { class: "grip", role: "separator", "aria-orientation": "vertical", "aria-label": "Width of the reader", tabindex: "0" });
+  const resize = (share) => { AppSettings.values.nb_split = sideShare(share); sideLayout(); };
+  grip.addEventListener("pointerdown", (e) => {
+    e.preventDefault(); grip.setPointerCapture(e.pointerId); document.body.classList.add("dragging");
+    const move = (ev) => { const x = ev.clientX / window.innerWidth; resize(AppSettings.values.nb_side === "right" ? 1 - x : x); };
+    const up = () => { grip.removeEventListener("pointermove", move); document.body.classList.remove("dragging"); AppSettings.set("nb_split", AppSettings.values.nb_split); };
+    grip.addEventListener("pointermove", move);
+    grip.addEventListener("pointerup", up, { once: true }); grip.addEventListener("pointercancel", up, { once: true });
+  });
+  grip.addEventListener("keydown", (e) => {
+    const step = { ArrowLeft: -0.02, ArrowRight: 0.02 }[e.key];
+    if (!step) return;
+    e.preventDefault(); AppSettings.set("nb_split", sideShare((+AppSettings.values.nb_split || 0.5) + (AppSettings.values.nb_side === "right" ? -step : step)));
+  });
+  Object.assign(side, { el: h("aside", { class: "side", "aria-label": "Reader" }, frame, grip), frame, id, ready: false, wants: null });
+  document.body.append(side.el);
+  sideLayout(anchor);
+}
+function sideClose() {
+  if (!side.el) return;
+  side.el.remove(); Object.assign(side, { el: null, frame: null, id: null, ready: false, wants: null });
+  sideLayout();
+}
+addEventListener("message", (e) => {
+  if (e.origin !== location.origin || !side.frame || e.source !== side.frame.contentWindow || !e.data) return;
+  const d = e.data;
+  if (d.ep === "ready") { side.ready = true; if (side.wants) { sideTell(side.wants); side.wants = null; } }
+  else if (d.ep === "close") sideClose();
+  else if (d.ep === "notes") { if (nbReload) nbReload(); }
+  else if (d.ep === "show") { if (nbShow) nbShow(String(d.id)); }
+  else if (d.ep === "full" && Number.isInteger(d.chapter) && Number.isInteger(d.word)) location.href = `/read/${side.id}?go=${d.chapter}:${d.word}`;
+});
+addEventListener("resize", () => { if (side.el) { if (window.innerWidth < SIDE_MIN_WINDOW) sideClose(); else sideLayout(); } });
 
 /* ---------- practice: spaced repetition ---------- */
 async function showPractice(only) {
@@ -581,8 +632,10 @@ async function showPractice(only) {
   const when = (iso) => { const d = Math.round((new Date(iso) - new Date(data.today)) / 864e5); return d === 1 ? "tomorrow" : `in ${d} days`; };
   async function load() {
     try { data = await api("/practice" + q); } catch (e) { return put(box, h("p", { class: "msg err" }, e.message)); }
-    draw(); drawSettings();
+    draw();
   }
+  practiceReload = load;
+  put(tail, h("div", { class: "pr", style: "padding-top:0" }, h("button", { class: "text", type: "button", onclick: () => AppSettings.open("practice") }, "Schedule settings")));
   async function answer(remembered) {
     if (busy) return; busy = true;
     try { data = await api("/practice/answer", { method: "POST", json: { job: data.card.job, id: data.card.id, remembered, text, only } }); }
@@ -616,30 +669,6 @@ async function showPractice(only) {
           h("a", { class: "btn", href: `/read/${c.job}?go=${encodeURIComponent(c.go)}` }, "Reread the section"))]);
     (box.querySelector("textarea") || box.querySelector("button.primary"))?.focus();
   }
-  function drawSettings() {
-    const s = data.settings;
-    const store = async (key, value) => {
-      try { data.settings = await api("/practice/settings", { method: "PUT", json: { ...s, [key]: value } }); await load(); } catch (err) { alert(err.message); }
-    };
-    const field = (key, label, hint, step) => h("label", { class: "field" }, h("span", { class: "m" }, label),
-      h("input", { class: "num", type: "number", step, value: s[key] ?? "", placeholder: "none", onchange: (e) => {
-        const v = e.target.value.trim();
-        store(key, v === "" ? null : key === "new_per_day" ? parseInt(v, 10) : parseFloat(v));
-      } }), h("small", {}, hint));
-    const toggle = (key, label, hint) => h("div", { class: "field" }, h("span", { class: "m" }, label),
-      h("div", { class: "filters", role: "group", style: "margin:0" }, [[true, "On"], [false, "Off"]].map(([v, t]) =>
-        h("button", { type: "button", "aria-pressed": String(s[key] === v), onclick: () => store(key, v) }, t))), h("small", {}, hint));
-    put(tail, band("Schedule",
-      h("p", { class: "lede" }, "Each Remembered multiplies a card's interval; each Forgot shortens it and brings the card back later in the session. Forgetting it again there drops it to one day. A question becomes a card when you meet it at its checkpoint, and joins the schedule the first time you remember it."),
-      h("div", { class: "grid", style: "margin-top:8px" },
-        field("remember_multiplier", "Remembered multiplies by", "Higher spaces cards out faster.", "0.1"),
-        field("forget_multiplier", "Forgot multiplies by", "0.5 halves the interval; 0 starts the card over.", "0.05"),
-        field("first_interval", "Starting interval, days", "What a card begins with when it joins the schedule.", "1"),
-        field("max_interval", "Longest interval, days", "Empty for no longest interval.", "1"),
-        field("new_per_day", "New cards per day", "Questions you missed or skipped at a checkpoint. Empty for no limit.", "1"),
-        toggle("same_day_first_review", "First review the same day", "A card is due again on the day it is learned. Off: the day after."),
-        toggle("fuzz", "Vary due dates slightly", "Keeps cards learned together from always coming back together."))));
-  }
   practiceKeys = (e) => {
     if (!data || !data.card) return;
     const typing = /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName);
@@ -649,7 +678,7 @@ async function showPractice(only) {
   load();
 }
 let practiceKeys = null;
-addEventListener("keydown", (e) => { if (practiceKeys && location.hash.startsWith("#/practice")) practiceKeys(e); });
+addEventListener("keydown", (e) => { if (practiceKeys && location.hash.startsWith("#/practice") && !AppSettings.isOpen) practiceKeys(e); });
 
 /* ---------- one run ---------- */
 async function showRun(id) {

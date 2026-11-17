@@ -108,6 +108,20 @@ It opens `http://localhost:8765/` in your browser. Drop an EPUB on the page (or 
 
 The app opens on your **library**: every book with how far you have read and how many questions you recalled on the first try, and the book you were last reading on top. **Add book** processes a new EPUB, or takes a `Book.prepared.epub` made elsewhere as it is.
 
+### Settings
+
+Every page has a **Settings** button at the top right. It opens one window with a tab per part of the app, on the tab of the page you are on:
+
+| Tab | What it holds |
+| --- | --- |
+| General | Colours (as the system, light, dark) for every page; the version and where your books are kept |
+| Add a book | What the Add a book form starts with. The form keeps its options, so one book can still differ. Books already processed are not affected |
+| Reader | Typeface, size, line spacing, column width, and the view a new book opens in |
+| Notebook | Whether **Open** shows a passage beside the notebook or in the full reader, which side the reader is on, and whether it scrolls or turns pages |
+| Practice | The numbers of the schedule (see Practice below) |
+
+A change applies at once, also in other open tabs of the app. Settings are kept in `reader-settings.json` and `srs-settings.json` in the data folder.
+
 ### The reader
 
 **Read** opens a book in the app's own reader. It has three views over one position, so you can change between them at any point:
@@ -127,7 +141,7 @@ At the end of each section the reader stops for its **checkpoint**, one question
 
 Only your **first** grade for a question is kept: a Correct after a reread does not replace an earlier Incorrect. Jumping through the contents, the search or the map never sets off a checkpoint; reading through a section again does. Closing the window in the middle of a question or a reread brings you back to the same place.
 
-Also in the reader: contents by chapter and section, search, footnotes that open in place, and text settings (serif or grotesk, size, line spacing, column width, light or dark).
+Also in the reader: contents by chapter and section, search, and footnotes that open in place. How the text is set (serif or grotesk, size, line spacing, column width) is in **Settings**, on the Reader tab.
 
 The strip at the bottom is the book: one block per section, with a square for each question (blue recalled, black missed, hollow not yet met). The book's page shows the same map, your time and pace per view, and lets you choose which cards go into the Anki deck and the text file: all, only those you missed on the first try, or only those you have met. Cards are tagged `recall::correct`, `recall::missed` or `recall::unseen`.
 
@@ -142,6 +156,16 @@ Notes are Markdown. Besides notes on a highlight or a paragraph, there is one no
 A highlight is a run of words, in the same positions the three views share, so it shows in all of them and in the supporting passage of a Practice card. It stays in place when the book is processed again, because processing never changes the text.
 
 Each book has a **notebook**, opened from its page: the book's chapters and sections as an outline and, under each section, your note on it, your highlights and notes in reading order, and the answers you gave at its checkpoint (the question, what you typed, the reference answer, and whether you recalled it). Notes can be written and edited there too. **Export Markdown** downloads the notebook as one file, with or without the checkpoint answers; sections where you marked and wrote nothing are left out of the file.
+
+**Open** on a note, a highlight, a section or a checkpoint answer shows its place in the book **beside the notebook**: the reader takes one side of the window, opens at the passage and lights its paragraph for a moment. For a checkpoint answer, that is the paragraph the answer comes from. This needs a window at least 1,100 pixels wide; in a narrower one, or with Ctrl or Cmd held, the full reader opens instead.
+
+The reader beside the notebook is for looking things up. It does not move your place in the book, count reading time or stop at checkpoints, and the whole text is open, also what you have not read yet. In it you can:
+
+- switch between **Scroll** and **Pages**, open the contents, and search the book;
+- highlight and write notes as in the reader; the notebook shows them at once, and what you change in the notebook shows in the text;
+- click a highlight or the square of a paragraph note to bring its entry into view in the notebook;
+- press **Continue here** to make the place shown your place in the book, or **Full reader** to open the reader there;
+- move it to the other side, drag the line between the two to change its width, or close it.
 
 Highlights are drawn with the browser's CSS Custom Highlight API (Chrome and Edge 105, Safari 17.2, Firefox 140, or later). In an older browser, highlights are kept and listed but not drawn in the text. They live in `notes.json` in the book's folder.
 
@@ -158,7 +182,7 @@ A question becomes a **card** when you meet it at its checkpoint. From then on i
 
 A session shows the most overdue cards first (cards due the same day in random order), then re-reviews, then new cards, then the first reviews of cards learned that day. Questions of sections you have not read never appear. You can type your recall before revealing the answer, open the supporting passage from the book, and jump to reread the section.
 
-**Settings** are on the Practice page. Mochi documents the rules above but not its numbers, so the defaults are this tool's:
+The schedule's numbers are in **Settings**, on the Practice tab. Mochi documents the rules above but not its numbers, so the defaults are this tool's:
 
 | Setting | Default | Where the value comes from |
 | --- | --- | --- |
@@ -235,7 +259,7 @@ The tests never call Claude: `tests/scripted.py` is a stand-in that answers from
 | `ebook_processor/srs.py` | The spaced-repetition scheduler and a book's cards |
 | `ebook_processor/reading.py` | A prepared EPUB as the reader needs it (clean chapter HTML with word positions, sections, search) and the saved reading state |
 | `ebook_processor/update.py` | `ebook-processor update`: find and stop the running app, fast-forward the checkout, install, start again |
-| `ebook_processor/web/` | The local web app: a standard-library HTTP server, the library page (`index.html`) and the reader (`reader.html`) |
+| `ebook_processor/web/` | The local web app: a standard-library HTTP server, the library page (`index.html`), the reader (`reader.html`, which is also the reader beside the notebook when opened with `?pane=1` in a frame) and the settings window both share (`settings.js`) |
 | `tests/data/` | A small made-up book with its expected results, broken prepared books the validator must reject, and Thomas Paine's *Essays* (Standard Ebooks, CC0) |
 
 The firmware format (`rsvp/checkpoints.json`, version 1, and the `rsvp-<section>-start` and `-end` markers) is the one eink-learner-aid defines; its names are kept so that books from this tool load on that firmware. The two repositories share no code at run time.

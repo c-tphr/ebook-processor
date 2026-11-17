@@ -88,6 +88,9 @@ def test_the_notebook_follows_the_book_and_the_export_leaves_out_what_is_empty(b
     first = chapter["sections"][0]
     assert first["note"]["text"].startswith("My summary") and [i["type"] for i in first["items"]] == ["highlight", "note"]
     assert first["answers"][0]["first"] == "incorrect" and len(first["answers"][0]["attempts"]) == 2
+    assert first["answers"][0]["go"] == {"chapter": 2, "word": first["start"]}  # no passage known: the section's start
+    there = notes.notebook(book, store, state, {"c0001-p1": {"chapter": 2, "word": 61}})
+    assert next(c for c in there["chapters"] if c["index"] == 2)["sections"][0]["answers"][0]["go"] == {"chapter": 2, "word": 61}
     assert chapter["sections"][1]["items"] == [] and chapter["sections"][1]["answers"] == []
     md = notes.markdown(data)
     assert md.startswith("# The Lighthouse Keeper's Almanac\n\nMara Ellery Quill\n\nAbout the book.\n\n## The Lamp Room\n\n### Arrival at Gannet Rock\n\nMy summary.")
@@ -156,6 +159,9 @@ def test_a_practice_card_shows_what_was_highlighted_in_its_passage(tmp_path):
         time.sleep(0.05)
     assert jobs.get(job["id"])["status"] == "done"
     jid = job["id"]
+    sources = jobs.sources(jid)  # where the notebook's "Open the passage" goes: the first paragraph behind the answer
+    block = next(b for sd in jobs.book(jid).book.spine for b in sd.blocks if b.start == sources["c0001-p1"]["word"] and sd.index == sources["c0001-p1"]["chapter"])
+    assert set(sources) == {p["id"] for s in jobs.book(jid).manifest()["sections"] for p in s["prompts"]} and block.words
     plain = jobs.passage(jid, "c0001-p1")
     assert len(plain) == 1 and plain[0] == [{"t": plain[0][0]["t"], "h": False}]  # one paragraph, nothing marked
     block = next(b for sd in jobs.book(jid).book.spine for b in sd.blocks if " ".join(b.words) == plain[0][0]["t"])

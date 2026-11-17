@@ -50,7 +50,7 @@ class Backend(Protocol):
 
 
 _LIMIT_RE = re.compile(r"usage limit|hit your limit|limit reached|out of extra usage|quota", re.I)
-_TRANSIENT_RE = re.compile(r"overloaded|rate.?limit|timed? ?out|timeout|connection|temporarily|5\d\d|ECONNRESET|socket", re.I)
+_TRANSIENT_RE = re.compile(r"structured.?output|overloaded|rate.?limit|timed? ?out|timeout|connection|temporarily|5\d\d|ECONNRESET|socket", re.I)
 _LOGIN_RE = re.compile(r"/login|not logged in|invalid api key|authentication|unauthorized|401", re.I)
 
 

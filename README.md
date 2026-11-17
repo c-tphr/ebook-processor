@@ -60,7 +60,7 @@ That processes the book with the default options and prints where the files are.
 | `--kind auto\|expository\|narrative\|technical` | The kind of book. `auto` decides section by section | `auto` |
 | `--content prose\|text\|figures` | What Claude sees of tables, code, formulas and pictures (below) | `text` |
 | `--rounds N` | How often a question may be checked. 0 switches checking off | 3 |
-| `--model`, `--checker-model`, `--effort` | Passed to Claude Code | its own defaults |
+| `--model`, `--checker-model`, `--effort` | The model that drafts, the model that checks, and the reasoning effort. `ebook-processor models` lists the models your login can use | Claude Code's defaults |
 | `--jobs N` | Calls to Claude at the same time | 3 |
 | `--epubcheck` | Also run EPUBCheck on both books (needs Java; downloads EPUBCheck once) | off |
 
@@ -82,7 +82,7 @@ ebook-processor rebuild path/to/Book-processed --remove c0004-p2 c0011-p1
 ebook-processor serve
 ```
 
-It opens `http://localhost:8765/` in your browser. Drop an EPUB on the page (or type the path of a file on the computer), choose the options and press **Process book**. The page shows the run's progress. When it is finished you can download each file and go through the questions: untick the ones you do not want and press **Rebuild files**. The app listens on your own computer only, runs one book at a time and keeps its runs in `~/ebook-processor-runs` (`--data` chooses another folder).
+It opens `http://localhost:8765/` in your browser. Drop an EPUB on the page (or type the path of a file on the computer), choose the options and press **Process book**. Under **Advanced**, the two model fields list the models your Claude login can use, as Claude Code reports them when the app starts. The page shows the run's progress. When it is finished you can download each file and go through the questions: untick the ones you do not want and press **Rebuild files**. The app listens on your own computer only, runs one book at a time and keeps its runs in `~/ebook-processor-runs` (`--data` chooses another folder).
 
 ## How it works
 

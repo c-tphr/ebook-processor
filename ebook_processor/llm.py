@@ -99,6 +99,42 @@ class ClaudeCodeBackend:
             raise BackendUnavailable(f"Claude Code could not be started: {exc}") from exc
         return out.stdout.strip() or "unknown version"
 
+    def list_models(self, timeout: float = 45.0) -> list[dict[str, Any]]:
+        """The models this login may use, as Claude Code reports them. No model is called.
+
+        Each entry has ``value`` (what ``--model`` takes), ``name``, ``description``, ``resolved`` (the full model
+        id) and ``efforts`` (the reasoning-effort levels it accepts, empty when it takes none). The first entry is
+        Claude Code's default. Returns an empty list when Claude Code cannot say (too old, not signed in).
+        """
+        request = json.dumps({"type": "control_request", "request_id": "models", "request": {"subtype": "initialize"}})
+        cmd = [self.executable, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+               "--no-session-persistence", "--strict-mcp-config", "--disable-slash-commands", "--setting-sources", "",
+               "--tools", ""]
+        try:
+            with tempfile.TemporaryDirectory(prefix="ebook-processor-") as tmp:
+                proc = subprocess.run(cmd, input=request + "\n", capture_output=True, text=True, encoding="utf-8",
+                                      timeout=timeout, cwd=tmp)
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+        for line in proc.stdout.splitlines():
+            try:
+                message = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(message, dict) or message.get("type") != "control_response":
+                continue
+            reply = (message.get("response") or {}).get("response") or {}
+            out = []
+            for m in reply.get("models") or []:
+                if isinstance(m, dict) and isinstance(m.get("value"), str) and m["value"]:
+                    out.append({"value": m["value"], "name": str(m.get("displayName") or m["value"]),
+                                "description": str(m.get("description") or ""),
+                                "resolved": str(m.get("resolvedModel") or ""),
+                                "efforts": [e for e in m.get("supportedEffortLevels") or [] if isinstance(e, str)]
+                                if m.get("supportsEffort") else []})
+            return out
+        return []
+
     def command(self, system: str, schema: dict[str, Any], model: str | None, read_dir: Path | None) -> list[str]:
         cmd = [
             self.executable, "-p",

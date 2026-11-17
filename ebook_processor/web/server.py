@@ -225,6 +225,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = f"ebook-processor/{__version__}"
     jobs: Jobs
     claude: dict[str, Any]
+    models: list[dict[str, Any]]
 
     def log_message(self, format: str, *args: Any) -> None:  # keep the terminal quiet
         return
@@ -321,7 +322,8 @@ class Handler(BaseHTTPRequestHandler):
             case ("GET", ["info"]):
                 defaults = Settings()
                 return self.send_json({"version": __version__, "claude": self.claude, "data": str(jobs.data),
-                                       "densities": DENSITIES, "defaults": defaults.as_json()})
+                                       "densities": DENSITIES, "defaults": defaults.as_json(),
+                                       "models": self.models})
             case ("GET", ["jobs"]):
                 return self.send_json({"jobs": jobs.listing()})
             case ("POST", ["jobs"]):
@@ -390,9 +392,13 @@ def claude_status() -> dict[str, Any]:
 
 
 def make_server(data: Path, host: str = "127.0.0.1", port: int = 8765, backend_factory: Any = None,
-                claude: dict[str, Any] | None = None) -> ThreadingHTTPServer:
-    handler = type("BoundHandler", (Handler,), {"jobs": Jobs(data, backend_factory),
-                                                "claude": claude if claude is not None else claude_status()})
+                claude: dict[str, Any] | None = None, models: list[dict[str, Any]] | None = None) -> ThreadingHTTPServer:
+    """``claude`` and ``models`` are asked of Claude Code once, when the app starts, unless given."""
+    claude = claude if claude is not None else claude_status()
+    if models is None:
+        models = ClaudeCodeBackend().list_models() if claude.get("ok") else []
+    handler = type("BoundHandler", (Handler,), {"jobs": Jobs(data, backend_factory), "claude": claude,
+                                                "models": models})
     server = ThreadingHTTPServer((host, port), handler)
     server.daemon_threads = True
     return server

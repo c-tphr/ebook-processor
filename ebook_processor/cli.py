@@ -22,7 +22,7 @@ from .runner import Cancelled, PipelineError, default_out_dir, rebuild, run_book
 from .settings import CONTENT_MODES, DENSITIES, EFFORTS, KINDS, Settings, SettingsError, from_options
 
 EXIT_OK, EXIT_INPUT, EXIT_USAGE, EXIT_STOPPED = 0, 1, 2, 3
-COMMANDS = ("process", "rebuild", "serve")
+COMMANDS = ("process", "rebuild", "serve", "models")
 
 
 def add_run_options(p: argparse.ArgumentParser) -> None:
@@ -43,7 +43,8 @@ def add_run_options(p: argparse.ArgumentParser) -> None:
                    help=f"how often a question may be checked; a question failing the last check is left out; "
                         f"0 switches checking off (default: {d.rounds})")
     g = p.add_argument_group("Claude")
-    g.add_argument("--model", help="model for drafting and revising (default: Claude Code's own default)")
+    g.add_argument("--model", help="model for drafting and revising; 'ebook-processor models' lists the choices "
+                                   "(default: Claude Code's own default)")
     g.add_argument("--checker-model", help="model for checking (default: the same as --model)")
     g.add_argument("--effort", choices=EFFORTS, help="reasoning effort (default: Claude Code's own default)")
     g.add_argument("--jobs", type=int, metavar="N", help=f"calls that may run at the same time (default: {d.jobs})")
@@ -98,6 +99,11 @@ def make_parser() -> argparse.ArgumentParser:
                    help="folder that holds the runs (default: ~/ebook-processor-runs)")
     p.add_argument("--no-open", action="store_true", help="do not open the browser")
     p.set_defaults(func=cmd_serve)
+
+    p = sub.add_parser("models", help="list the models your Claude login can use",
+                       description="List the models your Claude login can use, as Claude Code reports them. The "
+                                   "first column is what --model and --checker-model take.")
+    p.set_defaults(func=cmd_models)
     return parser
 
 
@@ -155,6 +161,22 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
 def cmd_serve(args: argparse.Namespace) -> int:
     from .web.server import serve
     serve(args.data.expanduser().resolve(), args.host, args.port, not args.no_open)
+    return EXIT_OK
+
+
+def cmd_models(args: argparse.Namespace) -> int:
+    from .llm import ClaudeCodeBackend
+    backend = ClaudeCodeBackend()
+    backend.check_available()
+    models = backend.list_models()
+    if not models:
+        print("ebook-processor: Claude Code did not report its models (is it signed in and up to date?)",
+              file=sys.stderr)
+        return EXIT_INPUT
+    width = max(len(m["value"]) for m in models)
+    for m in models:
+        efforts = f"  [effort: {', '.join(m['efforts'])}]" if m["efforts"] else ""
+        print(f"{m['value']:<{width}}  {m['name']}: {m['description']}{efforts}")
     return EXIT_OK
 
 

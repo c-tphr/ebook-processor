@@ -159,7 +159,7 @@ def test_a_reply_with_text_around_its_json_is_still_read():
 @pytest.fixture
 def app(tmp_path):
     server = make_server(tmp_path / "data", "127.0.0.1", 0, backend_factory=lambda settings: Script().backend(),
-                         claude={"ok": True, "version": "test"})
+                         claude={"ok": True, "version": "test"}, models=[])
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     base = f"http://127.0.0.1:{server.server_address[1]}"
@@ -221,3 +221,44 @@ def test_the_web_app_refuses_what_it_should(app):
     assert app("POST", f"/api/jobs?name=a.epub&settings={bad}", FIXTURE.read_bytes())[0] == 400
     assert app("GET", "/api/jobs/20260101-000000-nothing")[0] == 404
     assert app("POST", "/api/jobs/local", json_body={"path": "/nowhere/book.epub"})[0] == 400
+
+
+# --------------------------------------------------------------------------
+# The models Claude Code offers
+
+
+def fake_claude(tmp_path: Path, lines: list[dict]) -> str:
+    """A stand-in for the claude executable that prints ``lines`` as JSON, one per line."""
+    script = tmp_path / "claude"
+    payload = "\n".join(json.dumps(line) for line in lines)
+    script.write_text(f"#!/bin/sh\ncat > /dev/null\ncat <<'END'\n{payload}\nEND\n", encoding="utf-8")
+    script.chmod(0o755)
+    return str(script)
+
+
+def test_the_models_are_read_from_claude_codes_own_list(tmp_path):
+    reply = {"type": "control_response", "response": {"subtype": "success", "request_id": "models", "response": {"models": [
+        {"value": "default", "resolvedModel": "claude-x-1", "displayName": "Default (recommended)", "description": "X 1",
+         "supportsEffort": True, "supportedEffortLevels": ["low", "high"]},
+        {"value": "small", "resolvedModel": "claude-small-1", "displayName": "Small 1", "description": "Fast"},
+        {"displayName": "no value: skipped"}]}}}
+    exe = fake_claude(tmp_path, [{"type": "system", "subtype": "init"}, reply])
+    models = ClaudeCodeBackend(executable=exe).list_models()
+    assert models == [
+        {"value": "default", "name": "Default (recommended)", "description": "X 1", "resolved": "claude-x-1", "efforts": ["low", "high"]},
+        {"value": "small", "name": "Small 1", "description": "Fast", "resolved": "claude-small-1", "efforts": []}]
+    assert ClaudeCodeBackend(executable=fake_claude(tmp_path, [{"type": "result"}])).list_models() == []
+    assert ClaudeCodeBackend(executable=str(tmp_path / "missing")).list_models() == []
+
+
+def test_the_web_app_passes_the_models_to_its_page(tmp_path):
+    models = [{"value": "default", "name": "Default", "description": "X 1", "resolved": "claude-x-1", "efforts": ["low"]}]
+    server = make_server(tmp_path / "data", "127.0.0.1", 0, claude={"ok": True, "version": "test"}, models=models)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{server.server_address[1]}/api/info", timeout=10) as response:
+            assert json.loads(response.read())["models"] == models
+    finally:
+        server.shutdown()
+        server.server_close()

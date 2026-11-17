@@ -278,6 +278,37 @@ function showHome() {
   const sel = (id, options, value) => h("select", { id }, options.map(([v, t]) => {
     const o = h("option", { value: v }, t); if (String(v) === String(value)) o.selected = true; return o; }));
   const field = (label, control, hint) => h("label", { class: "field" }, h("span", { class: "m" }, label), control, hint ? h("small", {}, hint) : null);
+  // Models come from Claude Code (what this login may use). Without a list, the two fields are free text.
+  const models = info.models || [];
+  const defaultModel = models.find((m) => m.value === "default");
+  const named = models.filter((m) => m.value !== "default");
+  const EFFORT = { low: "Low", medium: "Medium", high: "High", xhigh: "Extra high", max: "Maximum" };
+  const modelHint = h("span", {}, models.length ? "" : "An alias such as opus or sonnet, or a full model name.");
+  const checkerHint = h("span", {}), effortHint = h("span", {});
+  const modelSel = models.length
+    ? sel("model", [["", defaultModel ? `Claude Code's default (${defaultModel.description})` : "Claude Code's default"], ...named.map((m) => [m.value, m.name])], "")
+    : h("input", { type: "text", id: "model", placeholder: "Claude Code's default" });
+  const checkerSel = models.length
+    ? sel("checker_model", [["", "Same as the model above"], ...named.map((m) => [m.value, m.name])], "")
+    : h("input", { type: "text", id: "checker_model", placeholder: "Same as above" });
+  const effortSel = sel("effort", [["", "Claude Code's default"], ...Object.entries(EFFORT)], "");
+  function syncModels() {
+    if (!models.length) return;
+    const pick = (value) => (value ? named.find((m) => m.value === value) : defaultModel);
+    const drafting = pick(modelSel.value), checking = checkerSel.value ? pick(checkerSel.value) : drafting;
+    const about = (m) => (m ? [m.description, m.resolved && m.resolved !== m.value ? m.resolved : ""].filter(Boolean).join(" / ") : "");
+    modelHint.textContent = modelSel.value ? about(drafting) : "Drafts and revises the questions.";
+    checkerHint.textContent = checkerSel.value ? about(checking) : "Checks them, in a separate session.";
+    // effort is one setting for the whole run, so offer only the levels both models take
+    const levels = (drafting?.efforts || []).filter((e) => (checking?.efforts || []).includes(e));
+    const keep = levels.includes(effortSel.value) ? effortSel.value : "";
+    put(effortSel, h("option", { value: "" }, levels.length ? "Claude Code's default" : "Not adjustable for this choice"),
+      levels.map((e) => h("option", { value: e }, EFFORT[e] || e)));
+    effortSel.value = keep; effortSel.disabled = !levels.length;
+    effortHint.textContent = levels.length ? "" : "At least one chosen model has no effort setting.";
+  }
+  modelSel.addEventListener("change", syncModels); checkerSel.addEventListener("change", syncModels);
+  syncModels();
   const form = h("form", { onsubmit: submit },
     drop,
     h("div", { style: "margin-top:18px" }, field("Or the path of a file on this computer", pathInput)),
@@ -293,9 +324,9 @@ function showHome() {
         [1, "One check, no revision"], [0, "No check (fastest)"]], d.rounds), "A question that fails its last check is left out and listed in the report.")),
     h("details", { class: "adv" }, h("summary", {}, "Advanced"),
       h("div", { class: "grid" },
-        field("Model", h("input", { type: "text", id: "model", placeholder: "Claude Code's default" }), "An alias such as opus or sonnet, or a full model name."),
-        field("Model for checking", h("input", { type: "text", id: "checker_model", placeholder: "Same as above" })),
-        field("Reasoning effort", sel("effort", [["", "Claude Code's default"], ["low", "Low"], ["medium", "Medium"], ["high", "High"], ["xhigh", "Extra high"], ["max", "Maximum"]], "")),
+        field("Model", modelSel, modelHint),
+        field("Model for checking", checkerSel, checkerHint),
+        field("Reasoning effort", effortSel, effortHint),
         field("Calls at the same time", sel("jobs", [[1, "1"], [2, "2"], [3, "3"], [4, "4"], [6, "6"]], d.jobs)),
         field("EPUBCheck", sel("epubcheck", [["", "Skip"], ["1", "Run on both books (needs Java)"]], "")))),
     error,

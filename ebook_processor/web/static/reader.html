@@ -76,7 +76,8 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .text .hit { background: color-mix(in srgb, var(--blue) 22%, transparent); }
 ::highlight(hl) { background-color: color-mix(in srgb, var(--blue) 24%, transparent); }
 ::highlight(hln) { background-color: color-mix(in srgb, var(--blue) 24%, transparent); text-decoration: underline; text-decoration-color: var(--blue); text-decoration-thickness: 2px; text-underline-offset: 3px; }
-.text [data-note]::before { content: ""; display: inline-block; width: 0.5em; height: 0.5em; background: var(--blue); margin-right: 0.4em; vertical-align: 0.12em; }
+.text .pin { display: inline-block; box-sizing: content-box; width: 0.5em; height: 0.5em; padding: 0; border: 6px solid transparent; background: var(--blue) content-box; margin: -6px calc(0.4em - 6px) -6px -6px; vertical-align: 0.12em; cursor: pointer; text-indent: 0; }
+.text .pin:hover, .text .pin:focus-visible { background: var(--ink) content-box; }
 .tip { position: fixed; z-index: 15; display: flex; background: var(--ink); padding: 3px; gap: 3px; transform: translate(-50%, -100%); }
 .tip button { border-color: var(--ink); background: var(--ink); color: var(--paper); padding: 8px 10px; }
 .tip button:hover { background: var(--blue); border-color: var(--blue); color: var(--on-blue); }
@@ -88,7 +89,9 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .marks a:hover { color: var(--blue); } .marks q { font: 15px/1.45 var(--serif); quotes: none; display: block; }
 .marks small { display: block; color: var(--mute); margin-top: 4px; white-space: pre-wrap; }
 .rv .word.lit { text-decoration: underline; text-decoration-color: var(--blue); text-decoration-thickness: 4px; text-underline-offset: 10px; }
-.rv .ctx span.lit { background: color-mix(in srgb, var(--blue) 24%, transparent); color: var(--ink); }
+.rv .ctx .lit { background: color-mix(in srgb, var(--blue) 24%, transparent); color: var(--ink); cursor: auto; }
+.rv .ctx .lit.noted { text-decoration: underline; text-decoration-color: var(--blue); text-decoration-thickness: 2px; text-underline-offset: 3px; }
+.rv .ctx .lit span:hover { color: inherit; } .rv .ctx .lit span.cur:hover { color: var(--on-blue); }
 
 /* paged */
 .pv { position: absolute; inset: 22px 0 16px; overflow: hidden; }
@@ -473,8 +476,16 @@ function rsvpView() {
     let a = i, b = i;
     while (a > 0 && !(data.flags[a - 1] & PARA_END) && i - a < 400) a--;
     while (b < N - 1 && !(data.flags[b] & PARA_END) && b - i < 400) b++;
-    put(ctx, Array.from({ length: Math.max(0, Math.min(N, b + 1) - a) }, (_, n) => [h("span", { "data-i": a + n, class: a + n === skipTo(i) ? "cur" : lit(a + n) ? "lit" : "",
-      onclick: () => { if (!getSelection().isCollapsed) return; i = a + n; settle(); } }, data.words[a + n]), " "]));
+    const cur = skipTo(i), out = [], end = Math.min(N, b + 1);
+    const word = (k) => h("span", { "data-i": k, class: k === cur ? "cur" : "", onclick: () => { if (!getSelection().isCollapsed) return; i = k; settle(); } }, data.words[k]);
+    for (let k = a; k < end;) {       // a highlight is one unbroken band, spaces included; the current word stays darker on top
+      const hit = NB.highlights.find((x) => x.chapter === pos.chapter && x.start <= k && k < x.end);
+      if (!hit) { out.push(word(k), " "); k++; continue; }
+      const stop = Math.min(end, hit.end), run = [];
+      for (; k < stop; k++) run.push(run.length ? " " : null, word(k));
+      out.push(h("span", { class: "lit" + (hit.note ? " noted" : "") }, run), " ");
+    }
+    put(ctx, out);
   }
   function controls() {
     const o = S.overrides;
@@ -676,8 +687,13 @@ function rangesFor(start, end) {      // DOM ranges covering words [start, end) 
 }
 function paint() {
   if (!view_root) { if (view && view.relayout) view.relayout(); return; }
-  for (const el of view_root.querySelectorAll("[data-note]")) el.removeAttribute("data-note");
-  for (const n of NB.notes) if (n.on === "place" && n.chapter === pos.chapter) view_root.querySelector(`[data-w="${n.word}"]`)?.setAttribute("data-note", "");
+  for (const el of view_root.querySelectorAll(".pin")) el.remove();
+  for (const n of NB.notes) {         // a note on a paragraph: a small square at its start, which opens the note
+    const block = n.on === "place" && n.chapter === pos.chapter ? view_root.querySelector(`[data-w="${n.word}"]`) : null;
+    if (!block) continue;
+    const pin = h("button", { class: "pin", type: "button", "data-word": n.word, "aria-label": "Open the note on this paragraph", title: "Note on this paragraph" });
+    if (/^(TABLE|IMG|UL|OL|DL|HR|PRE)$/.test(block.tagName)) block.before(pin); else block.prepend(pin);
+  }
   if (!window.Highlight || !CSS.highlights) return;
   const plain = new Highlight(), noted = new Highlight();
   for (const x of NB.highlights) if (x.chapter === pos.chapter) for (const r of rangesFor(x.start, x.end)) (x.note ? noted : plain).add(r);
@@ -782,7 +798,12 @@ function marks() {                    // this chapter's highlights and notes, an
 function closeNote() { stage.querySelector(".notebox")?.remove(); }
 function wire(root) {
   root.addEventListener("click", async (e) => {
-    const a = e.target.closest("a[data-go]");
+    const a = e.target.closest("a[data-go]"), pin = e.target.closest(".pin");
+    if (pin) {                        // the square of a paragraph note: the same as pressing n over that paragraph
+      e.preventDefault(); e.stopPropagation();
+      const block = root.querySelector(`[data-w="${pin.dataset.word}"]`), words = (block ? block.textContent : "").trim().split(/\s+/);
+      return editTarget("Note on this paragraph", { on: "place", chapter: pos.chapter, word: +pin.dataset.word }, words.slice(0, 24).join(" ") + (words.length > 24 ? " …" : ""));
+    }
     if (!a && getSelection().isCollapsed) {
       const at = document.caretPositionFromPoint ? document.caretPositionFromPoint(e.clientX, e.clientY) : null;
       const cr = at ? null : document.caretRangeFromPoint?.(e.clientX, e.clientY);

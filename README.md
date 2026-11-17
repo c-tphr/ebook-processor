@@ -111,7 +111,7 @@ The strip at the bottom is the book: one block per section, with a square for ea
 
 ### Highlights, notes and the notebook
 
-In the page and scroll views, select text and press **h** to highlight it, or **n** to highlight it and write a note. With nothing selected, **n** writes a note on the paragraph under the pointer. Click a highlight to edit its note or remove it. Highlights that touch become one.
+In the page and scroll views, select text and press **h** to highlight it, or **n** to highlight it and write a note. With nothing selected, **n** writes a note on the paragraph under the pointer; a paragraph with a note has a small blue square at its start, and clicking the square opens the note. Click a highlight to edit its note or remove it. Highlights that touch become one.
 
 In RSVP, **h** highlights the sentence being shown without stopping, and **n** highlights it, pauses and opens a note. Paused, you can select words in the paragraph shown.
 

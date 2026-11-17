@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 from typing import Any, Iterable
 
-from .llm import Backend, ClaudeCodeBackend
+from .llm import Backend, Backends, ClaudeCodeBackend, CodexBackend
 from .outputs import build_outputs
 from .pipeline import SOURCE_COPY, STATE_FILE, Cancelled, PipelineError, Progress, kept, load_state, process, write_json
 from .prep.epub import EpubError, load_book_bytes
@@ -33,8 +33,9 @@ def run_book(epub: Path, out_dir: Path, settings: Settings, backend: Backend | N
     settings.validate()
     work = work_dir(out_dir)
     if backend is None:
-        backend = ClaudeCodeBackend(model=settings.model, effort=settings.effort)
-        backend.check_available()
+        # Claude Code and Codex both stand ready; only the ones the two model settings name are looked for.
+        backend = Backends(ClaudeCodeBackend(effort=settings.effort), CodexBackend(effort=settings.effort))
+        backend.check_available([settings.model, settings.checker_model or settings.model])
     book, state = process(epub, work, settings, backend, progress, cancel)
     original = (work / SOURCE_COPY).read_bytes()
     if progress:

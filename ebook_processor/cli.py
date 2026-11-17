@@ -34,19 +34,21 @@ def add_run_options(p: argparse.ArgumentParser) -> None:
     g.add_argument("--section-words", metavar="MIN-MAX", help="target section length in words, instead of --density")
     g.add_argument("--max-questions", type=int, metavar="N", help=f"most questions per checkpoint, 1 to 4 "
                                                                    f"(default: {d.max_questions})")
-    g = p.add_argument_group("what Claude reads and how strictly it is checked")
+    g = p.add_argument_group("what the model reads and how strictly it is checked")
     g.add_argument("--content", choices=CONTENT_MODES,
                    help="tables, code and formulas: 'prose' hides them, 'text' shows their text, 'figures' also "
-                        f"lets Claude look at the pictures (default: {d.content})")
+                        f"lets the model look at the pictures (default: {d.content})")
     g.add_argument("--kind", choices=KINDS, help=f"the kind of book (default: {d.kind}, decided section by section)")
     g.add_argument("--rounds", type=int, metavar="N",
                    help=f"how often a question may be checked; a question failing the last check is left out; "
                         f"0 switches checking off (default: {d.rounds})")
-    g = p.add_argument_group("Claude")
-    g.add_argument("--model", help="model for drafting and revising; 'ebook-processor models' lists the choices "
-                                   "(default: Claude Code's own default)")
-    g.add_argument("--checker-model", help="model for checking (default: the same as --model)")
-    g.add_argument("--effort", choices=EFFORTS, help="reasoning effort (default: Claude Code's own default)")
+    g = p.add_argument_group("the models (Claude Code, or Codex with a 'codex:' prefix)")
+    g.add_argument("--model", help="model for drafting and revising: a Claude Code model (opus), a Codex model "
+                                   "(codex:gpt-6.1-sol), or 'codex' for Codex's own default; 'ebook-processor "
+                                   "models' lists the choices (default: Claude Code's own default)")
+    g.add_argument("--checker-model", help="model for checking, named the same way; 'claude' is Claude Code's own "
+                                           "default (default: the same as --model)")
+    g.add_argument("--effort", choices=EFFORTS, help="reasoning effort, for both models (default: each tool's own)")
     g.add_argument("--jobs", type=int, metavar="N", help=f"calls that may run at the same time (default: {d.jobs})")
     g.add_argument("--part-words", type=int, metavar="N",
                    help=f"about how many words one drafting call reads (default: {d.part_words})")
@@ -82,9 +84,9 @@ def make_parser() -> argparse.ArgumentParser:
     add_run_options(p)
     p.set_defaults(func=cmd_process)
 
-    p = sub.add_parser("rebuild", help="build the outputs again after taking questions out (no Claude usage)",
+    p = sub.add_parser("rebuild", help="build the outputs again after taking questions out (no model is called)",
                        description="Build every output again from a finished run, with some questions taken out "
-                                   "or put back. Claude is not called.")
+                                   "or put back. No model is called.")
     p.add_argument("output", type=Path, help="the output folder of an earlier run")
     p.add_argument("--remove", nargs="+", default=[], metavar="ID", help="question ids to take out (c0004-p2)")
     p.add_argument("--restore", nargs="+", default=[], metavar="ID", help="question ids to put back")
@@ -103,9 +105,10 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-open", action="store_true", help="do not open the browser")
     p.set_defaults(func=cmd_serve)
 
-    p = sub.add_parser("models", help="list the models your Claude login can use",
-                       description="List the models your Claude login can use, as Claude Code reports them. The "
-                                   "first column is what --model and --checker-model take.")
+    p = sub.add_parser("models", help="list the models Claude Code and Codex offer",
+                       description="List the models your Claude login can use, as Claude Code reports them, and "
+                                   "those of Codex when it is installed and signed in. The first column is what "
+                                   "--model and --checker-model take.")
     p.set_defaults(func=cmd_models)
 
     p = sub.add_parser("update", help="update to the latest version and start the app again",
@@ -177,18 +180,30 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
 
 def cmd_models(args: argparse.Namespace) -> int:
-    from .llm import ClaudeCodeBackend
-    backend = ClaudeCodeBackend()
-    backend.check_available()
-    models = backend.list_models()
+    from .llm import PROVIDERS, BackendUnavailable, ClaudeCodeBackend, CodexBackend, available_models
+    ready, missing = {}, []
+    for provider, backend in (("claude", ClaudeCodeBackend()), ("codex", CodexBackend())):
+        try:
+            backend.check_available()
+            ready[provider] = backend
+        except BackendUnavailable as exc:
+            missing.append(f"{PROVIDERS[provider]}: {exc}")
+    models = available_models(ready.get("claude"), ready.get("codex"))
     if not models:
-        print("ebook-processor: Claude Code did not report its models (is it signed in and up to date?)",
-              file=sys.stderr)
+        print("ebook-processor: no models to list.\n" + "\n".join(missing) if missing else
+              "ebook-processor: Claude Code did not report its models (is it signed in and up to date?)", file=sys.stderr)
         return EXIT_INPUT
     width = max(len(m["value"]) for m in models)
-    for m in models:
-        efforts = f"  [effort: {', '.join(m['efforts'])}]" if m["efforts"] else ""
-        print(f"{m['value']:<{width}}  {m['name']}: {m['description']}{efforts}")
+    for provider, title in PROVIDERS.items():
+        mine = [m for m in models if m["provider"] == provider]
+        if not mine:
+            continue
+        print(f"{title}:")
+        for m in mine:
+            efforts = f"  [effort: {', '.join(m['efforts'])}]" if m["efforts"] else ""
+            print(f"  {m['value']:<{width}}  {m['name']}: {m['description']}{efforts}")
+    for line in missing:
+        print(f"({line})", file=sys.stderr)
     return EXIT_OK
 
 

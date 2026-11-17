@@ -5,7 +5,7 @@ Give it an EPUB. It divides the book into sections, writes recall questions for 
 - the book with **checkpoints**: at the end of each section you stop and recall what you just read, before going on;
 - the questions on their own, as **structured data**, an **Anki deck** and a **text file** for other spaced-repetition apps.
 
-It runs on your own computer, from the command line or as a local web app, and uses your Claude plan through Claude Code. No API key is needed.
+It runs on your own computer, from the command line or as a local web app, and uses your Claude plan through Claude Code, your ChatGPT plan through Codex, or both in one run. No API key is needed.
 
 ## What you get
 
@@ -42,6 +42,20 @@ Check that Claude Code is ready (run `claude` once and sign in with `/login` if 
 ```bash
 claude --version
 ```
+
+### Codex (optional)
+
+The questions can also be written or checked by OpenAI's models, through [Codex](https://developers.openai.com/codex/cli) and your ChatGPT plan. Install it and sign in with your ChatGPT account:
+
+```bash
+npm install -g @openai/codex
+```
+
+```bash
+codex login
+```
+
+Claude Code and Codex are independent: with only Codex installed, name a Codex model for the run (`--model codex`, or the Model field in the app).
 
 ## Updating
 
@@ -82,7 +96,7 @@ That processes the book with the default options and prints where the files are.
 | `--kind auto\|expository\|narrative\|technical` | The kind of book. `auto` decides section by section | `auto` |
 | `--content prose\|text\|figures` | What Claude sees of tables, code, formulas and pictures (below) | `text` |
 | `--rounds N` | How often a question may be checked. 0 switches checking off | 3 |
-| `--model`, `--checker-model`, `--effort` | The model that drafts, the model that checks, and the reasoning effort. `ebook-processor models` lists the models your login can use | Claude Code's defaults |
+| `--model`, `--checker-model`, `--effort` | The model that drafts, the model that checks, and the reasoning effort. `ebook-processor models` lists the models your logins can use. See "Choosing the models" below | Claude Code's defaults |
 | `--jobs N` | Calls to Claude at the same time | 3 |
 | `--epubcheck` | Also run EPUBCheck on both books (needs Java; downloads EPUBCheck once) | off |
 
@@ -104,7 +118,7 @@ ebook-processor rebuild path/to/Book-processed --remove c0004-p2 c0011-p1
 ebook-processor serve
 ```
 
-It opens `http://localhost:8765/` in your browser. Drop an EPUB on the page (or type the path of a file on the computer), choose the options and press **Process book**. Under **Advanced**, the two model fields list the models your Claude login can use, as Claude Code reports them when the app starts. The page shows the run's progress. When it is finished you can download each file and go through the questions: untick the ones you do not want and press **Rebuild files**. The app listens on your own computer only, runs one book at a time and keeps its runs in `~/ebook-processor-runs` (`--data` chooses another folder).
+It opens `http://localhost:8765/` in your browser. Drop an EPUB on the page (or type the path of a file on the computer), choose the options and press **Process book**. Under **Advanced**, the two model fields list the models your Claude login can use, as Claude Code reports them when the app starts, and Codex's models when Codex is installed and signed in. The page shows the run's progress. When it is finished you can download each file and go through the questions: untick the ones you do not want and press **Rebuild files**. The app listens on your own computer only, runs one book at a time and keeps its runs in `~/ebook-processor-runs` (`--data` chooses another folder).
 
 The app opens on your **library**: every book with how far you have read and how many questions you recalled on the first try, and the book you were last reading on top. **Add book** processes a new EPUB, or takes a `Book.prepared.epub` made elsewhere as it is.
 
@@ -202,7 +216,7 @@ Reading state lives in `reading.json` in the book's folder. It follows the saved
 
 ## How it works
 
-1. **Read.** The EPUB is read into numbered paragraphs (`d03-p011` is block 11 of the third document). Nothing is sent anywhere but to Claude through your own Claude Code.
+1. **Read.** The EPUB is read into numbered paragraphs (`d03-p011` is block 11 of the third document). Nothing is sent anywhere but to the models you chose, through your own Claude Code or Codex.
 2. **Draft.** The book goes to Claude in parts of about 10,000 words, several parts at a time. For each part Claude returns the sections, what it left out as front or back matter, and the questions with reference answers and the paragraphs that support each answer. A script checks every reply (every paragraph in exactly one section or excluded range, length limits, citations inside the section) and sends it back with a list of the problems when it fails.
 3. **Check.** A separate Claude session, which sees only the section's text and the questions, judges each question on five points: the answer says nothing its section does not say; the answer is clear enough to grade yourself against; the question can be answered from its section alone; the question does not give its answer away; the question can be understood weeks later without the page. It also judges each section's break, and another call reviews what was left out of the sections.
 4. **Revise.** A question that fails goes back to the drafter with the checker's finding, and then to the checker again, up to three checks. A question that still fails is **left out** of every output and listed in the report with the reason. The run always delivers a book.
@@ -230,6 +244,27 @@ The rules were written for English books.
 | `text` | The cells of a table, the lines of a listing, the text of a formula. Pictures by caption and description only | The default |
 | `figures` | As `text`, and Claude also looks at each picture | Books whose diagrams carry the content. Slower and uses more of your plan |
 
+### Choosing the models
+
+A model setting names a tool and a model:
+
+| Setting | Meaning |
+| --- | --- |
+| (none) or `claude` | Claude Code's own default model |
+| `opus`, `sonnet`, a full Claude model name | That model, through Claude Code |
+| `codex` | Codex's own default model |
+| `codex:gpt-6.1-sol` | That model, through Codex. A name that starts with `gpt-` goes to Codex without the prefix too |
+
+The drafting model also revises. The checking model is the same one unless you name another, so the two can come from different tools:
+
+```bash
+ebook-processor Book.epub --model codex:gpt-6.1-sol --checker-model opus
+```
+
+A tool is only needed when a setting names it. The reasoning effort is one setting for both models; the app offers the levels both accept.
+
+Codex is a coding agent and cannot be run with no tools at all, so a call to it is kept as close to a plain question as its options allow: this tool's instructions replace Codex's own, the sandbox is read-only, the working folder is an empty temporary one, your Codex settings, rules and project `AGENTS.md` files are left out, and the session is not kept. One thing cannot be switched off: a personal `AGENTS.md` in your Codex home folder (`~/.codex/AGENTS.md`) is still shown to the model. Codex reports no price, so the report's list-price figure covers the Claude Code calls only.
+
 ## Things to know
 
 - **Usage.** A run reads the book about twice (once to draft, once to check) and writes a few hundred words per section. The report gives the number of calls and tokens, and what they would have cost at API list prices, as a measure of size; a Claude plan is not billed per run.
@@ -251,7 +286,7 @@ The tests never call Claude: `tests/scripted.py` is a stand-in that answers from
 | `ebook_processor/prep/` | The EPUB engine, ported from `tools/prep` of eink-learner-aid: reading and numbering (`epub.py`, `words.py`), byte-exact rewriting (`epubzip.py`, `xmltree.py`), the draft's checks (`draft.py`), the firmware-format build (`build.py`) and its validator (`validate.py`). `python3 -m ebook_processor.prep` runs `extract`, `build` and `validate` on their own |
 | `ebook_processor/pipeline.py` | The run: parts, drafting, checking, revising, the saved state |
 | `ebook_processor/prompts.py`, `instructions/` | What is sent to Claude, and the reply shapes |
-| `ebook_processor/llm.py` | Claude Code without a terminal (`claude -p`), with no tools, no settings and no session history. A backend that calls the Anthropic API directly would go here |
+| `ebook_processor/llm.py` | Claude Code without a terminal (`claude -p`, with no tools, no settings and no session history), Codex the same way (`codex exec`), and the router that sends each call to the tool its model setting names. A backend that calls an API directly would go here |
 | `ebook_processor/visible.py` | The book with visible checkpoints |
 | `ebook_processor/exports.py` | `questions.json`, the Anki deck, the text file |
 | `ebook_processor/outputs.py` | Writes every output from the saved state, and the report |

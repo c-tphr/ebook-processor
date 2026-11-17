@@ -233,7 +233,7 @@ body.dragging { cursor: col-resize; user-select: none; } body.dragging .side ifr
 <div class="frame">
   <header class="top">
     <a class="brand" href="#/"><span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>ebook-processor</a>
-    <span class="row"><span class="m" id="claude">Checking Claude Code</span><button type="button" id="b-settings">Settings</button></span>
+    <span class="row"><span class="m" id="claude">Checking the tools</span><button type="button" id="b-settings">Settings</button></span>
   </header>
   <main id="app"></main>
 </div>
@@ -308,10 +308,13 @@ AppSettings.onChange((key, value) => {
 async function init() {
   await AppSettings.ready;
   try { info = await AppSettings.info(); }
-  catch (e) { info = { claude: { ok: false, error: String(e) }, densities: {}, defaults: {}, version: "", data: "" }; }
-  const pill = $("claude");
-  pill.textContent = info.claude.ok ? "Claude Code " + info.claude.version.replace(/\s*\(.*/, "") + " / ready" : "Claude Code / not ready";
-  if (!info.claude.ok) pill.title = info.claude.error;
+  catch (e) { info = { claude: { ok: false, error: String(e) }, codex: { ok: false, installed: false }, densities: {}, defaults: {}, version: "", data: "" }; }
+  // Codex is optional: it is named here only when it is installed.
+  const pill = $("claude"), codex = info.codex || {};
+  const tool = (name, s, version) => (s.ok ? `${name} ${version} / ready` : `${name} / not ready`);
+  pill.textContent = [tool("Claude Code", info.claude, (info.claude.version || "").replace(/\s*\(.*/, "")),
+    codex.installed ? tool("Codex", codex, (codex.version || "").replace(/^codex-cli\s*/, "")) : null].filter(Boolean).join("  |  ");
+  pill.title = [info.claude.ok ? null : info.claude.error, codex.installed && !codex.ok ? codex.error : null].filter(Boolean).join("\n");
   route();
 }
 
@@ -344,7 +347,7 @@ function showAdd() {
     h("details", { class: "adv" }, h("summary", {}, "Advanced"), options.advanced),
     error,
     h("div", { class: "actions" }, h("button", { class: "primary", type: "submit", id: "go" }, "Process book"),
-      h("span", { class: "mute", style: "font-size:14px" }, "The original file is only read. Runs use your Claude plan."),
+      h("span", { class: "mute", style: "font-size:14px" }, "The original file is only read. Runs use your Claude plan, or your ChatGPT plan for Codex models."),
       h("button", { class: "text", type: "button", style: "margin-left:auto", onclick: () => AppSettings.open("add") }, "Change what this form starts with")));
 
   async function submit(e) {
@@ -375,7 +378,9 @@ function showAdd() {
     h("a", { class: "back m", href: "#/" }, "← Library"),
     h("div", { class: "title" }, h("h1", {}, "Add a book"),
       h("p", { style: "margin:0;max-width:46ch" }, "Give it an EPUB. It divides the book into sections, writes recall questions for the end of each one, has them checked against the text, and puts the book in your library with its checkpoints.")),
-    info.claude.ok ? null : h("div", { class: "msg err", role: "alert" }, info.claude.error),
+    info.claude.ok ? null : info.codex && info.codex.ok
+      ? h("div", { class: "msg" }, "Claude Code is not ready, so choose a Codex model under Advanced, or make one the default in Settings. ", h("span", { class: "mute" }, info.claude.error))
+      : h("div", { class: "msg err", role: "alert" }, info.claude.error),
     band("New book", form),
     band("Already prepared",
       h("p", { class: "lede" }, "A Book.prepared.epub made elsewhere can be added as it is and read with its checkpoints. Taking questions out and the Anki deck need a run made here."),
@@ -801,7 +806,7 @@ async function showRun(id) {
             name ? h("a", { class: "btn", href: `/api/jobs/${id}/files/${encodeURIComponent(name)}`, download: name }, "Download") : null);
         }))),
       band("Questions",
-        h("p", { class: "lede" }, "Untick any question you do not want, then rebuild. Rebuilding takes seconds and does not call Claude."),
+        h("p", { class: "lede" }, "Untick any question you do not want, then rebuild. Rebuilding takes seconds and does not call a model."),
         h("div", { class: "filters", role: "group", "aria-label": "Show" }, filters.map(([k, t]) =>
           h("button", { type: "button", "aria-pressed": String(view.filter === k), onclick: () => { view.filter = k; drawDone(); } }, t))),
         list));

@@ -101,9 +101,21 @@ function processing(inf, initial, onchange) {
     ["short", "medium", "long"].map((k) => el("label", {},
       el("input", { type: "radio", name, value: k, checked: k === v.density, onchange: () => fire("density") }), k,
       el("small", {}, dens[k] ? `${Number(dens[k][0]).toLocaleString("en")}–${Number(dens[k][1]).toLocaleString("en")} words` : ""))));
-  // Models come from Claude Code (what this login may use). Without a list, the two fields are free text.
-  const defaultModel = models.find((m) => m.value === "default"), named = models.filter((m) => m.value !== "default");
-  const modelHint = el("span", {}, models.length ? "" : "An alias such as opus or sonnet, or a full model name.");
+  // Models come from Claude Code (what this login may use) and, when it is installed and signed in, from Codex,
+  // whose values start with "codex". Without a list, the two fields are free text.
+  const ofClaude = models.filter((m) => (m.provider || "claude") === "claude"), ofCodex = models.filter((m) => m.provider === "codex");
+  const defaultModel = ofClaude.find((m) => m.value === "default"), named = ofClaude.filter((m) => m.value !== "default");
+  const claudeDefault = defaultModel ? `Claude Code's default (${defaultModel.description})` : "Claude Code's default";
+  const modelHint = el("span", {}, models.length ? "" : "A Claude Code model (opus, sonnet, or a full name), or a Codex one with codex: before it (codex:gpt-6.1-sol).");
+  // `lead` options stand before the groups; `first` ones open the Claude Code group.
+  const modelSelect = (key, lead, first, value) => {
+    const option = ([val, t]) => el("option", { value: val }, t);
+    const claude = [...first, ...named.map((m) => [m.value, m.name])].map(option), codex = ofCodex.map((m) => option([m.value, m.name]));
+    const s = el("select", { onchange: () => { sync(true); fire(key); } }, lead.map(option),
+      codex.length ? [el("optgroup", { label: "Claude Code" }, claude), el("optgroup", { label: "Codex" }, codex)] : claude);
+    s.value = String(value); if (s.selectedIndex < 0) s.selectedIndex = 0;
+    return s;
+  };
   const checkerHint = el("span", {}), effortHint = el("span", {});
   const text = (key, placeholder, value) => el("input", { type: "text", placeholder, value: value || "", onchange: () => fire(key) });
   const c = {
@@ -113,26 +125,26 @@ function processing(inf, initial, onchange) {
     content: select("content", [["text", "Read tables, code and formulas"], ["figures", "Also look at the pictures (slower)"], ["prose", "Prose only"]], v.content),
     rounds: select("rounds", [[3, "Check, revise, check again (up to 3 checks)"], [2, "Up to 2 checks"], [1, "One check, no revision"], [0, "No check (fastest)"]], v.rounds),
     model: models.length
-      ? select("model", [["", defaultModel ? `Claude Code's default (${defaultModel.description})` : "Claude Code's default"], ...named.map((m) => [m.value, m.name])], v.model)
+      ? modelSelect("model", [], [["", claudeDefault]], v.model)
       : text("model", "Claude Code's default", v.model),
     checker_model: models.length
-      ? select("checker_model", [["", "Same as the model above"], ...named.map((m) => [m.value, m.name])], v.checker_model)
+      ? modelSelect("checker_model", [["", "Same as the model above"]], [["claude", claudeDefault]], v.checker_model)
       : text("checker_model", "Same as above", v.checker_model),
-    effort: select("effort", [["", "Claude Code's default"], ...Object.entries(EFFORT)], v.effort),
+    effort: select("effort", [["", "Each tool's default"], ...Object.entries(EFFORT)], v.effort),
     jobs: select("jobs", [[1, "1"], [2, "2"], [3, "3"], [4, "4"], [6, "6"]], v.jobs),
     epubcheck: select("epubcheck", [["", "Skip"], ["1", "Run on both books (needs Java)"]], v.epubcheck ? "1" : ""),
   };
   function sync(byUser) {
     if (!models.length) return;
-    const pick = (value) => (value ? named.find((m) => m.value === value) : defaultModel);
+    const pick = (value) => (value && value !== "claude" ? models.find((m) => m.value === value) : defaultModel);
     const drafting = pick(c.model.value), checking = c.checker_model.value ? pick(c.checker_model.value) : drafting;
     const about = (m) => (m ? [m.description, m.resolved && m.resolved !== m.value ? m.resolved : ""].filter(Boolean).join(" / ") : "");
     modelHint.textContent = c.model.value ? about(drafting) : "Drafts and revises the questions.";
     checkerHint.textContent = c.checker_model.value ? about(checking) : "Checks them, in a separate session.";
     // effort is one setting for the whole run, so offer only the levels both models take
-    const levels = (drafting?.efforts || []).filter((e) => (checking?.efforts || []).includes(e));
+    const levels = (drafting?.efforts || []).filter((e) => e in EFFORT && (checking?.efforts || []).includes(e));
     const was = c.effort.value, keep = levels.includes(was) ? was : "";
-    c.effort.replaceChildren(el("option", { value: "" }, levels.length ? "Claude Code's default" : "Not adjustable for this choice"),
+    c.effort.replaceChildren(el("option", { value: "" }, levels.length ? "Each tool's default" : "Not adjustable for this choice"),
       ...levels.map((e) => el("option", { value: e }, EFFORT[e] || e)));
     c.effort.value = keep; c.effort.disabled = !levels.length;
     effortHint.textContent = levels.length ? "" : "At least one chosen model has no effort setting.";
@@ -156,7 +168,7 @@ function processing(inf, initial, onchange) {
     el("div", { class: "st-field wide" }, el("span", { class: "m" }, "Section length"), density,
       el("small", {}, "A checkpoint follows each section. Breaks fall at natural boundaries, so lengths vary.")),
     field("Questions per checkpoint", c.max_questions), field("Kind of book", c.kind),
-    field("Tables, code, formulas, figures", c.content, "What Claude may see and ask about beyond the running text."),
+    field("Tables, code, formulas, figures", c.content, "What the model may see and ask about beyond the running text."),
     field("Independent check", c.rounds, "A question that fails its last check is left out and listed in the report."));
   const advanced = el("div", { class: "st-grid" },
     field("Model", c.model, modelHint), field("Model for checking", c.checker_model, checkerHint), field("Reasoning effort", c.effort, effortHint),
@@ -240,7 +252,8 @@ const DRAW = {
   async general() {
     const about = el("div", {});
     info().then((i) => about.replaceChildren(kv("Version", i.version || "unknown"), kv("Books are kept in", i.data || "unknown"),
-      kv("Claude Code", i.claude && i.claude.ok ? i.claude.version.replace(/\s*\(.*/, "") + " / ready" : "not ready")), () => {});
+      kv("Claude Code", i.claude && i.claude.ok ? i.claude.version.replace(/\s*\(.*/, "") + " / ready" : "not ready"),
+      kv("Codex", !i.codex || !i.codex.installed ? "not installed" : i.codex.ok ? i.codex.version.replace(/^codex-cli\s*/, "") + " / ready" : "not signed in")), () => {});
     return [el("h3", {}, "General"),
       row("Colours", choice("theme", [["system", "As the system"], ["light", "Light"], ["dark", "Dark"]]), "For every page of the app."),
       el("h4", {}, "About"), about];

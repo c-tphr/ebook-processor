@@ -193,6 +193,16 @@ def _cell(text: Any) -> str:
     return str(text).replace("|", "\\|").replace("\n", " ")
 
 
+def _price(usage: dict[str, Any]) -> str:
+    """The price part of the report's usage line. Claude Code reports what a call would cost at list prices;
+    Codex reports nothing, so its calls are left out of the sum, and a run made with Codex alone has no price."""
+    unpriced = usage.get("unpriced_calls", 0)
+    if usage["calls"] and unpriced >= usage["calls"]:
+        return ""
+    return f"list-price equivalent ${usage['cost_usd']:.2f}" \
+        + (" for the Claude Code calls, as Codex reports no price" if unpriced else "") + "; "
+
+
 def _table(header: tuple[str, ...], rows: list[tuple[Any, ...]]) -> list[str]:
     lines = ["| " + " | ".join(header) + " |", "| " + " | ".join("---" for _ in header) + " |"]
     lines += ["| " + " | ".join(_cell(c) for c in row) + " |" for row in rows]
@@ -281,14 +291,14 @@ def report_markdown(r: dict[str, Any]) -> str:
     lines += _table(("", ""), [
         ("Source", f"{r['book']['source_file']} (SHA-256 {r['book']['source_sha256']})"),
         ("Section length", f"{s['min_words']} to {s['max_words']} words; at most {s['max_questions']} questions each"),
-        ("Tables, code, formulas, figures", {"prose": "not shown to Claude", "text": "shown as text; figures by caption only",
+        ("Tables, code, formulas, figures", {"prose": "not shown to the model", "text": "shown as text; figures by caption only",
                                              "figures": "shown as text; figures viewed"}[s["content"]]),
         ("Kind of book", s["kind"]),
         ("Checks per question", "none" if s["rounds"] == 0 else f"up to {s['rounds']}"),
         ("Instructions version", r["instructions_version"]),
         ("Models", models),
-        ("Calls to Claude", f"{u['calls']} ({u['input_tokens']:,} tokens in, {u['output_tokens']:,} out; "
-                            f"list-price equivalent ${u['cost_usd']:.2f}; {u['seconds'] / 60:.0f} minutes of model time)"),
+        ("Calls to the models", f"{u['calls']} ({u['input_tokens']:,} tokens in, {u['output_tokens']:,} out; "
+                                f"{_price(u)}{u['seconds'] / 60:.0f} minutes of model time)"),
         ("Tool", f"ebook-processor {r['tool_version']}, run {r['run_id']}, {r['generated']}"),
     ])
     return "\n".join(lines).rstrip() + "\n"

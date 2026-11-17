@@ -29,7 +29,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .. import __version__, notes, reading, srs
-from ..llm import BackendError, ClaudeCodeBackend, UsageLimitError
+from ..llm import BackendError, ClaudeCodeBackend, CodexBackend, UsageLimitError, available_models
 from ..outputs import load_report, stem_of
 from ..pipeline import now, write_json
 from ..prep.epub import EpubError, load_book_bytes
@@ -503,6 +503,7 @@ class Handler(BaseHTTPRequestHandler):
     server_version = f"ebook-processor/{__version__}"
     jobs: Jobs
     claude: dict[str, Any]
+    codex: dict[str, Any]
     models: list[dict[str, Any]]
     pages: dict[str, bytes]
     shutdown_token: str | None = None
@@ -622,7 +623,7 @@ class Handler(BaseHTTPRequestHandler):
         match (method, parts[1:]):
             case ("GET", ["info"]):
                 defaults = Settings()
-                return self.send_json({"version": __version__, "claude": self.claude, "data": str(jobs.data),
+                return self.send_json({"version": __version__, "claude": self.claude, "codex": self.codex, "data": str(jobs.data),
                                        "densities": DENSITIES, "defaults": defaults.as_json(),
                                        "models": self.models})
             case ("GET", ["jobs"]):
@@ -788,18 +789,29 @@ def claude_status() -> dict[str, Any]:
         return {"ok": False, "error": str(exc)}
 
 
+def codex_status() -> dict[str, Any]:
+    """Codex is optional: ``installed`` tells a missing program from one that is there but not signed in."""
+    try:
+        return {"ok": True, "installed": True, "version": CodexBackend().check_available()}
+    except BackendError as exc:
+        return {"ok": False, "installed": "was not found" not in str(exc), "error": str(exc)}
+
+
 def make_server(data: Path, host: str = "127.0.0.1", port: int = 8765, backend_factory: Any = None,
                 claude: dict[str, Any] | None = None, models: list[dict[str, Any]] | None = None,
-                shutdown_token: str | None = None) -> ThreadingHTTPServer:
-    """``claude`` and ``models`` are asked of Claude Code once, when the app starts, unless given."""
+                shutdown_token: str | None = None, codex: dict[str, Any] | None = None) -> ThreadingHTTPServer:
+    """``claude``, ``codex`` and ``models`` are asked of the two tools once, when the app starts, unless given."""
     claude = claude if claude is not None else claude_status()
+    if codex is None:  # a caller that gives the models has said what there is: Codex is not looked for
+        codex = codex_status() if models is None else {"ok": False, "installed": False, "error": "not looked for"}
     if models is None:
-        models = ClaudeCodeBackend().list_models() if claude.get("ok") else []
+        models = available_models(ClaudeCodeBackend() if claude.get("ok") else None,
+                                  CodexBackend() if codex.get("ok") else None)
     # The pages are read once, now. A page and the server behind it then always come from the same version of
     # the tool: updating the files while the app runs changes nothing until it is started again. Read on every
     # request, a new page would be served by old code, and fail on whatever the new page asks for.
     pages = {name: (STATIC / name).read_bytes() for name in PAGES}
-    handler = type("BoundHandler", (Handler,), {"jobs": Jobs(data, backend_factory), "claude": claude,
+    handler = type("BoundHandler", (Handler,), {"jobs": Jobs(data, backend_factory), "claude": claude, "codex": codex,
                                                 "models": models, "pages": pages, "shutdown_token": shutdown_token})
     server = ThreadingHTTPServer((host, port), handler)
     server.daemon_threads = True

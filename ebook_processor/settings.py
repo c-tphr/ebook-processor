@@ -30,10 +30,10 @@ class Settings:
     content: str = "text"  # what Claude sees of tables, code, formulas and figures: prose, text or figures
     kind: str = "auto"  # the kind of book: auto, expository, narrative or technical
     rounds: int = 3  # how often a question may be checked (0: no check at all)
-    model: str | None = None  # model for drafting and revising (None: Claude Code's default)
+    model: str | None = None  # model for drafting and revising (None: Claude Code's default; see llm.split_model)
     checker_model: str | None = None  # model for checking (None: the same as ``model``)
-    effort: str | None = None  # reasoning effort passed to Claude Code (None: its default)
-    jobs: int = 3  # Claude calls that may run at the same time
+    effort: str | None = None  # reasoning effort passed to Claude Code and to Codex (None: each tool's default)
+    jobs: int = 3  # calls to the models that may run at the same time
     part_words: int = 10000  # about how much text one drafting call reads
     epubcheck: bool = False  # run EPUBCheck on both output books (needs Java and a one-time download)
     title_suffix: str = " (checkpoints)"  # added to the title of the book with visible checkpoint pages

@@ -410,6 +410,8 @@ class Run:
                 target["input_tokens"] += completion.input_tokens
                 target["output_tokens"] += completion.output_tokens
                 target["seconds"] = round(target["seconds"] + completion.seconds, 1)
+            if not completion.priced:  # Codex: the tool reports no price, so the total covers the other calls only
+                usage["unpriced_calls"] = usage.get("unpriced_calls", 0) + 1
             if completion.model:
                 usage["models"][role] = completion.model
         return completion
@@ -539,7 +541,7 @@ class Run:
             feedback = "\n".join(f"- {p}" for p in structural + [m for _, _, m in flaws])
             feedback += "\n\nYour earlier reply:\n" + json.dumps(reply, ensure_ascii=False)[:60000]
         if structural:
-            self.warn(f"Part {key}: Claude returned no usable division after {DRAFT_ATTEMPTS} attempts "
+            self.warn(f"Part {key}: the model returned no usable division after {DRAFT_ATTEMPTS} attempts "
                       f"({structural[0]}). It was cut into sections by length, without questions.")
             return fallback_ranges(groups, self.settings)
         drop = {(r, k) for r, k, _ in flaws}

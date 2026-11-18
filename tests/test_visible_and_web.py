@@ -22,6 +22,7 @@ from ebook_processor.settings import Settings, from_options
 from ebook_processor.visible import build_visible
 from ebook_processor.web.server import make_server
 from tests.prep.bookmaker import make_epub, xhtml
+from tests.programs import make_program
 from tests.scripted import Script
 from tests.test_pipeline import FIXTURE, run
 
@@ -269,11 +270,8 @@ def test_the_web_app_refuses_what_it_should(app):
 
 def fake_claude(tmp_path: Path, lines: list[dict]) -> str:
     """A stand-in for the claude executable that prints ``lines`` as JSON, one per line."""
-    script = tmp_path / "claude"
     payload = "\n".join(json.dumps(line) for line in lines)
-    script.write_text(f"#!/bin/sh\ncat > /dev/null\ncat <<'END'\n{payload}\nEND\n", encoding="utf-8")
-    script.chmod(0o755)
-    return str(script)
+    return make_program(tmp_path, "claude", f"import sys\nsys.stdin.read()\nprint({payload!r})\n")
 
 
 def test_the_models_are_read_from_claude_codes_own_list(tmp_path):

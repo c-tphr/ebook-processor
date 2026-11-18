@@ -21,6 +21,7 @@ from ebook_processor.llm import (BackendError, Backends, BackendUnavailable, Cod
 from ebook_processor.outputs import _price
 from ebook_processor.settings import from_options
 from ebook_processor.web.server import make_server
+from tests.programs import make_program
 from tests.scripted import Script
 from tests.test_pipeline import FIXTURE, run_book
 
@@ -32,10 +33,9 @@ CATALOGUE = {"models": [
     {"slug": "internal-review", "display_name": "Hidden", "visibility": "hide", "priority": 2},
     {"display_name": "no slug: skipped"}]}
 
-FAKE = r'''#!{python}
-import json, os, sys
+FAKE = r'''import json, os, sys
 here = os.path.dirname(os.path.abspath(__file__))
-plan = json.load(open(os.path.join(here, "plan.json")))
+plan = json.load(open(os.path.join(here, "plan.json"), encoding="utf-8"))
 args = sys.argv[1:]
 if args == ["--version"]:
     print("codex-cli 9.9.9"); sys.exit(0)
@@ -62,11 +62,11 @@ assert args[0] == "exec" and args[-1] == "-", args
 value = lambda flag: args[args.index(flag) + 1]
 config = dict(a.split("=", 1) for a in args if "=" in a and args[args.index(a) - 1] == "-c")
 calls = os.path.join(here, "calls.json")
-seen = json.load(open(calls)) if os.path.exists(calls) else []
+seen = json.load(open(calls, encoding="utf-8")) if os.path.exists(calls) else []
 seen.append({"args": args, "stdin": sys.stdin.read(), "cwd": os.getcwd(), "cwd_holds": sorted(os.listdir(".")),
-             "instructions": open(config["model_instructions_file"]).read(),
-             "schema": json.load(open(value("--output-schema")))})
-json.dump(seen, open(calls, "w"))
+             "instructions": open(config["model_instructions_file"], encoding="utf-8").read(),
+             "schema": json.load(open(value("--output-schema"), encoding="utf-8"))})
+json.dump(seen, open(calls, "w", encoding="utf-8"))
 step = plan["steps"][min(len(seen), len(plan["steps"])) - 1]
 say = lambda event: print(json.dumps(event), flush=True)
 say({"type": "thread.started", "thread_id": "t"}); say({"type": "turn.started"})
@@ -79,7 +79,7 @@ if step.get("answer") is not None:
     text = step["answer"] if isinstance(step["answer"], str) else json.dumps(step["answer"])
     say({"type": "item.completed", "item": {"id": "item_0", "type": "agent_message", "text": text}})
     if step.get("write_file", True):
-        open(value("--output-last-message"), "w").write(text)
+        open(value("--output-last-message"), "w", encoding="utf-8").write(text)
 say({"type": "turn.completed", "usage": {"input_tokens": 1200, "cached_input_tokens": 1000, "output_tokens": 34}})
 '''
 
@@ -94,10 +94,7 @@ def fake_codex(tmp_path: Path, steps: list[dict] | None = None, logged_in: bool 
     folder.mkdir(exist_ok=True)
     (folder / "plan.json").write_text(json.dumps({"logged_in": logged_in, "catalogue": catalogue, "app_server": app_server,
                                                   "steps": steps or [{"answer": {"ranges": []}}]}), encoding="utf-8")
-    script = folder / "codex"
-    script.write_text(FAKE.replace("{python}", sys.executable), encoding="utf-8")
-    script.chmod(0o755)
-    return str(script), folder / "calls.json"
+    return make_program(folder, "codex", FAKE), folder / "calls.json"
 
 
 def codex(exe: str, **kwargs) -> tuple[CodexBackend, list[float]]:
@@ -151,7 +148,7 @@ def test_codex_is_asked_with_our_instructions_in_a_read_only_empty_folder(tmp_pa
     done = ask(backend, model="gpt-6.1-sol")
     assert done.data == {"ranges": [1]} and done.model == "codex:gpt-6.1-sol"
     assert (done.input_tokens, done.output_tokens, done.priced, done.cost_usd) == (1200, 34, False, 0.0)
-    call = json.loads(calls.read_text())[0]
+    call = json.loads(calls.read_text(encoding="utf-8"))[0]
     args = call["args"]
     assert call["stdin"] == "THE TASK" and call["instructions"] == "SYSTEM TEXT" and call["schema"] == prompts.DRAFT_SCHEMA
     assert call["cwd_holds"] == [] and "ebook-processor-" in call["cwd"]
@@ -169,7 +166,7 @@ def test_codex_is_asked_with_our_instructions_in_a_read_only_empty_folder(tmp_pa
     pictures.mkdir()
     (pictures / "fig.png").write_bytes(b"x")
     ask(codex(exe)[0], read_dir=pictures)
-    call = json.loads(calls.read_text())[1]
+    call = json.loads(calls.read_text(encoding="utf-8"))[1]
     assert Path(call["cwd"]) == pictures and call["cwd_holds"] == ["fig.png"] and "--model" not in call["args"]
     config = [call["args"][n + 1] for n, a in enumerate(call["args"]) if a == "-c"]
     assert "include_environment_context=false" not in config and not any(c.startswith("model_reasoning_effort") for c in config)
@@ -188,7 +185,7 @@ def test_a_usage_limit_stops_the_run_and_a_missing_login_says_what_to_do(tmp_pat
     backend, waits = codex(exe)
     with pytest.raises(UsageLimitError, match="usage limit"):
         ask(backend)
-    assert waits == [] and len(json.loads(calls.read_text())) == 1  # not tried again
+    assert waits == [] and len(json.loads(calls.read_text(encoding="utf-8"))) == 1  # not tried again
 
     exe, _ = fake_codex(tmp_path, [{"fail": "401 Unauthorized: Not logged in"}])
     with pytest.raises(BackendUnavailable, match="codex login"):
@@ -204,7 +201,7 @@ def test_a_failure_that_looks_temporary_is_tried_again(tmp_path):
                                        {"answer": "no JSON here"}, {"answer": {"ranges": []}}])
     backend, waits = codex(exe)
     assert ask(backend).data == {"ranges": []}
-    assert waits == [15.0, 60.0] and len(json.loads(calls.read_text())) == 3
+    assert waits == [15.0, 60.0] and len(json.loads(calls.read_text(encoding="utf-8"))) == 3
 
     exe, calls = fake_codex(tmp_path, [{"fail": "server overloaded (503)"}])
     calls.unlink()

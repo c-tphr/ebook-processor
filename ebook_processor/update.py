@@ -72,6 +72,20 @@ def remove_record(port: int, pid: int | None = None) -> None:
 
 
 def alive(pid: int) -> bool:
+    """Whether a process with this id is running."""
+    if os.name == "nt":
+        # Not os.kill(pid, 0): on Windows that ends the process, with 0 as its exit status.
+        import ctypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return ctypes.get_last_error() == 5  # access denied: it is there, and not ours to ask about
+        try:
+            code = ctypes.c_ulong()
+            return bool(kernel.GetExitCodeProcess(ctypes.c_void_p(handle), ctypes.byref(code))) and code.value == 259
+        finally:
+            kernel.CloseHandle(ctypes.c_void_p(handle))
     try:
         os.kill(pid, 0)
     except ProcessLookupError:

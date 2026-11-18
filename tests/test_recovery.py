@@ -22,6 +22,7 @@ from ebook_processor.pipeline import Cancelled
 from ebook_processor.runner import default_backend, run_book
 from ebook_processor.settings import from_options
 from ebook_processor.web.server import Jobs
+from tests.programs import gone, make_program
 from tests.test_pipeline import FIXTURE
 
 
@@ -42,17 +43,6 @@ def link_with(answers: list[bool], **kwargs) -> tuple[Connection, Clock, list[bo
 
     link = Connection("https://service.invalid", "the service", probe=probe, clock=clock, on_change=seen.append, **kwargs)
     return link, clock, seen
-
-
-def alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    try:  # a child that was ended but not yet collected still has an entry
-        return "Z" not in Path(f"/proc/{pid}/stat").read_text().split(")")[-1].split()[0]
-    except OSError:
-        return True
 
 
 # --------------------------------------------------------------------------
@@ -180,11 +170,8 @@ def hanging(tmp_path: Path, name: str = "tool") -> tuple[str, Path]:
     """A program that starts a child, notes both process ids, and then hangs. The second time it is run it
     answers as Claude Code does."""
     folder = tmp_path / "bin"
-    folder.mkdir(exist_ok=True)
     pids = folder / "pids.json"
-    script = folder / name
-    script.write_text(f'''#!{sys.executable}
-import json, os, subprocess, sys, time
+    return make_program(folder, name, f'''import json, os, subprocess, sys, time
 pids = {str(pids)!r}
 if os.path.exists(pids):
     sys.stdin.read()
@@ -193,9 +180,7 @@ if os.path.exists(pids):
 child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
 json.dump([os.getpid(), child.pid], open(pids, "w"))
 time.sleep(120)
-''', encoding="utf-8")
-    script.chmod(0o755)
-    return str(script), pids
+'''), pids
 
 
 def wait_for(path: Path) -> list[int]:
@@ -214,8 +199,7 @@ def test_a_running_program_is_given_up_with_everything_it_started(tmp_path):
         run_process([exe], "input", str(tmp_path), 60, lambda: next(reasons))
     assert halted.value.reason == "cancel" and time.monotonic() - started < 6
     program, child = wait_for(pids)
-    time.sleep(0.3)
-    assert not alive(program) and not alive(child)  # the child too: it would keep the pipes open
+    assert gone(program) and gone(child)  # the child too: it would keep the pipes open
     with pytest.raises(_Halted) as halted:  # the time limit works the same way
         pids.unlink()
         run_process([exe], "input", str(tmp_path), 0.6)
@@ -231,7 +215,7 @@ def test_stop_gives_up_a_call_that_hangs(tmp_path):
     with pytest.raises(BackendCancelled):
         backend.complete(role="draft", system="S", prompt="P", schema=prompts.DRAFT_SCHEMA)
     assert time.monotonic() - started < 6
-    assert not any(alive(pid) for pid in wait_for(pids))
+    assert all(gone(pid) for pid in wait_for(pids))
 
 
 @pytest.mark.parametrize("tool", ["claude", "codex"])
@@ -249,17 +233,14 @@ def test_a_call_that_hangs_without_a_connection_is_given_up_and_made_again_when_
         from tests.test_codex import fake_codex
         exe, _ = fake_codex(tmp_path, [{"answer": {"ranges": []}}])
         folder = Path(exe).parent
-        real = folder / "codex-real"
-        Path(exe).rename(real)
         pids = folder / "pids.json"
-        Path(exe).write_text(f'''#!{sys.executable}
-import json, os, subprocess, sys, time
+        # in front of the stand-in Codex: hangs the first time it is run, hands over to it afterwards
+        exe = make_program(folder, "codex-first-hangs", f'''import json, os, subprocess, sys, time
 if os.path.exists({str(pids)!r}):
-    os.execv({str(real)!r}, [{str(real)!r}, *sys.argv[1:]])
+    sys.exit(subprocess.call([{exe!r}, *sys.argv[1:]]))
 json.dump([os.getpid()], open({str(pids)!r}, "w"))
 time.sleep(120)
-''', encoding="utf-8")
-        Path(exe).chmod(0o755)
+''')
         backend = CodexBackend(executable=exe, link=link)
 
     def network() -> None:  # the connection goes once the call is under way, and comes back a second later
@@ -273,7 +254,7 @@ time.sleep(120)
     done = backend.complete(role="draft", system="S", prompt="P", schema=prompts.DRAFT_SCHEMA)
     assert done.data == {"ranges": []} and time.monotonic() - started < 15
     assert seen == [False, True]  # said once that it waits, and once that it goes on
-    assert not alive(wait_for(pids)[0])
+    assert gone(wait_for(pids)[0])
 
 
 # --------------------------------------------------------------------------

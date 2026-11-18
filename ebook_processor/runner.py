@@ -7,9 +7,9 @@ import threading
 from pathlib import Path
 from typing import Any, Iterable
 
-from .llm import Backend, Backends, ClaudeCodeBackend, CodexBackend
+from .llm import PROVIDERS, Backend, Backends, ClaudeCodeBackend, CodexBackend, Connection, service_urls
 from .outputs import build_outputs
-from .pipeline import SOURCE_COPY, STATE_FILE, Cancelled, PipelineError, Progress, kept, load_state, process, write_json
+from .pipeline import SOURCE_COPY, STATE_FILE, Cancelled, PipelineError, Progress, kept, load_state, now, process, write_json
 from .prep.epub import EpubError, load_book_bytes
 from .settings import Settings
 
@@ -24,6 +24,25 @@ def work_dir(out_dir: Path) -> Path:
     return out_dir / "work"
 
 
+def default_backend(settings: Settings, progress: Progress | None = None,
+                    cancel: threading.Event | None = None) -> Backends:
+    """Claude Code and Codex, each with a watch on its connection. When a call is lost to the network the run
+    says so, waits, and says when it goes on; a set ``cancel`` gives up calls that are running or waiting."""
+    def watch(provider: str) -> Connection:
+        name = PROVIDERS[provider]
+
+        def changed(up: bool) -> None:
+            if progress:
+                progress({"time": now(), "stage": "network", "done": None, "total": None,
+                          "message": f"The connection to {name} is back. Going on." if up else
+                                     f"No connection to {name}. Waiting for the network; the run goes on by itself "
+                                     "when it is back."})
+        return Connection(service_urls()[provider], name, on_change=changed)
+
+    return Backends(ClaudeCodeBackend(effort=settings.effort, cancel=cancel, link=watch("claude")),
+                    CodexBackend(effort=settings.effort, cancel=cancel, link=watch("codex")))
+
+
 def run_book(epub: Path, out_dir: Path, settings: Settings, backend: Backend | None = None,
              progress: Progress | None = None, cancel: threading.Event | None = None) -> dict[str, Any]:
     """Process ``epub`` into ``out_dir`` (continuing an unfinished run there) and return the report."""
@@ -34,7 +53,7 @@ def run_book(epub: Path, out_dir: Path, settings: Settings, backend: Backend | N
     work = work_dir(out_dir)
     if backend is None:
         # Claude Code and Codex both stand ready; only the ones the two model settings name are looked for.
-        backend = Backends(ClaudeCodeBackend(effort=settings.effort), CodexBackend(effort=settings.effort))
+        backend = default_backend(settings, progress, cancel)
         backend.check_available([settings.model, settings.checker_model or settings.model])
     book, state = process(epub, work, settings, backend, progress, cancel)
     original = (work / SOURCE_COPY).read_bytes()

@@ -445,7 +445,9 @@ class Jobs:
     def _event(self, job: dict[str, Any], event: dict[str, Any]) -> None:
         with self.lock:
             job["events"] = (job["events"] + [event])[-EVENTS_KEPT:]
-            if event["stage"] != "warning":
+            if event["stage"] == "network":  # waiting for the connection, or going on: the step stays what it was
+                job.update(message=event["message"])
+            elif event["stage"] != "warning":
                 job.update(stage=event["stage"], message=event["message"], done=event.get("done"),
                            total=event.get("total"))
 

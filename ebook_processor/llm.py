@@ -8,6 +8,10 @@ the drafter wrote beyond the text it is handed.
 ``Backends`` holds both and sends each request to the tool its model setting names (see ``split_model``), so one
 run can draft with one and check with the other.
 
+A call can be given up while it runs: when the run is stopped, and when the service has been out of reach for a
+while (``Connection``). A call lost to the network is made again when the network is back, however long that
+takes, so a run that loses its connection goes on by itself.
+
 Anything with a ``complete`` method of the same shape can stand in (the tests use ``ScriptedBackend``), which is
 also where a backend that calls an API directly would go.
 """
@@ -19,11 +23,17 @@ import os
 import platform
 import queue
 import re
+import http.client
 import shutil
+import signal
+import ssl
 import subprocess
+import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
@@ -35,6 +45,10 @@ class BackendError(RuntimeError):
 
 class UsageLimitError(BackendError):
     """The plan's usage limit is reached; the run can be resumed later."""
+
+
+class BackendCancelled(BackendError):
+    """The run was stopped while a call was waiting or running."""
 
 
 class BackendUnavailable(BackendError):
@@ -107,22 +121,208 @@ def native_codex(script: str, windows: bool | None = None) -> str | None:
     return next((f for f in found if wanted in f), found[0] if found else None)
 
 
+def _probe(url: str, timeout: float) -> bool:
+    """Whether a request to ``url`` gets any answer at all. The system's proxy settings are used."""
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, method="HEAD"), timeout=timeout):
+            return True
+    except urllib.error.HTTPError:
+        return True  # an answer, whatever it says
+    except urllib.error.URLError as exc:
+        return isinstance(exc.reason, ssl.SSLCertVerificationError)  # a server answered, with a certificate we do not know
+    except http.client.HTTPException:
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+@dataclass
+class Connection:
+    """Whether a model service can be reached from this computer, as far as a request to its address tells.
+
+    The answer is only acted on once the address has been reached at least once (``seen_up``): on a network
+    where the probe itself cannot get through, it says nothing, and calls are left to their own time limits.
+    """
+
+    url: str
+    name: str = "the service"
+    interval: float = 10.0  # seconds between probes
+    down_after: float = 45.0  # out of reach for this long: calls in flight are given up
+    timeout: float = 8.0  # for one probe
+    probe: Callable[[str, float], bool] = field(default=_probe, repr=False)
+    clock: Callable[[], float] = field(default=time.monotonic, repr=False)
+    on_change: Callable[[bool], None] | None = field(default=None, repr=False)  # told when a wait begins and ends
+    seen_up: bool = False
+    _lock: Any = field(default_factory=threading.Lock, repr=False)
+    _last: tuple[float, bool] | None = field(default=None, repr=False)  # when the last probe was made, and its answer
+    _down_since: float | None = field(default=None, repr=False)
+    _waiting: int = field(default=0, repr=False)
+
+    def reachable(self, max_age: float = 0.0) -> bool:
+        """Probe now, or take the last answer when it is no older than ``max_age`` seconds."""
+        with self._lock:  # one probe at a time; whoever waited for it takes its answer
+            now = self.clock()
+            if self._last is not None and now - self._last[0] <= max_age:
+                return self._last[1]
+            up = bool(self.probe(self.url, self.timeout))
+            now = self.clock()
+            self._last = (now, up)
+            if up:
+                self.seen_up, self._down_since = True, None
+            elif self._down_since is None:
+                self._down_since = now
+            return up
+
+    def down(self) -> bool:
+        """The service was reachable earlier and is not now."""
+        return not self.reachable(max_age=2.0) and self.seen_up
+
+    def lost(self) -> bool:
+        """The service was reachable earlier and has been out of reach for ``down_after`` seconds."""
+        if self.reachable(max_age=self.interval) or not self.seen_up:
+            return False
+        return self._down_since is not None and self.clock() - self._down_since >= self.down_after
+
+    def wait(self, cancel: threading.Event | None = None, pause: Callable[[float], None] | None = None) -> None:
+        """Return when the service can be reached again. Raises ``BackendCancelled`` when the run is stopped."""
+        with self._lock:
+            self._waiting += 1
+            first = self._waiting == 1
+        if first and self.on_change:
+            self.on_change(False)
+        back = False
+        try:
+            while not (back := self.reachable(max_age=self.interval / 2)):
+                if pause is not None:
+                    pause(self.interval)
+                elif cancel is not None:
+                    cancel.wait(self.interval)
+                else:
+                    time.sleep(self.interval)
+                if cancel is not None and cancel.is_set():
+                    raise BackendCancelled("the run was stopped")
+        finally:
+            with self._lock:
+                self._waiting -= 1
+                last = self._waiting == 0
+            if last and back and self.on_change:
+                self.on_change(True)
+
+
+class _Halted(Exception):
+    """A running program was given up: ``reason`` is cancel, network or timeout."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _end_tree(proc: subprocess.Popen[str]) -> None:
+    """End a program and everything it started. Tools installed as scripts start the real program as a child,
+    which would otherwise go on, and keep the pipes we read open."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, timeout=15)
+        else:
+            os.killpg(proc.pid, signal.SIGKILL)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    try:
+        proc.communicate(timeout=5)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+
+
+def run_process(cmd: list[str], prompt: str, cwd: str, timeout: float,
+                halt: Callable[[], str | None] | None = None) -> subprocess.CompletedProcess[str]:
+    """Run a program to its end with ``prompt`` as its input, like ``subprocess.run``, but so that it can be
+    given up: ``halt`` is asked twice a second, and a reason from it (or the time limit) ends the program and
+    everything it started, with ``_Halted``."""
+    if os.name == "nt":
+        group: dict[str, Any] = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    elif sys.version_info >= (3, 11):
+        group = {"process_group": 0}  # its own group, so that the whole of it can be ended
+    else:
+        group = {"start_new_session": True}
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            encoding="utf-8", errors="replace", cwd=cwd, **group)
+    deadline = time.monotonic() + timeout
+    data: str | None = prompt
+    try:
+        while True:
+            try:
+                out, err = proc.communicate(data, timeout=0.5)
+                return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+            except subprocess.TimeoutExpired:
+                data = None  # the input is handed over once; later rounds only go on reading
+                reason = halt() if halt is not None else None
+                if reason is None and time.monotonic() > deadline:
+                    reason = "timeout"
+                if reason:
+                    raise _Halted(reason) from None
+    finally:
+        if proc.poll() is None:
+            _end_tree(proc)
+
+
+def _halter(cancel: threading.Event | None, link: Connection | None) -> Callable[[], str | None]:
+    def halt() -> str | None:
+        if cancel is not None and cancel.is_set():
+            return "cancel"
+        if link is not None and link.lost():
+            return "network"
+        return None
+    return halt
+
+
+def _given_up(halted: _Halted, link: Connection | None, timeout: float) -> BackendError:
+    if halted.reason == "cancel":
+        return BackendCancelled("the run was stopped")
+    if halted.reason == "network":
+        return _transient(f"the connection to {link.name if link else 'the service'} was lost")
+    return _transient(f"no answer within {int(timeout)} seconds")
+
+
 def _with_retries(tool: str, role: str, retries: int, backoff: tuple[float, ...], sleep: Callable[[float], None],
-                  once: Callable[[], "Completion"]) -> "Completion":
-    """Call ``once`` again after a failure that looks temporary. Limits and a missing login are not retried."""
-    last = "no attempt was made"
-    for attempt in range(retries + 1):
-        if attempt:
-            sleep(backoff[min(attempt - 1, len(backoff) - 1)])
+                  once: Callable[[], "Completion"], link: Connection | None = None,
+                  cancel: threading.Event | None = None) -> "Completion":
+    """Call ``once`` again after a failure that looks temporary. Limits and a missing login are not retried.
+
+    When a call fails while the service cannot be reached (and could be earlier), the failure is the network's:
+    the call waits for the service to come back, for as long as that takes, and is then made again without
+    counting as one of the ``retries``.
+    """
+    def pause(seconds: float) -> None:
+        if cancel is not None and sleep is time.sleep:
+            cancel.wait(seconds)  # a stop ends the wait at once
+        else:
+            sleep(seconds)
+        if cancel is not None and cancel.is_set():
+            raise BackendCancelled("the run was stopped")
+
+    attempt = 0
+    while True:
+        if cancel is not None and cancel.is_set():
+            raise BackendCancelled("the run was stopped")
         try:
             return once()
-        except (UsageLimitError, BackendUnavailable):
+        except (UsageLimitError, BackendUnavailable, BackendCancelled):
             raise
         except BackendError as exc:
-            last = str(exc)
             if not getattr(exc, "transient", False):
                 raise
-    raise BackendError(f"{tool} did not answer the {role} request after {retries + 1} attempts: {last}")
+            last = str(exc)
+        if link is not None and link.down():
+            link.wait(cancel, None if sleep is time.sleep else sleep)
+            continue
+        attempt += 1
+        if attempt > retries:
+            raise BackendError(f"{tool} did not answer the {role} request after {retries + 1} attempts: {last}")
+        pause(backoff[min(attempt - 1, len(backoff) - 1)])
 
 
 _LIMIT_RE = re.compile(r"usage limit|hit your limit|limit reached|out of extra usage|quota", re.I)
@@ -161,6 +361,8 @@ class ClaudeCodeBackend:
     retries: int = 3  # further attempts after a failure that looks temporary
     backoff: tuple[float, ...] = (15.0, 60.0, 180.0)
     sleep: Callable[[float], None] = field(default=time.sleep, repr=False)
+    cancel: threading.Event | None = field(default=None, repr=False)  # set: calls are given up at once
+    link: Connection | None = field(default=None, repr=False)  # watches whether Claude can be reached
 
     def program(self) -> str:
         """What to start: on Windows the full path, as only an .exe starts by its bare name there."""
@@ -242,19 +444,19 @@ class ClaudeCodeBackend:
                  read_dir: Path | None = None) -> Completion:
         cmd = self.command(system, schema, model, read_dir)
         return _with_retries("Claude", role, self.retries, self.backoff, self.sleep,
-                             lambda: self._once(cmd, prompt, read_dir))
+                             lambda: self._once(cmd, prompt, read_dir), self.link, self.cancel)
 
     def _once(self, cmd: list[str], prompt: str, read_dir: Path | None) -> Completion:
         started = time.monotonic()
         # An empty folder as the working directory, so that no project file of the caller reaches the session.
-        with tempfile.TemporaryDirectory(prefix="ebook-processor-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="ebook-processor-", ignore_cleanup_errors=True) as tmp:
             try:
-                proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8",
-                                      timeout=self.timeout, cwd=str(read_dir) if read_dir else tmp)
+                proc = run_process(cmd, prompt, str(read_dir) if read_dir else tmp, self.timeout,
+                                   _halter(self.cancel, self.link))
             except FileNotFoundError as exc:
                 raise BackendUnavailable(f"Claude Code was not found ('{self.executable}' is not on PATH)") from exc
-            except subprocess.TimeoutExpired as exc:
-                raise _transient(f"no answer within {int(self.timeout)} seconds") from exc
+            except _Halted as halted:
+                raise _given_up(halted, self.link, self.timeout) from None
         seconds = time.monotonic() - started
         try:
             result = json.loads(proc.stdout)
@@ -324,6 +526,8 @@ class CodexBackend:
     retries: int = 3  # further attempts after a failure that looks temporary
     backoff: tuple[float, ...] = (15.0, 60.0, 180.0)
     sleep: Callable[[float], None] = field(default=time.sleep, repr=False)
+    cancel: threading.Event | None = field(default=None, repr=False)  # set: calls are given up at once
+    link: Connection | None = field(default=None, repr=False)  # watches whether Codex's service can be reached
     models_note: str = field(default="", repr=False)  # why ``list_models`` last came back empty
 
     def program(self) -> str:
@@ -498,7 +702,7 @@ class CodexBackend:
     def complete(self, *, role: str, system: str, prompt: str, schema: dict[str, Any], model: str | None = None,
                  read_dir: Path | None = None) -> Completion:
         return _with_retries("Codex", role, self.retries, self.backoff, self.sleep,
-                             lambda: self._once(system, prompt, schema, model, read_dir))
+                             lambda: self._once(system, prompt, schema, model, read_dir), self.link, self.cancel)
 
     def _once(self, system: str, prompt: str, schema: dict[str, Any], model: str | None,
               read_dir: Path | None) -> Completion:
@@ -510,12 +714,12 @@ class CodexBackend:
             (folder / "empty").mkdir()  # the working folder, unless pictures are to be looked at (figures mode)
             cmd = self.command(folder / "instructions.md", folder / "schema.json", folder / "answer.txt", model, read_dir)
             try:
-                proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True, encoding="utf-8",
-                                      timeout=self.timeout, cwd=str(read_dir) if read_dir else str(folder / "empty"))
+                proc = run_process(cmd, prompt, str(read_dir) if read_dir else str(folder / "empty"), self.timeout,
+                                   _halter(self.cancel, self.link))
             except FileNotFoundError as exc:
                 raise BackendUnavailable(f"Codex was not found ('{self.executable}' is not on PATH)") from exc
-            except subprocess.TimeoutExpired as exc:
-                raise _transient(f"no answer within {int(self.timeout)} seconds") from exc
+            except _Halted as halted:
+                raise _given_up(halted, self.link, self.timeout) from None
             try:
                 answer = (folder / "answer.txt").read_text(encoding="utf-8")
             except OSError:
@@ -579,8 +783,14 @@ class Backends:
     def check_available(self, models: Iterable[str | None]) -> dict[str, str]:
         """The version of each tool the given model settings need, or ``BackendUnavailable`` for the first that
         is missing or not signed in. A tool no setting names is not looked for."""
-        return {provider: getattr(self, provider).check_available()
-                for provider in sorted({split_model(m)[0] for m in models})}
+        found = {}
+        for provider in sorted({split_model(m)[0] for m in models}):
+            tool = getattr(self, provider)
+            found[provider] = tool.check_available()
+            link = getattr(tool, "link", None)
+            if link is not None:
+                link.reachable()  # a first look, so that a later loss of the connection can be told from "never there"
+        return found
 
 
 def available_models(claude: ClaudeCodeBackend | None, codex: CodexBackend | None) -> list[dict[str, Any]]:
@@ -598,6 +808,11 @@ def available_models(claude: ClaudeCodeBackend | None, codex: CodexBackend | Non
                     "efforts": chosen["efforts"] if chosen else shared, "provider": "codex"})
     out += [{**m, "value": f"codex:{m['value']}", "provider": "codex"} for m in listed]
     return out
+
+
+def service_urls() -> dict[str, str]:
+    """The address asked to learn whether each tool's service can be reached."""
+    return {"claude": os.environ.get("ANTHROPIC_BASE_URL") or "https://api.anthropic.com", "codex": "https://chatgpt.com"}
 
 
 @dataclass

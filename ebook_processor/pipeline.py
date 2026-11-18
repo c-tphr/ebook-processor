@@ -34,7 +34,7 @@ from typing import Any, Callable
 
 from . import __version__, prompts
 from .content import export_images
-from .llm import Backend, Completion
+from .llm import Backend, BackendCancelled, Completion
 from .prep import checkpoints as cp
 from .prep.build import _preflight
 from .prep.draft import check_draft
@@ -398,8 +398,11 @@ class Run:
         if self.cancel.is_set():
             raise Cancelled()
         model = self.settings.checker_model if role in ("check", "exclusions") else None
-        completion = self.backend.complete(role=role, system=system, prompt=message, schema=schema,
-                                           model=model or self.settings.model, read_dir=self.read_dir)
+        try:
+            completion = self.backend.complete(role=role, system=system, prompt=message, schema=schema,
+                                               model=model or self.settings.model, read_dir=self.read_dir)
+        except BackendCancelled:  # stopped while the call was running or waiting for the network
+            raise Cancelled() from None
         with self.lock:
             usage = self.state["usage"]
             per = usage["by_role"].setdefault(role, {"calls": 0, "cost_usd": 0.0, "input_tokens": 0,

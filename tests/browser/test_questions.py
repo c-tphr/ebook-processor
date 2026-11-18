@@ -106,8 +106,8 @@ def test_questions_are_made_reworded_written_and_proposed_for_many_in_the_notebo
     expect(page.get_by_role("button", name="Propose a question for each")).to_have_count(0)
     # removing the first highlight asks about its questions; kept, they stay with the words they were about
     first.get_by_role("button", name="Remove highlight").click()
-    expect(page.locator(".nb .quote")).to_have_count(3)
     expect(page.locator("[id^=nb-kept-]")).to_have_count(2)
+    expect(page.locator(".nb .quote")).to_have_count(4)   # two highlights, and the words each kept question was about
     state = book.call("GET", f"/jobs/{book.id}/questions")["questions"]
     assert sorted(q["status"] for q in state) == ["accepted", "accepted", "proposed", "proposed"]
     assert [q["highlight"] for q in state if q["status"] == "accepted"] == [None, None]

@@ -171,6 +171,15 @@ body.pane .top { padding: 10px 0; } body.pane .top .where span { display: block;
 body.pane .foot { grid-template-columns: minmax(0, 1fr) auto; }
 body.pane .sv { padding-top: 20px; }
 .text .aim { animation: aim 2.4s ease-out; }
+/* questions from highlights: the panel in the drawer, and the quiet notice */
+.hq .one { border-top: 1px solid var(--ghost); padding: 12px 0; }
+.hq .one b { display: block; font-weight: 600; text-wrap: pretty; } .hq .one p { margin: 6px 0 0; text-wrap: pretty; }
+.hq .one .acts, .hq .more { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; justify-content: flex-start; }
+.hq .one .why { color: var(--mute); font-size: 14px; }
+.hq textarea { width: 100%; min-height: 70px; font: 15px/1.45 var(--grot); color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 8px 10px; resize: vertical; margin-top: 6px; }
+.hq .more { border-top: 1px solid var(--ink); padding-top: 12px; }
+.toast { position: fixed; right: 18px; bottom: 74px; z-index: 18; max-width: min(420px, calc(100vw - 36px)); background: var(--ink); color: var(--paper); padding: 10px 12px; display: flex; gap: 12px; align-items: center; font-size: 14px; }
+.toast button { border-color: var(--paper); color: var(--paper); flex: none; } .toast button:hover { background: var(--paper); color: var(--ink); }
 /* a section's questions, shown before it when previews are on */
 .text .pre { font-family: var(--grot); font-size: 0.82em; line-height: 1.4; text-indent: 0; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--ink); margin: 1.2em 0 1.4em; padding: 0.8em 0 0.9em; break-inside: avoid; }
 .text .pre .m { display: block; font-size: 11px; margin-bottom: 0.7em; }
@@ -366,6 +375,7 @@ async function render() {
 // one with questions skipped opens when its section is read through again, and then asks the skipped ones.
 const completed = (s) => s.prompts.length > 0 && s.prompts.every((p) => S.grades[p.id]);
 const unanswered = (s) => s.prompts.filter((p) => !S.grades[p.id]).length;
+const toPreview = (s) => s.prompts.filter((p) => !p.hq && !S.grades[p.id]);   // not the reader's own, made while reading
 const due = (s) => !PANE && s.prompts.length && !completed(s) && !handled.has(s.id) && !(reread && reread.section.id === s.id);
 // Question previews (a setting): a section whose checkpoint still has unanswered questions begins with them, as
 // a box in the text of the page and scroll views and as a pause in RSVP. When a question is first shown this way
@@ -378,7 +388,7 @@ function sawPreview(ids) {
   if (fresh) save();
 }
 function previewBox(s) {
-  const open = s.prompts.filter((p) => !S.grades[p.id]);
+  const open = toPreview(s);
   return h("aside", { class: "pre", "data-ids": open.map((p) => p.id).join(" "), "aria-label": "Questions for this section" },
     h("span", { class: "m" }, open.length === 1 ? "A question for this section" : `${open.length} questions for this section`),
     h("ul", {}, open.map((p) => h("li", {}, p.prompt))),
@@ -395,7 +405,7 @@ function addPreviews(root) {          // put the boxes into a chapter's text; a 
   }, { root: stage, threshold: 0.5 });
   const blocks = [...root.querySelectorAll("[data-w]")];
   for (const s of sectionsIn(pos.chapter)) {
-    if (!unanswered(s)) continue;
+    if (!toPreview(s).length) continue;
     let k = blocks.findIndex((b) => +b.dataset.w >= s.start);
     if (k < 0 || +blocks[k].dataset.w >= s.end) continue;
     while (blocks[k].dataset.kind === "heading" && blocks[k + 1] && +blocks[k + 1].dataset.w < s.end) k++;   // below the section's own heading
@@ -653,7 +663,7 @@ function rsvpView() {
     put(wordEl, h("span", { class: "m" }, "Before this section: read the questions, then press play"));
     wordEl.className = "word group";
     put(ctx, h("div", { class: "text" }, previewBox(s))); controls();
-    sawPreview(s.prompts.filter((p) => !S.grades[p.id]).map((p) => p.id));
+    sawPreview(toPreview(s).map((p) => p.id));
   }
   function tick() {
     if (!playing) return;
@@ -661,7 +671,7 @@ function rsvpView() {
     const sec = sectionsIn(pos.chapter).find((s) => s.end === i);
     if (sec && reread && reread.section.id === sec.id) { pause(); return endReread(); }
     if (sec && due(sec)) { pause(); return openCheckpoint(sec); }
-    const ahead = previewing() ? sectionsIn(pos.chapter).find((s) => s.start === i && unanswered(s) && !primed.has(s.id)) : null;
+    const ahead = previewing() ? sectionsIn(pos.chapter).find((s) => s.start === i && toPreview(s).length && !primed.has(s.id)) : null;
     if (ahead) { primed.add(ahead.id); pause(); return showPreview(ahead); }
     if (data.stops.has(i) && !shown.has(i)) { shown.add(i); pause(); return showStop(data.stops.get(i)); }
     const group = draw();
@@ -674,16 +684,17 @@ function rsvpView() {
   function toggle() { if (playing) return pause(); lead = null; playing = true; t0 = performance.now(); n0 = 0; put(ctx); controls(); tick(); }
   draw(); context(); controls();
   // Opened at the start of a section with questions to preview: show them now, so that play then plays.
-  const opening = previewing() ? sectionsIn(pos.chapter).find((s) => s.start === i && unanswered(s)) : null;
+  const opening = previewing() ? sectionsIn(pos.chapter).find((s) => s.start === i && toPreview(s).length) : null;
   if (opening) { primed.add(opening.id); showPreview(opening); }
-  async function mark(withNote) {     // highlight the sentence being shown; with a note, pause and open it
+  async function mark(withNote, withQuestion) {   // highlight the sentence being shown; with a note, pause and open it
     let k = Math.min(Math.max(0, i - (playing ? 1 : 0)), N - 1), a = k, b = k;
     while (a > 0 && !sentenceEnd(a - 1)) a--;
     while (b < N - 1 && !sentenceEnd(b)) b++;
-    if (withNote) pause();
+    if (withNote || (withQuestion && settings.hq_review === "wait")) pause();
     const made = await addHighlight({ chapter: pos.chapter, start: a, end: b + 1 });
     if (!playing) { draw(); context(); }
     if (withNote && made) editItem(made);
+    if (withQuestion && made) askQuestion(made);
   }
   return { next: () => sentence(1), prev: () => sentence(-1), toggle, mark, where: () => i, relayout() { if (playing) return; if (lead) showPreview(lead); else { draw(); context(); } }, toEnd() {},
     get playing() { return playing; }, stop() { pause(); }, label: () => `${S.overrides.wpm} wpm` };
@@ -732,7 +743,7 @@ function drawCp() {
       h("button", { class: "primary", onclick: () => advance("correct") }, "Correct", h("kbd", {}, "c")),
       h("button", { class: "primary", onclick: () => advance("incorrect") }, "Incorrect", h("kbd", {}, "x"))), skips)];
   stage.append(h("div", { class: "cp", role: "dialog", "aria-label": "Checkpoint" }, h("div", { class: "in" },
-    h("div", { class: "head" }, h("span", { class: "m" }, cp.review ? "Review / " + s.label : `Checkpoint ${number} / ${s.label}`), h("span", { class: "m" }, `Question ${cp.index + 1} of ${total}`)),
+    h("div", { class: "head" }, h("span", { class: "m" }, cp.review ? "Review / " + s.label : `Checkpoint ${number} / ${s.label}`), h("span", { class: "m" }, `Question ${cp.index + 1} of ${total}` + (p.hq ? " / from your highlight" : ""))),
     h("h1", {}, p.prompt), body)));
   (stage.querySelector(".cp textarea") || stage.querySelector(".cp button.primary"))?.focus();
   function advance(grade) {
@@ -873,10 +884,11 @@ function selectionWords() {           // the words a text selection covers, as {
 function hideTip() { document.querySelector(".tip")?.remove(); tipFor = null; }
 function showTip(rect, range) {
   hideTip(); tipFor = range;
-  const act = (withNote) => async () => { const r = tipFor; hideTip(); getSelection().removeAllRanges(); const made = await addHighlight(r); if (withNote && made) editItem(made); };
+  const act = (then) => async () => { const r = tipFor; hideTip(); getSelection().removeAllRanges(); const made = await addHighlight(r); if (then && made) then(made); };
   document.body.append(h("div", { class: "tip", style: `left:${rect.left + rect.width / 2}px;top:${Math.max(48, rect.top - 6)}px` },
-    h("button", { onmousedown: (e) => e.preventDefault(), onclick: act(false) }, "Highlight", h("kbd", {}, "h")),
-    h("button", { onmousedown: (e) => e.preventDefault(), onclick: act(true) }, "Note", h("kbd", {}, "n"))));
+    h("button", { onmousedown: (e) => e.preventDefault(), onclick: act(null) }, "Highlight", h("kbd", {}, "h")),
+    h("button", { onmousedown: (e) => e.preventDefault(), onclick: act(editItem) }, "Note", h("kbd", {}, "n")),
+    PANE ? null : h("button", { onmousedown: (e) => e.preventDefault(), onclick: act(askQuestion) }, "Question", h("kbd", {}, "q"))));
 }
 document.addEventListener("mouseup", (e) => {
   if (e.target.closest(".tip, .drawer, .cp, .rv")) return;
@@ -884,6 +896,7 @@ document.addEventListener("mouseup", (e) => {
 });
 async function notesCall(path, options) {
   try { NB = await api(`/jobs/${ID}/notes${path}`, options); } catch (e) { alert(e.message); return null; }
+  syncPrompts();
   paint(); if (mode === "page" && view && view.relayout) view.relayout();
   tell({ ep: "notes" });
   return NB;
@@ -905,7 +918,105 @@ function editor(title, quote, text, onSave, onRemove, removeLabel) {
 function editItem(x) {                // a highlight and its note
   editor("Highlight", x.text, x.note,
     (text) => notesCall(`/item/${x.id}`, { method: "PUT", json: { text } }),
-    () => (!x.note || confirm("Remove this highlight and its note?")) ? notesCall(`/item/${x.id}`, { method: "DELETE" }) : null, "Remove highlight");
+    () => removeHighlight(x), "Remove highlight");
+  if (PANE) return;                   // beside the notebook, questions are asked for in the notebook
+  const mine = questionsOf(x.id).length;
+  $("d-body").append(h("div", { class: "hq" }, h("div", { class: "more", style: "margin-top:18px" },
+    h("button", { onclick: () => { closeDrawer(); askQuestion(x); } }, "Make a question"),
+    h("button", { class: "link", onclick: () => questionPanel(x.id) }, mine ? `Its questions (${mine})` : "Write my own"))));
+}
+function removeHighlight(x) {         // its accepted questions may stay without it: asked each time
+  const kept = questionsOf(x.id).filter((q) => q.status === "accepted").length;
+  if ((x.note || kept) && !confirm(x.note ? "Remove this highlight and its note?" : "Remove this highlight?")) return null;
+  const keep = kept > 0 && confirm(`It has ${kept} question${kept === 1 ? "" : "s"} you accepted. Keep ${kept === 1 ? "it" : "them"} for practice?\n\nOK keeps ${kept === 1 ? "it" : "them"}. Cancel removes ${kept === 1 ? "it" : "them"} with the highlight.`);
+  return notesCall(`/item/${x.id}?questions=${keep ? "keep" : "remove"}`, { method: "DELETE" });
+}
+
+/* ---------- questions from highlights ---------- */
+// A question is asked for on a highlight. The model writes it in the background; what happens when it arrives
+// is a setting (hq_review): it waits in the notebook, shows in a panel that was left open, is announced by a
+// quiet notice, or is accepted without asking. An accepted question of a section not yet finished is asked at
+// that section's checkpoint, after the book's own: syncPrompts keeps the sections' questions in step.
+const questionsOf = (hid) => (NB.questions || []).filter((q) => q.highlight === hid);
+let asking = { pending: [], failed: {} }, askTimer = null, panelFor = null;
+const awaited = new Map();            // highlight id -> { mode, had: ids of the questions it had when asked }
+function syncPrompts() {
+  if (!book) return;
+  for (const s of book.sections) {
+    s.own = s.own || s.prompts.filter((p) => !p.hq);
+    s.prompts = s.own.concat((NB.questions || []).filter((q) => q.status === "accepted" && q.ask === "checkpoint" && q.section === s.id)
+      .map((q) => ({ id: q.id, prompt: q.question, answer: q.answer, hq: true })));
+  }
+}
+function say(text, label, action) {   // a quiet notice at the edge; with an action, it can be pressed
+  document.querySelector(".toast")?.remove();
+  const el = h("div", { class: "toast", role: "status" }, h("span", {}, text),
+    action ? h("button", { onclick: () => { el.remove(); action(); } }, label) : null);
+  document.body.append(el);
+  setTimeout(() => el.remove(), action ? 15000 : 4000);
+}
+async function questionCall(path, options) {   // change a question; the reply is the state of them all
+  let state;
+  try { state = await api(`/jobs/${ID}/questions${path}`, options); } catch (e) { alert(e.message); return null; }
+  takeQuestions(state);
+  return state;
+}
+function takeQuestions(state) {
+  NB.questions = state.questions; asking = state;
+  syncPrompts(); drawFoot(); if (view && view.refresh) view.refresh();
+  for (const [hid, wait] of [...awaited]) {
+    if (state.pending.includes(hid)) continue;
+    awaited.delete(hid);
+    const made = state.questions.find((q) => q.highlight === hid && !wait.had.includes(q.id));
+    if (state.failed[hid]) say("A question could not be written: " + state.failed[hid]);
+    else if (!made) continue;
+    else if (made.status === "held") say("A question did not pass its check and waits for you.", "Review", () => questionPanel(hid));
+    else if (wait.mode === "toast") say("A question is ready.", "Review", () => questionPanel(hid));
+  }
+  if (panelFor) questionPanel(panelFor);
+  clearTimeout(askTimer);
+  if (state.pending.length) askTimer = setTimeout(async () => { try { takeQuestions(await api(`/jobs/${ID}/questions`)); } catch (e) { /* tried again with the next request */ } }, 1500);
+}
+async function askQuestion(x) {
+  const mode = settings.hq_review;
+  awaited.set(x.id, { mode, had: questionsOf(x.id).map((q) => q.id) });
+  const state = await questionCall("/propose", { method: "POST", json: { highlight: x.id, auto: mode === "auto" } });
+  if (!state) return awaited.delete(x.id);
+  if (mode === "wait") questionPanel(x.id);
+  else say(mode === "auto" ? "A question is being written. It will be asked at the end of the section." : mode === "toast"
+    ? "A question is being written." : "A question is being written. It will wait in the notebook.");
+}
+function questionPanel(hid) {         // a highlight's questions: to accept, reword, discard, ask for another, or write
+  const x = NB.highlights.find((it) => it.id === hid);
+  if (!x) return closeDrawer();
+  const form = (q, onSave) => {
+    const ask = h("textarea", { "aria-label": "Question", placeholder: "The question" }), ans = h("textarea", { "aria-label": "Answer", placeholder: "Its answer" });
+    ask.value = q ? q.question : ""; ans.value = q ? q.answer : "";
+    return h("div", { class: "one" }, ask, ans, h("div", { class: "acts" },
+      h("button", { class: "primary", onclick: () => onSave(ask.value, ans.value) }, "Save"), h("button", { class: "link", onclick: () => questionPanel(hid) }, "Cancel")));
+  };
+  const one = (q) => {
+    const box = h("div", { class: "one", "data-q": q.id });
+    const edit = () => box.replaceWith(form(q, (question, answer) => questionCall("/" + q.id, { method: "PUT", json: { question, answer } })));
+    put(box, h("span", { class: "lab" + (q.status === "accepted" ? " inv" : "") }, q.status === "accepted" ? "Accepted" : q.status === "held" ? "Held back" : "Proposed"),
+      h("b", { style: "margin-top:8px" }, q.question), h("p", {}, q.answer),
+      q.status === "held" ? h("p", { class: "why" }, "The check: " + q.problem) : null,
+      h("div", { class: "acts" },
+        q.status !== "accepted" ? h("button", { class: "primary", onclick: () => questionCall("/" + q.id, { method: "PUT", json: { accept: true } }) }, "Accept") : null,
+        h("button", { onclick: edit }, "Reword"),
+        h("button", { class: "link", onclick: () => { if (q.status !== "accepted" || confirm("Remove this question, and its place in practice?")) questionCall("/" + q.id, { method: "DELETE" }); } }, q.status === "accepted" ? "Remove" : "Discard")));
+    return box;
+  };
+  const writing = asking.pending.includes(hid), mine = questionsOf(hid);
+  const own = h("div");
+  openDrawer("Questions", h("div", { class: "hq ed" }, h("blockquote", {}, x.text),
+    mine.map(one), writing ? h("p", { class: "m", id: "hq-writing" }, "Writing a question") : null,
+    asking.failed[hid] ? h("p", { class: "why" }, "A question could not be written: " + asking.failed[hid]) : null, own,
+    h("div", { class: "more" },
+      h("button", { disabled: writing, onclick: () => { awaited.set(hid, { mode: "wait", had: mine.map((q) => q.id) }); questionCall("/propose", { method: "POST", json: { highlight: hid } }); } }, mine.length ? "Another" : "Make a question"),
+      h("button", { class: "link", onclick: () => put(own, form(null, (question, answer) => questionCall("", { method: "POST", json: { highlight: hid, question, answer } }))) }, "Write my own"),
+      h("a", { class: "m", href: "/#/notebook/" + ID, style: "margin-left:auto" }, "Notebook"))));
+  panelFor = hid;                     // kept up to date while it is open
 }
 function editTarget(title, target, quote) {
   const match = (n) => n.on === target.on && (target.on !== "place" || (n.chapter === target.chapter && n.word === target.word))
@@ -979,8 +1090,8 @@ function wire(root) {
 }
 
 /* ---------- drawer: contents, search, settings ---------- */
-function openDrawer(title, body) { $("d-title").textContent = title; put($("d-body"), body); $("drawer").classList.add("on"); }
-function closeDrawer() { $("drawer").classList.remove("on"); }
+function openDrawer(title, body) { panelFor = null; $("d-title").textContent = title; put($("d-body"), body); $("drawer").classList.add("on"); }
+function closeDrawer() { $("drawer").classList.remove("on"); panelFor = null; }
 $("d-close").onclick = closeDrawer;
 function contents() {
   const list = h("div", { class: "toc" });
@@ -1074,10 +1185,10 @@ addEventListener("keydown", (e) => {
   // A button that has the keyboard takes Space and Enter itself. The reader must not act on them as well:
   // Firefox presses the button when the key comes up, whatever was done with the key going down.
   if ((e.key === " " || e.key === "Enter") && e.target.closest && e.target.closest("button, a[href], summary")) return;
-  if (e.key === "h" || e.key === "n") {
+  if (e.key === "h" || e.key === "n" || (e.key === "q" && !PANE)) {
     e.preventDefault();
-    if (tipFor) { const r = tipFor; hideTip(); getSelection().removeAllRanges(); addHighlight(r).then((made) => { if (e.key === "n" && made) editItem(made); }); }
-    else if (view.mark) view.mark(e.key === "n");
+    if (tipFor) { const r = tipFor; hideTip(); getSelection().removeAllRanges(); addHighlight(r).then((made) => { if (made && e.key === "n") editItem(made); if (made && e.key === "q") askQuestion(made); }); }
+    else if (view.mark) view.mark(e.key === "n", e.key === "q");
     else if (e.key === "n") editPlace();
     return;
   }
@@ -1099,6 +1210,9 @@ addEventListener("keydown", (e) => {
       e.message === "not found" ? "The app may have been updated while it was running: stop it and start it again. " : "", h("a", { href: "/" }, "Back to the library")));
   }
   S.x_previewed = S.x_previewed || {};   // a state saved before previews existed
+  NB.questions = NB.questions || [];
+  syncPrompts();
+  if (!PANE) api(`/jobs/${ID}/questions`).then((state) => { if (state.pending.length) takeQuestions(state); else asking = state; }).catch(() => {});
   document.title = book.title; $("back").href = "/#/run/" + ID;
   applySettings();
   const want = new URLSearchParams(location.search);

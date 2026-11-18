@@ -10,7 +10,6 @@ These were chosen as later work by the project owner.
 | --- | --- | --- |
 | Personal knowledge system | Grow the per-book notebook into a full system in the spirit of Zettelkasten: conceptual "permanent notes" that stand apart from any one book, links between notes with back-links, and other features familiar from Obsidian | The first step, a notebook per book for "literature notes", is the current highlights and notes work |
 | Notebook across all books | One place for every book's highlights and notes, with search and filtering | Part of the knowledge system above |
-| Questions from highlights | Turn a highlighted passage into a practice card: Claude drafts a question and answer from the passage for you to accept, reword or discard, or you type your own | Deferred again when highlights were scoped: the first version of highlights uses no Claude. To follow once highlights have been in use for a while |
 
 ## Considered and not chosen for now
 
@@ -62,6 +61,17 @@ Options that came up in the interviews and were passed over. They are not planne
 | Links between notes | `[[double-bracket]]` links resolved in the notebook. Notes are Markdown, so this has a format to build on; it belongs with the knowledge system above |
 | A summary required at every checkpoint | The reader will offer a section note after a checkpoint; it will not insist on one |
 
+### Questions from highlights
+
+| Item | What it means |
+| --- | --- |
+| Fill-in-the-blank cards | The highlighted sentence with a key phrase left out. Question and answer was chosen; a second kind of card would need its own form in Practice and in the Anki deck |
+| Automatic questions for every highlight | A proposal for each new highlight without asking. Passed over because it uses the plan for highlights that may not be wanted for practice |
+| In the book's own checkpoints | Adding these questions to the checkpoints of the exported books and the firmware edition. They are asked in the app's reader only |
+| Accepting a whole batch without review | "Propose for all" always leaves the proposals to be decided. The accept-without-asking setting covers single requests made in the reader |
+| Its own model setting | These questions use the Add a book defaults |
+| A question without a highlight | A card written from scratch, tied to no passage |
+
 ### Narration
 
 Narration itself is planned and waiting on product research. These parts were passed over when it was scoped.
@@ -83,6 +93,7 @@ Things that work in tests but have not been confirmed in real use, and facts tha
 | Mochi's actual defaults | Mochi does not publish its multipliers. Reading them off the Review Settings screen of a fresh install would settle the Remembered multiplier (1.8 here), the Forgot multiplier (0.5), the longest interval and the size of the due-date variation |
 | Revision with real Claude | In the real runs no question failed its check, so the revise-and-recheck path has only run against the scripted stand-in |
 | Recovery from a lost connection | Tested with stand-in programs that hang and a stand-in network, for both tools, and one real call through the new code path. A real loss of connection during a real run was not produced: what Claude Code and Codex themselves do then (hang, or fail with which message) was not observed |
+| Questions from highlights with a real model | Built and tested against a stand-in that writes a fixed kind of question. What a real model writes from the instructions, how long a request takes, and how often the check holds a question back have not been seen |
 | Usage-limit handling | A run recognises the plan's usage limit by the wording of Claude Code's error. No real limit message has been seen |
 | Codex with a real login | The Codex side was built against the real program (codex-cli 0.169.0): it accepts every option the tool passes, its model list is read, and the instructions it would show the model were inspected. No call reached a model, because the machine it was built on had no ChatGPT login and no route to OpenAI. Unconfirmed: that the reply schema is accepted as it is, the wording of a real usage-limit message, the token counts, and that Codex opens pictures in figures mode |
 | macOS, WSL and Windows itself | The tests run on Linux, Windows and macOS after every push, with stand-ins for Claude Code and Codex, and the app's pages run in Chromium, Firefox and WebKit. Still unknown: the real tools on each system beyond what the owner has seen work on Windows, the Safari app itself (WebKit is its engine, not the app), and whether Codex's read-only sandbox needs any setup on Windows |

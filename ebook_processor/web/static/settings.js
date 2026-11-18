@@ -17,7 +17,7 @@
 
 const DEFAULTS = {
   theme: "system",                                    // general
-  face: "serif", size: 19, leading: 1.6, measure: "medium", read_mode: "page", read_preview: false,   // reader
+  face: "serif", size: 19, leading: 1.6, measure: "medium", read_mode: "page", read_preview: false, hq_review: "later",   // reader
   nb_beside: true, nb_side: "left", nb_view: "scroll", nb_split: 0.5,            // notebook and its side reader
 };
 const RUN_KEYS = ["density", "max_questions", "kind", "content", "rounds", "model", "checker_model", "effort", "jobs", "epubcheck", "preview"];
@@ -303,8 +303,10 @@ const DRAW = {
       row("Column width", choice("measure", [["narrow", "Narrow"], ["medium", "Medium"], ["wide", "Wide"]])),
       row("A new book opens in", choice("read_mode", [["page", "Pages"], ["scroll", "Scroll"], ["rsvp", "RSVP"]]), "A book you have started opens in the view you left it in."),
       row("Preview questions", choice("read_preview", [[false, "Off"], [true, "On"]]), "A section begins with the questions of its checkpoint that you have not answered yet, to read with them in mind. RSVP pauses there to show them. Answers to previewed questions are marked as such in the notebook."),
+      row("After asking for a question on a highlight", choice("hq_review", [["later", "Review later"], ["wait", "Wait for it"], ["toast", "Tell me quietly"], ["auto", "Accept it"]]),
+        "Review later: you read on, and the proposal waits in the notebook. Wait for it: a panel opens and shows the proposal when it is written. Tell me quietly: a small notice appears when it is ready; press it to review, or leave it for the notebook. Accept it: the question is checked and accepted without asking you, and asked at the end of the section; one that fails its check waits in the notebook."),
       el("h4", {}, "Keys"),
-      el("p", { style: "margin:12px 0 0;max-width:62ch" }, "← → turn pages or step sentences. Space plays RSVP. 1 2 3 change the view. c opens the contents, / searches. With text selected, h highlights it and n adds a note; with nothing selected, n notes the paragraph under the pointer.")];
+      el("p", { style: "margin:12px 0 0;max-width:62ch" }, "← → turn pages or step sentences. Space plays RSVP. 1 2 3 change the view. c opens the contents, / searches. With text selected, h highlights it, n adds a note and q asks for a question about it; with nothing selected, n notes the paragraph under the pointer.")];
   },
   async notebook() {
     return [el("h3", {}, "Notebook"),

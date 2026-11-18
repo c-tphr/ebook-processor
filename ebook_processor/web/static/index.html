@@ -478,12 +478,22 @@ async function showNotebook(id) {
   const app = $("app"), body = h("div", { class: "nb" });
   put(app, h("a", { class: "back m", href: "#/run/" + id }, "← Book page"), body);
   let data, wanted = null;
+  let asks = { pending: [], failed: {}, batch: null };   // questions being written from highlights
   const call = async (path, options) => { try { await api(`/jobs/${id}/notes${path}`, options); } catch (e) { alert(e.message); } await load(); sideTell({ ep: "notes" }); };
+  // a change to the questions made from highlights: asked for, accepted, reworded, discarded
+  const ask = async (path, options) => { try { await api(`/jobs/${id}/questions${path}`, options); } catch (e) { alert(e.message); } await load(); };
   async function load() {
     const y = window.scrollY;
-    try { data = await api(`/jobs/${id}/notebook`); } catch (e) { return put(body, h("p", { class: "msg err" }, e.message)); }
+    try { [data, asks] = await Promise.all([api(`/jobs/${id}/notebook`), api(`/jobs/${id}/questions`)]); }
+    catch (e) { return put(body, h("p", { class: "msg err" }, e.message)); }
     draw(); window.scrollTo(0, y);
     if (wanted) show(wanted);
+    watch();
+  }
+  function watch() {                    // while questions are being written, look again; never over something being typed
+    clearTimeout(timer);
+    if (!asks.pending.length && !(asks.batch && asks.batch.running)) return;
+    timer = setTimeout(() => { if (body.querySelector("textarea")) watch(); else load(); }, 1500);
   }
   function show(itemId) {               // the reader beside asks for an entry: bring it into view and light it
     const entry = document.getElementById("nb-" + itemId);
@@ -516,12 +526,53 @@ async function showNotebook(id) {
     return box;
   }
   const target = (t, text, label) => slot(text, (v) => call("/target", { method: "PUT", json: { target: t, text: v } }), label);
+  // A question made from a highlight, set like a checkpoint answer. A proposal can be accepted, reworded,
+  // discarded or followed by another; an accepted one says how its first asking went.
+  function asked(q, hid) {
+    const typed = q.attempts.filter((t) => t.text).map((t) => t.text);
+    const [cls, label] = q.status === "proposed" ? ["lab", "Proposed"] : q.status === "held" ? ["lab", "Held back"]
+      : q.first === "correct" ? ["lab blue", "Recalled"] : q.first ? ["lab inv", "Missed"] : ["lab", "Not asked yet"];
+    const box = h("div", { class: "ans", id: "nb-" + q.id, "data-status": q.status });
+    const show = () => put(box,
+      h("p", { class: "asked" }, h("span", { class: "hang" }, h("span", { class: cls }, label)), q.question),
+      typed.map((t) => h("p", {}, h("span", { class: "hang m mute" }, "Answered"), t)), h("p", {}, h("span", { class: "hang m mute" }, "Reference"), q.answer),
+      q.status === "held" ? h("p", { class: "note" }, "It was to be accepted without asking you, but did not pass its check: " + q.problem) : null,
+      h("div", { class: "row" },
+        q.status !== "accepted" ? h("button", { class: "text", onclick: () => ask("/" + q.id, { method: "PUT", json: { accept: true } }) }, "Accept") : null,
+        h("button", { class: "text", onclick: edit }, "Reword"),
+        hid && q.status !== "accepted" ? h("button", { class: "text", disabled: asks.pending.includes(hid), onclick: () => ask("/propose", { method: "POST", json: { highlight: hid } }) }, "Another") : null,
+        h("button", { class: "text", onclick: () => { if (q.status !== "accepted" || confirm("Remove this question, and its place in practice?")) ask("/" + q.id, { method: "DELETE" }); } }, q.status === "accepted" ? "Remove" : "Discard"),
+        q.status === "accepted" ? h("span", { class: "m mute" }, q.ask === "checkpoint" && !q.first ? "Asked at the end of its section" : "In practice") : null));
+    function edit() { put(box, wording(q, (question, answer) => ask("/" + q.id, { method: "PUT", json: { question, answer } }), show)); }
+    show();
+    return box;
+  }
+  function wording(q, save, cancel) {   // the two fields of a question, to reword one or to write your own
+    const question = h("textarea", { "aria-label": "Question", placeholder: "The question", style: "min-height:64px" });
+    const answer = h("textarea", { "aria-label": "Answer", placeholder: "Its answer", style: "min-height:64px;margin-top:8px" });
+    question.value = q ? q.question : ""; answer.value = q ? q.answer : "";
+    return h("div", { class: "slot" }, question, answer, h("div", { class: "row" },
+      h("button", { class: "primary", onclick: () => save(question.value, answer.value) }, "Save"), h("button", { class: "text", onclick: cancel }, "Cancel")));
+  }
+  function removeHighlight(i) {         // its accepted questions may stay without it: asked each time
+    const kept = i.questions.filter((q) => q.status === "accepted").length;
+    if ((i.note || kept) && !confirm(i.note ? "Remove this highlight and its note?" : "Remove this highlight?")) return;
+    const keep = kept > 0 && confirm(`It has ${kept} question${kept === 1 ? "" : "s"} you accepted. Keep ${kept === 1 ? "it" : "them"} for practice?\n\nOK keeps ${kept === 1 ? "it" : "them"}. Cancel removes ${kept === 1 ? "it" : "them"} with the highlight.`);
+    call(`/item/${i.id}?questions=${keep ? "keep" : "remove"}`, { method: "DELETE" });
+  }
   function item(i) {
+    if (i.type === "question") return h("div", { id: "nb-kept-" + i.id }, h("div", { class: "quote" }, h("a", { ...openAt(i.chapter, i.word), title: "Open in the reader" }, i.text)), asked(i, null));
     if (i.type === "note") return h("div", { id: "nb-" + i.id }, h("div", { class: "row", style: "margin-top:14px" }, h("span", { class: "m mute" }, "On a paragraph"), h("a", { class: "m", ...openAt(i.chapter, i.word) }, "Open")),
       slot(i.text, (v) => call(`/item/${i.id}`, { method: "PUT", json: { text: v } }), "Add a note"));
+    const writing = asks.pending.includes(i.id), own = h("div");
     return h("div", { id: "nb-" + i.id }, h("div", { class: "quote" }, h("a", { ...openAt(i.chapter, i.word), title: "Open in the reader" }, i.text)),
-      slot(i.note, (v) => call(`/item/${i.id}`, { method: "PUT", json: { text: v } }), "Add a note",
-        () => h("button", { class: "text", onclick: () => { if (!i.note || confirm("Remove this highlight and its note?")) call(`/item/${i.id}`, { method: "DELETE" }); } }, "Remove highlight")));
+      slot(i.note, (v) => call(`/item/${i.id}`, { method: "PUT", json: { text: v } }), "Add a note", () => [
+        h("button", { class: "text", disabled: writing, onclick: () => ask("/propose", { method: "POST", json: { highlight: i.id } }) }, i.questions.length ? "Another question" : "Make a question"),
+        h("button", { class: "text", onclick: () => put(own, wording(null, (question, answer) => ask("", { method: "POST", json: { highlight: i.id, question, answer } }), () => put(own))) }, "Write my own"),
+        h("button", { class: "text", onclick: () => removeHighlight(i) }, "Remove highlight")]),
+      i.questions.map((q) => asked(q, i.id)), own,
+      writing ? h("p", { class: "m mute", style: "margin:10px 0 0" }, "Writing a question") : null,
+      asks.failed[i.id] ? h("p", { class: "note" }, "A question could not be written: " + asks.failed[i.id]) : null);
   }
   function answer(a) {
     const typed = a.attempts.filter((t) => t.text).map((t) => t.text);
@@ -538,17 +589,27 @@ async function showNotebook(id) {
       target({ on: "section", section: s.id }, s.note && s.note.text, "Add a note on this section"), s.items.map(item), s.answers.map(answer));
   }
   function draw() {
-    const n = data.counts;
+    const n = data.counts, batch = asks.batch;
+    // highlights that have no question yet: what "propose" covers, for the book and for each chapter
+    const bare = (c) => [...c.loose, ...c.sections.flatMap((s) => s.items)].filter((i) => i.type === "highlight" && !i.questions.length && !asks.pending.includes(i.id)).length;
+    const all = data.chapters.reduce((sum, c) => sum + bare(c), 0), running = batch && batch.running;
+    const propose = (count, json, label) => count && !running ? h("button", { class: "text", onclick: () => ask("/propose", { method: "POST", json }) }, label) : null;
     put(body,
       h("div", { class: "title" }, h("h1", {}, data.title),
         h("div", {}, kv("Highlights", fmt(n.highlights)), kv("Notes", fmt(n.notes)), kv("Checkpoint answers", fmt(n.answers)),
+          n.questions ? kv("Questions from highlights", fmt(n.questions)) : null, n.proposals ? kv("Proposals waiting for you", fmt(n.proposals)) : null,
           h("div", { class: "row", style: "margin-top:14px" },
             h("a", { class: "btn primary", href: `/api/jobs/${id}/notebook.md`, download: "" }, "Export Markdown"),
             h("a", { class: "btn", href: `/api/jobs/${id}/notebook.md?answers=0`, download: "" }, "Without checkpoint answers"),
             h("a", { class: "btn", href: "/read/" + id }, "Read")))),
-      band("The book", target({ on: "book" }, data.note && data.note.text, "Add a note on the book")),
+      running ? h("div", { class: "msg", id: "nb-batch" }, `Writing questions for your highlights: ${batch.done} of ${batch.total}. `,
+        h("button", { class: "text", onclick: () => ask("/stop", { method: "POST" }) }, "Stop")) : null,
+      batch && batch.error ? h("div", { class: "msg" }, "The questions were not all written: " + batch.error) : null,
+      band("The book", target({ on: "book" }, data.note && data.note.text, "Add a note on the book"),
+        propose(all, { book: true }, `Propose a question for each of the ${all} highlight${all === 1 ? "" : "s"} that has none`)),
       data.chapters.filter((c) => c.sections.length || c.note || c.loose.length).map((c) => band(c.title,
         c.sections.length !== 1 || c.note ? target({ on: "chapter", chapter: c.index }, c.note && c.note.text, "Add a note on this chapter") : null,
+        bare(c) !== all ? propose(bare(c), { chapter: c.index }, `Propose questions for this chapter's ${bare(c)} highlight${bare(c) === 1 ? "" : "s"} without one`) : null,
         c.loose.map(item), c.sections.map((s) => section(c, s)))));
     tidy();
   }

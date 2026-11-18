@@ -162,6 +162,16 @@ Also in the reader: contents by chapter and section, search, and footnotes that 
 
 The strip at the bottom is the book: one block per section, with a square for each question (blue recalled, black missed, hollow not yet met). The book's page shows the same map, your time and pace per view, and lets you choose which cards go into the Anki deck and the text file: all, only those you missed on the first try, or only those you have met. Cards are tagged `recall::correct`, `recall::missed` or `recall::unseen`.
 
+### Questions from your highlights
+
+A highlight can become a practice question. In the reader, select text and press **q** (or **Question**); in RSVP, **q** takes the sentence being shown. In the notebook, each highlight has **Make a question** and **Write my own**, and one action proposes a question for every highlight of the book, or of a chapter, that has none yet.
+
+- **Who writes it.** The model reads the highlight inside its section, with your note on the highlight as a pointer to what you care about, and proposes one question and answer. You accept it, reword it, ask for another, or discard it; a highlight can have several. Or you write your own. The models are the ones set in Settings, on the Add a book tab.
+- **When it arrives.** A setting on the Reader tab decides what happens after you ask for a question while reading: it waits in the notebook (the default); a panel opens and shows it when it is written; a small notice appears that you can press or leave; or it is accepted without asking. Accepted without asking, a question first gets the same independent check as the book's own questions, and one that fails is held back for you with the reason. In the notebook a proposal always appears for you to decide.
+- **Where it is asked.** An accepted question is asked at the end of its section in the app's reader, after the book's own questions, if you have not finished that section yet. Otherwise it goes straight to Practice as a new card. The book's files and the exported books are not changed.
+- **Where it shows.** In the notebook under its highlight, set like a checkpoint answer, and in the notebook's Markdown export. In the Anki deck, the text file and the questions data file, tagged `from::highlight`; these are brought up to date when you next download them.
+- **Removing a highlight** asks whether its accepted questions should stay for practice. Kept, they are shown with the words they were about.
+
 ### Previewing the questions
 
 Reading with the questions in mind can help. Two separate switches show a section's questions before the section:
@@ -317,6 +327,7 @@ After every push GitHub runs both (`.github/workflows/tests.yml`): the test suit
 | `ebook_processor/exports.py` | `questions.json`, the Anki deck, the text file |
 | `ebook_processor/outputs.py` | Writes every output from the saved state, and the report |
 | `ebook_processor/notes.py` | Highlights and notes, the notebook made from them, and its Markdown export |
+| `ebook_processor/highlight_questions.py`, `instructions/highlight.md` | Questions made from highlights: their store, what the model is sent, the check, and where an accepted question is asked |
 | `ebook_processor/srs.py` | The spaced-repetition scheduler and a book's cards |
 | `ebook_processor/reading.py` | A prepared EPUB as the reader needs it (clean chapter HTML with word positions, sections, search) and the saved reading state |
 | `ebook_processor/update.py` | `ebook-processor update`: find and stop the running app, fast-forward the checkout, install, start again |

@@ -18,7 +18,7 @@ GROUP_RE = re.compile(r"^=== (d\d+) (\S+) ===$", re.M)
 BLOCK_RE = re.compile(r"^\[(d\d+-p\d+)\] ([a-z-]+)[^\n]*, (\d+) words?$", re.M)
 SECTION_RE = re.compile(r"^=== SECTION (s\d+): ", re.M)
 QUESTION_RE = re.compile(r"^QUESTION \[([^\]]+)\]$", re.M)
-FIX_RE = re.compile(r"^QUESTION TO FIX \[([^\]]+)\]$", re.M)
+FIX_RE = re.compile(r"^QUESTION TO (?:FIX|CHANGE) \[([^\]]+)\]$", re.M)
 JUDGE_RE = re.compile(r"^JUDGE THE BREAK of (s\d+): (yes|no)$", re.M)
 EXCLUDED_RE = re.compile(r"^\[(\d+)\] (d\d+-p\d+) to (d\d+-p\d+) ", re.M)
 
@@ -199,7 +199,16 @@ class Script:
                                       "id": qid, "action": "revise", "prompt": f"What does {cite} say (try {n_checks})?",
                                       "answer": f"What {cite} says, revised after check {n_checks}.",
                                       "supporting_paragraphs": [cite]})
+        if "\nTHE READER ASKS\n~~~\n" in prompt:  # a rewrite to the reader's wish: the wish shows in the answer
+            wish = prompt.split("\nTHE READER ASKS\n~~~\n", 1)[1].split("\n~~~", 1)[0]
+            for r in revisions:
+                r["answer"] = f"{r['answer']} (as asked: {wish})"
         return {"revisions": revisions}
+
+    def passage(self, prompt: str) -> dict[str, Any]:
+        """The paragraphs a reader's question rests on: the second paragraph of the section, and one not in it."""
+        refs = [b.group(1) for b in BLOCK_RE.finditer(prompt) if b.group(2) == "paragraph"]
+        return {"supporting_paragraphs": [refs[1 if len(refs) > 1 else 0], "d99-p001"]}
 
     def exclusions(self, prompt: str) -> dict[str, Any]:
         return {"exclusions": [{"index": int(m.group(1)), "acceptable": not self.reject_exclusions,

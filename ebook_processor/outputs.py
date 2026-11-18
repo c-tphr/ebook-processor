@@ -150,6 +150,8 @@ def make_report(state: dict[str, Any], doc: dict[str, Any], files: dict[str, str
         "passed": sum(q["status"] == "passed" for q in kept_questions),
         "unchecked": sum(q["status"] in ("unchecked", "unverified") for q in kept_questions),
         "revised": sum(bool(q["history"]) for q in kept_questions),
+        "edited": sum(q["status"] == "edited" and not q.get("added") for q in kept_questions),
+        "added": sum(bool(q.get("added")) for q in kept_questions),
         "left_out": len(questions) - len(kept_questions),
         "failed": sum(q["status"] == "failed" for q in questions),
         "withdrawn": sum(q["status"] == "withdrawn" for q in questions),
@@ -181,7 +183,7 @@ def make_report(state: dict[str, Any], doc: dict[str, Any], files: dict[str, str
         "minor_notes": [{"id": q["id"], "section": q["section"], "question": q["prompt"], "note": q["minor_note"]}
                         for q in kept_questions if q["minor_note"]],
         "unchecked": [{"id": q["id"], "section": q["section"], "question": q["prompt"], "why": q["problem"]}
-                      for q in kept_questions if q["status"] != "passed"],
+                      for q in kept_questions if q["status"] in ("unchecked", "unverified")],
         "doubted_breaks": [{"id": s["id"], "label": s["label"], "first_paragraph": s["first_paragraph"],
                             "last_paragraph": s["last_paragraph"], "note": s["boundary_note"]}
                            for s in sections if s["natural_boundary"] is False],

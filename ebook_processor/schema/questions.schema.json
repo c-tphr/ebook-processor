@@ -82,7 +82,7 @@
             "type": "array",
             "items": { "type": "object", "required": ["ref", "text"], "properties": { "ref": { "$ref": "#/$defs/paragraph" }, "text": { "type": "string" } } }
           },
-          "status": { "enum": ["passed", "unchecked", "unverified"], "description": "passed: every criterion of the independent check is true. unchecked: checking was switched off. unverified: the checker's result for this question could not be used." },
+          "status": { "enum": ["passed", "unchecked", "unverified", "edited"], "description": "passed: every criterion of the independent check is true. unchecked: checking was switched off. unverified: the checker's result for this question could not be used. edited: changed or written by the reader in the app; it is kept as they wrote it." },
           "check": {
             "type": "object",
             "required": ["criteria", "citations", "evidence", "minor_note", "times_checked", "revisions"],

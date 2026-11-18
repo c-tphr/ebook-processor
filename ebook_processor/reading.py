@@ -320,10 +320,27 @@ def clean_state(raw: Any, sha256: str, known: set[str]) -> dict[str, Any]:
 
 
 def merge_state(old: dict[str, Any] | None, new: dict[str, Any]) -> dict[str, Any]:
-    """``new`` with the first grades ``old`` already holds put back: a first grade is written once."""
+    """``new`` with the first grades ``old`` already holds put back: a first grade is written once.
+
+    Two things change a first grade after it was written. The reader overrules the app's verdict on a typed answer:
+    the attempt of that moment then says so, and the grade the page sends is taken. And the reader starts a
+    question over (``x_restarted`` names the grade that was taken away): a page that still holds that grade does not
+    bring it back.
+    """
     if old:
+        overruled = {(a["id"], a["at"]) for a in new.get("x_attempts", []) if a.get("overruled")}
         for pid, grade in old.get("grades", {}).items():
+            mine = new["grades"].get(pid)
+            if mine and mine.get("at") == grade.get("at") and (pid, grade.get("at")) in overruled:
+                continue
             new["grades"][pid] = grade
+        restarted = old.get("x_restarted") or {}
+        for pid, at in restarted.items():
+            if pid not in old.get("grades", {}) and new["grades"].get(pid, {}).get("at") == at:
+                del new["grades"][pid]
+                new.get("x_cleared", {}).pop(pid, None)
+        if restarted:
+            new["x_restarted"] = dict(restarted)
     return new
 
 

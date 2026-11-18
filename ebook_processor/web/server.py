@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from .. import __version__, notes, reading, srs
+from .. import __version__, editing, notes, reading, srs
 from .. import forms as qforms
 from .. import highlight_questions as hq
 from .. import steer as steering
@@ -39,7 +39,8 @@ from ..outputs import load_report, stem_of
 from ..pipeline import STATE_FILE, now, write_json
 from ..prep.epub import EpubError, load_book_bytes
 from ..prep.limits import MAX_PROMPTS
-from ..runner import Cancelled, PipelineError, default_backend, rebuild, review_data, run_book, trial_dir, try_chapter, work_dir
+from ..runner import (Cancelled, PipelineError, change_run, default_backend, rebuild, review_data, run_book, trial_dir,
+                      try_chapter, work_dir)
 from ..settings import DENSITIES, MAX_QUESTIONS, Settings, SettingsError, from_options
 from ..steer import Steer, SteerError
 
@@ -225,6 +226,7 @@ class Jobs:
             chapter = next((c["title"] for c in manifest["chapters"] if c["index"] == section["chapter"]), "")
             card = {"job": job_id, "id": pid, "book": manifest["title"], "chapter": chapter, "section": section["label"],
                     "question": prompt["prompt"], "answer": prompt["answer"], **qforms.members(prompt),
+                    "editable": not prompt.get("hq") and self.editable(job_id),
                     "passage": self.passage(job_id, pid),
                     "state": state["state"], "again": state["again"], "interval": round(state["interval"], 1),
                     "first": srs.kind_of(state, today) == "first",
@@ -285,7 +287,144 @@ class Jobs:
 
     def manifest(self, job_id: str) -> dict[str, Any]:
         """The book as the reader needs it, with the questions from highlights that its checkpoints ask."""
-        return hq.with_questions(self.book(job_id).manifest(), notes.load(self.folder(job_id)))
+        made = hq.with_questions(self.book(job_id).manifest(), notes.load(self.folder(job_id)))
+        return {**made, "editable": self.editable(job_id)}
+
+    # ---- changing a book's own questions (see ``editing``)
+
+    def editable(self, job_id: str) -> bool:
+        """Whether the book's questions can be changed: it was processed here, and its run is finished."""
+        job = self.get(job_id)
+        return job["status"] == "done" and job.get("kind") != "imported"
+
+    def _edit(self, job_id: str, change: Any, build: bool = True) -> Any:
+        """Apply ``change(book, state)`` to the book's run. With ``build`` every file is written again, so the
+        reader, Practice and the downloads hold the questions as they now are."""
+        with self.lock:
+            if not self.editable(job_id):
+                raise ApiError(HTTPStatus.CONFLICT, "The questions of this book cannot be changed: it has no finished run made here.")
+            job = self.jobs[job_id]
+            try:
+                result = change_run(self.folder(job_id), change, build)
+            except editing.EditError as exc:
+                raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+            except PipelineError as exc:
+                raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+            if build:
+                report = load_report(self.folder(job_id), job["file"])
+                if report is not None:
+                    job["counts"] = report["counts"]
+                job.pop("exports_stale", None)
+                self._store(job)
+            return result
+
+    def _models(self, job_id: str, roles: list[str]) -> tuple[Settings, Any, Steer | None]:
+        """The run's settings, a backend for a call the reader asked for, and what the reader wanted from the book."""
+        job = self.get(job_id)
+        settings = Settings.from_json(job["settings"])
+        if self.backend_factory:
+            return settings, self.backend_factory(settings), self._run_steer(job)
+        backend = default_backend(settings)
+        backend.check_available([settings.checker_model or settings.model if r == "check" else settings.model for r in roles])
+        return settings, backend, self._run_steer(job)
+
+    def _asked(self, job_id: str, call: Any) -> Any:
+        try:
+            return call()
+        except UsageLimitError as exc:
+            raise ApiError(HTTPStatus.TOO_MANY_REQUESTS, str(exc)) from exc
+        except (BackendError, BackendCancelled) as exc:
+            raise ApiError(HTTPStatus.BAD_GATEWAY, f"The model could not be asked: {exc}") from exc
+
+    def book_question(self, job_id: str, qid: str) -> dict[str, Any]:
+        """A question as the editor shows it, with whether the reader has answered or practised it."""
+        shown = self._edit(job_id, lambda book, state: editing.view(book, state, qid), build=False)
+        state = reading.load_state(self.folder(job_id)) or {}
+        shown["answered"] = qid in (state.get("grades") or {}) or qid in self.cards(job_id)["cards"]
+        return shown
+
+    def section_paragraphs(self, job_id: str, sid: str) -> dict[str, Any]:
+        def read(book: Any, state: dict[str, Any]) -> dict[str, Any]:
+            section = editing.section_of(state, sid)
+            return {"section": {"id": section["id"], "label": section["label"]},
+                    "paragraphs": editing.paragraphs(book, state, sid)}
+        return self._edit(job_id, read, build=False)
+
+    def edit_question(self, job_id: str, qid: str, raw: dict[str, Any]) -> dict[str, Any]:
+        self._edit(job_id, lambda book, state: editing.edit(state, book, qid, raw))
+        return self.book_question(job_id, qid)
+
+    def restore_question(self, job_id: str, qid: str) -> dict[str, Any]:
+        self._edit(job_id, lambda book, state: editing.restore(state, qid))
+        return self.book_question(job_id, qid)
+
+    def add_question(self, job_id: str, raw: dict[str, Any]) -> dict[str, Any]:
+        """A question of the reader's own. ``passage`` says how it gets its paragraphs when none are given: the
+        whole section, or the model's choice, which with ``model_review`` comes back for the reader to confirm
+        (``{"review": [...]}``) before anything is kept."""
+        mode = raw.get("passage") if raw.get("passage") in editing.PASSAGES else "section"
+        if raw.get("supporting_paragraphs") is None and mode in ("model", "model_review"):
+            settings, backend, _ = self._models(job_id, ["draft"])
+            chosen = self._asked(job_id, lambda: self._edit(
+                job_id, lambda book, state: editing.choose_passage(backend, book, state, raw.get("section"), raw, settings), build=False))
+            if mode == "model_review":
+                return {"review": chosen}
+            raw = {**raw, "supporting_paragraphs": chosen}
+        made = self._edit(job_id, lambda book, state: copy.deepcopy(editing.add(state, book, raw.get("section"), raw)))
+        with self.lock:  # past its section already: a card from the start, as a question from a highlight would be
+            manifest = self.book(job_id).manifest()
+            section = next((s for s in manifest["sections"] if s["id"] == made["section"]), None)
+            if section is not None and hq.passed(reading.load_state(self.folder(job_id)), manifest, section):
+                cards = self.cards(job_id)
+                cards["cards"].setdefault(made["id"], srs.new_card())
+                write_json(self.folder(job_id) / srs.FILE, cards)
+        return self.book_question(job_id, made["id"])
+
+    def _forget_answers(self, job_id: str, qid: str) -> None:
+        """Take a question's grade and its card away (the caller holds the lock). What was answered stays as history."""
+        folder = self.folder(job_id)
+        cards = self.cards(job_id)  # first, so that answers already given are not taken in again as new ones
+        if cards["cards"].pop(qid, None) is not None:
+            write_json(folder / srs.FILE, cards)
+        state = reading.load_state(folder)
+        if state is not None:
+            was = state.get("grades", {}).get(qid)
+            if was:  # a page that still shows this grade must not bring it back with its next save
+                state.setdefault("x_restarted", {})[qid] = was.get("at")
+            for part in ("grades", "x_cleared", "x_previewed"):
+                state.get(part, {}).pop(qid, None)
+            write_json(folder / reading.STATE_FILE, state)
+
+    def delete_question(self, job_id: str, qid: str) -> dict[str, Any]:
+        with self.lock:
+            self._edit(job_id, lambda book, state: editing.delete(state, qid))
+            self._forget_answers(job_id, qid)
+        return {"deleted": qid}
+
+    def restart_question(self, job_id: str, qid: str) -> dict[str, Any]:
+        """Start a question over: it counts as never answered. It is asked again at its checkpoint, or, when the
+        reader is past that, it is a new card in Practice."""
+        with self.lock:
+            shown = self._edit(job_id, lambda book, state: editing.view(book, state, qid), build=False)
+            self._forget_answers(job_id, qid)
+            manifest = self.book(job_id).manifest()
+            section = next((s for s in manifest["sections"] if s["id"] == shown["section"]["id"]), None)
+            if shown["kept"] and section is not None and hq.passed(reading.load_state(self.folder(job_id)), manifest, section):
+                cards = self.cards(job_id)
+                cards["cards"][qid] = srs.new_card()
+                write_json(self.folder(job_id) / srs.FILE, cards)
+        return self.book_question(job_id, qid)
+
+    def check_question(self, job_id: str, qid: str) -> dict[str, Any]:
+        settings, backend, steer = self._models(job_id, ["check"])
+        self._asked(job_id, lambda: self._edit(job_id, lambda book, state: editing.check(backend, book, state, qid, settings, steer), build=False))
+        return self.book_question(job_id, qid)
+
+    def rewrite_question(self, job_id: str, qid: str, raw: dict[str, Any]) -> dict[str, Any]:
+        settings, backend, steer = self._models(job_id, ["draft"])
+        draft = raw.get("draft") if isinstance(raw.get("draft"), dict) else None
+        return self._asked(job_id, lambda: self._edit(
+            job_id, lambda book, state: editing.rewrite(backend, book, state, qid, raw.get("wish"), settings, steer, draft), build=False))
 
     # ---- questions from highlights
 
@@ -447,13 +586,13 @@ class Jobs:
             write_json(self.folder(job_id) / notes.FILE, store)
         return self.questions_state(job_id)
 
-    def write_question(self, job_id: str, hid: Any, question: Any, answer: Any) -> dict[str, Any]:
-        """The reader's own question for a highlight: accepted as it is written."""
+    def write_question(self, job_id: str, hid: Any, question: Any, answer: Any, form: Any = None) -> dict[str, Any]:
+        """The reader's own question for a highlight, of any form: accepted as it is written."""
         def change(store: dict[str, Any]) -> None:
             highlight = next((h for h in store["highlights"] if h["id"] == hid), None)
             if highlight is None:
                 raise hq.QuestionError("no such highlight")
-            q = hq.add(store, self.book(job_id).manifest(), highlight, question, answer, "you")
+            q = hq.add(store, self.book(job_id).manifest(), highlight, question, answer, "you", form=form)
             self._accept(job_id, store, q["id"])
         return self.question_do(job_id, change)
 
@@ -490,8 +629,9 @@ class Jobs:
         return self.notes_do(job_id, change)
 
     def notebook(self, job_id: str) -> dict[str, Any]:
-        return notes.notebook(self.book(job_id), self.notes_do(job_id), reading.load_state(self.folder(job_id)),
+        made = notes.notebook(self.book(job_id), self.notes_do(job_id), reading.load_state(self.folder(job_id)),
                               self.sources(job_id))
+        return {**made, "editable": self.editable(job_id)}
 
     # ---- what the settings window keeps
 
@@ -1202,7 +1342,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(jobs.stop_questions(job_id))
             case ("POST", ["jobs", job_id, "questions"]):
                 r = self.json_body()
-                return self.send_json(jobs.write_question(job_id, r.get("highlight"), r.get("question"), r.get("answer")))
+                return self.send_json(jobs.write_question(job_id, r.get("highlight"), r.get("question"), r.get("answer"), r.get("form")))
             case ("PUT", ["jobs", job_id, "questions", qid]):
                 return self.send_json(jobs.change_question(job_id, qid, self.json_body()))
             case ("DELETE", ["jobs", job_id, "questions", qid]):
@@ -1223,6 +1363,24 @@ class Handler(BaseHTTPRequestHandler):
                 return None
             case ("GET", ["jobs", job_id, "book"]):
                 return self.send_json(jobs.manifest(job_id))
+            case ("GET", ["jobs", job_id, "book-questions", qid]):
+                return self.send_json(jobs.book_question(job_id, qid))
+            case ("PUT", ["jobs", job_id, "book-questions", qid]):
+                return self.send_json(jobs.edit_question(job_id, qid, self.json_body()))
+            case ("DELETE", ["jobs", job_id, "book-questions", qid]):
+                return self.send_json(jobs.delete_question(job_id, qid))
+            case ("POST", ["jobs", job_id, "book-questions"]):
+                return self.send_json(jobs.add_question(job_id, self.json_body()))
+            case ("POST", ["jobs", job_id, "book-questions", qid, "restore"]):
+                return self.send_json(jobs.restore_question(job_id, qid))
+            case ("POST", ["jobs", job_id, "book-questions", qid, "restart"]):
+                return self.send_json(jobs.restart_question(job_id, qid))
+            case ("POST", ["jobs", job_id, "book-questions", qid, "check"]):
+                return self.send_json(jobs.check_question(job_id, qid))
+            case ("POST", ["jobs", job_id, "book-questions", qid, "rewrite"]):
+                return self.send_json(jobs.rewrite_question(job_id, qid, self.json_body()))
+            case ("GET", ["jobs", job_id, "sections", sid, "paragraphs"]):
+                return self.send_json(jobs.section_paragraphs(job_id, sid))
             case ("GET", ["jobs", job_id, "book", "chapter", number]):
                 try:
                     return self.send_json(jobs.book(job_id).chapter(int(number)))

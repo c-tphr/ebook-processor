@@ -10,12 +10,12 @@ from typing import Any, Iterable
 from . import forms as qforms
 from .llm import PROVIDERS, Backend, Backends, ClaudeCodeBackend, CodexBackend, Completion, Connection, service_urls
 from .outputs import build_outputs
-from .pipeline import SOURCE_COPY, STATE_FILE, Cancelled, PipelineError, Progress, kept, load_state, now, process, write_json
+from .pipeline import KEPT, SOURCE_COPY, STATE_FILE, Cancelled, PipelineError, Progress, kept, load_state, now, process, write_json
 from .prep.epub import EpubError, load_book_bytes
 from .settings import Settings
 from .steer import Steer
 
-__all__ = ["Cancelled", "PipelineError", "default_out_dir", "run_book", "try_chapter", "rebuild", "review_data", "work_dir",
+__all__ = ["Cancelled", "PipelineError", "change_run", "default_out_dir", "run_book", "try_chapter", "rebuild", "review_data", "work_dir",
            "trial_dir"]
 
 
@@ -163,6 +163,19 @@ def rebuild(out_dir: Path, remove: Iterable[str] = (), restore: Iterable[str] = 
                          state["settings"].get("epubcheck", False) if epubcheck is None else epubcheck)
 
 
+def change_run(out_dir: Path, change: Any, build: bool = True) -> Any:
+    """Apply ``change(book, state)`` to a finished run and build its outputs again, so that every file and the
+    reader hold the questions as they now are. Returns what ``change`` returns. Nothing is written when it raises."""
+    book, original, state = _open_run(out_dir)
+    if state["stage"] != "done":
+        raise PipelineError(f"the run in {out_dir} is not finished")
+    result = change(book, state)
+    write_json(work_dir(out_dir) / STATE_FILE, state)
+    if build:
+        build_outputs(book, original, state, out_dir, state["settings"].get("epubcheck", False))
+    return result
+
+
 def review_data(out_dir: Path) -> dict[str, Any]:
     """Every section with its questions and the checker's verdicts, for the review page."""
     from .exports import chapter_titles
@@ -174,7 +187,8 @@ def review_data(out_dir: Path) -> dict[str, Any]:
     for q in state["questions"]:
         by_section.setdefault(q["section"], []).append({
             "id": q["id"], "question": q["prompt"], "answer": q["answer"], **qforms.members(q), "status": q["status"],
-            "kept": kept(q), "removed": bool(q.get("removed")), "can_keep": q["status"] in ("passed", "unchecked", "unverified"),
+            "kept": kept(q), "removed": bool(q.get("removed")), "can_keep": q["status"] in KEPT,
+            "edited": q["status"] == "edited" and not q.get("added"), "added": bool(q.get("added")), "verdict": q.get("verdict"),
             "failed_criteria": [c for c, ok in q["criteria"].items() if not ok], "problem": q["problem"],
             "minor_note": q["minor_note"], "evidence": q["evidence"], "revisions": len(q["history"]),
             "supporting_paragraphs": q["supporting_paragraphs"]})

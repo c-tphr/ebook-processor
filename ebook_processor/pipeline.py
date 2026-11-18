@@ -52,7 +52,8 @@ STATE_VERSION = 1
 STATE_FILE = "state.json"
 SOURCE_COPY = "source.epub"
 DRAFT_ATTEMPTS = 3  # calls for one part before the fallback
-KEPT = ("passed", "unchecked", "unverified")  # question statuses that go into the outputs
+# Question statuses that go into the outputs. ``edited``: changed or written by the reader (see ``editing``).
+KEPT = ("passed", "unchecked", "unverified", "edited")
 
 Progress = Callable[[dict[str, Any]], None]
 

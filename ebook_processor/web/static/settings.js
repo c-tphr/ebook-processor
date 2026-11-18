@@ -20,6 +20,7 @@ const DEFAULTS = {
   face: "serif", size: 19, leading: 1.6, measure: "medium", read_mode: "page", read_preview: false, hq_review: "later",   // reader
   nb_beside: true, nb_side: "left", nb_view: "scroll", nb_split: 0.5,            // notebook and its side reader
   steer_about: "", steer_style: "", steer_confirm: true,                         // what the question writers are told about you
+  own_passage: "section",                                                        // the passage of a question you add yourself
 };
 const RUN_KEYS = ["density", "max_questions", "kind", "content", "rounds", "model", "checker_model", "effort", "jobs", "epubcheck", "preview", "forms"];
 const FORMS = [["open", "Open", "You recall the answer and grade yourself"], ["choice", "Multiple choice", "One of four"],
@@ -339,6 +340,9 @@ const DRAW = {
       box("steer_style", "How I like questions",
         "Ask why and when to use something rather than what it is called. Keep answers to one or two sentences. I do want the names of people and the years.",
         "Applies to every book. It can shift the balance among the kinds of question you have ticked on the Add a book tab; it cannot add a kind."),
+      el("h4", {}, "A question you add yourself"),
+      row("Its passage", choice("own_passage", [["section", "The whole section"], ["pick", "I pick the paragraphs"], ["model_review", "The model picks, I confirm"], ["model", "The model picks"]]),
+        "On a book's page you can write a question of your own for a section. Its passage is what is shown with the card under \u201cFrom the book\u201d. The whole section is always right but long. Picking is precise. The model can pick for you in one short call, with or without showing you its choice first. A question written on a highlight has the highlight as its passage."),
       el("h4", {}, "Before a run"),
       row("Show me how my wishes were read", choice("steer_confirm", [[true, "On"], [false, "Off"]]),
         "On: before a book or a trial chapter is processed, the model states in its own words what it will favour and how it will write, with a look at the book's chapters. You correct it, answer its questions if it has any, and confirm. One short call. Off: your words go to the question writers as they are.")];

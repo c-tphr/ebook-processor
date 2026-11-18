@@ -145,7 +145,7 @@ Every page has a **Settings** button at the top right. It opens one window with 
 | --- | --- |
 | General | Colours (as the system, light, dark) for every page; the version and where your books are kept |
 | Add a book | What the Add a book form starts with. The form keeps its options, so one book can still differ. Books already processed are not affected |
-| Your questions | What the models are told about you: what matters to you and what you work on, and how you like questions. And whether you are shown how your wishes were read before a run (see "What you want from a book") |
+| Your questions | What the models are told about you: what matters to you and what you work on, and how you like questions. Whether you are shown how your wishes were read before a run (see "What you want from a book"). And how a question you add yourself gets its passage |
 | Reader | Typeface, size, line spacing, column width, and the view a new book opens in |
 | Notebook | Whether **Open** shows a passage beside the notebook or in the full reader, which side the reader is on, and whether it scrolls or turns pages |
 | Practice | The numbers of the schedule (see Practice below) |
@@ -174,6 +174,20 @@ A new book starts with open questions only, as before: recalling an answer from 
 - **Questions on highlights** take the kinds ticked in Settings, on the Add a book tab. With **Another** you can ask for a kind in words ("as true or false"). **Reword** on a proposal lets you change its choices and which one is right, whether a statement is true, or the missing words and the wordings that count. A question you write yourself is an open one.
 - **In the files.** The book with visible checkpoints shows the choices on the question page and the right one on the answer page. The Anki deck and the cards text put the choices on the front; Anki does not grade them. `questions.json` has each question's `form` and its members.
 - **On the Picco.** The firmware today knows open questions only. In the firmware-format book every question is therefore also there as plain text that it can show: "True or false: ...", the statement with its gap, the multiple-choice question without its choices, each with the right answer at the start of its answer, to grade yourself. The form itself travels beside that text, ready for a firmware that supports it: `docs/question-forms.md` says exactly how.
+
+### Editing a question, and adding your own
+
+A book's questions are yours to change. **Edit question** is on the book's page beside every question, at a checkpoint and in Practice once you have seen the answer, and on a checkpoint answer in the notebook. It opens the same window everywhere:
+
+- **What you can change.** The question and its answer or explanation; the answer key of the kinds the app grades (the choices and which one is right, whether a statement is true, the missing words and the other wordings that count); and the **passage**, the paragraphs of the section the answer rests on. A question keeps its kind.
+- **Tell the model what to change.** A line such as "make it harder" or "ask about the cause instead", and **Rewrite**: the model's rewrite fills the form, in the same kind, for you to take or change. Nothing is kept until you save.
+- **It is yours once changed.** An edited question is marked "Edited by you" and is kept as you wrote it. **Save and check** runs the same independent check the run used and shows its verdict; nothing is removed because of it. **Put back the original** restores what the run wrote.
+- **A question the check left out** can be edited too. The window says what the check objected to; once you have changed the question it is kept.
+- **Your results stay.** Editing does not touch the grade or the practice schedule. When an edit changes what is asked, **Start this card over** makes the question count as never answered: it is asked again at its checkpoint, or is a new card in Practice if you are past it. What you answered before stays in the notebook.
+- **Add a question** is beside each section on the book's page. You pick the kind and write it. Its passage is the whole section unless Settings says otherwise (Your questions, "A question you add yourself"): you pick the paragraphs, or the model picks them in one short call, with or without showing you its choice first. An added question is asked at its section's checkpoint, or goes straight to Practice when you have read past it. **Write my own** on a highlight offers the four kinds as well.
+- **At once.** A saved change is in the reader, Practice, the notebook and every file straight away; saving takes a second or two because the files are written again. Taking questions out still waits for **Rebuild files**.
+
+A book added as a ready-made prepared EPUB has no run behind it, so its questions cannot be edited.
 
 ### What you want from a book
 

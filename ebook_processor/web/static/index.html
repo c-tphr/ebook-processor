@@ -660,7 +660,7 @@ async function showNotebook(id) {
     under.append(form); wish.focus();
   }
   function wording(q, save, cancel) {   // the fields of a question, to reword one of any form or to write your own (an open one)
-    const fields = QForms.edit(q || { question: "", answer: "" });
+    const fields = q ? QForms.edit(q) : QForms.compose();
     return h("div", { class: "slot short" }, fields.el, h("div", { class: "row" },
       h("button", { class: "primary", onclick: () => save(fields.read()) }, "Save"), h("button", { class: "text", onclick: cancel }, "Cancel")));
   }
@@ -690,6 +690,7 @@ async function showNotebook(id) {
       h("p", { class: "asked" }, h("span", { class: "hang" }, h("span", { class: a.first === "correct" ? "lab blue" : a.first ? "lab inv" : "lab" }, a.first === "correct" ? "Recalled" : a.first ? "Missed" : "Not graded")), QForms.plain(a).question),
       typed.map((t) => h("p", {}, h("span", { class: "hang m mute" }, "Answered"), t)), h("p", {}, h("span", { class: "hang m mute" }, "Reference"), QForms.plain(a).answer),
       h("div", { class: "row" }, h("a", { class: "m", ...openAt(a.go.chapter, a.go.word) }, "Open the passage"),
+        data.editable ? h("button", { class: "text", "aria-label": "Edit question " + a.id, onclick: () => QForms.openEditor({ job: id, id: a.id, onChange: () => load() }) }, "Edit question") : null,
         a.previewed ? h("span", { class: "m mute", title: "The question was shown at the start of its section, before you read it" }, "Previewed before reading") : null));
   }
   function section(c, s) {
@@ -820,6 +821,14 @@ async function showPractice(only) {
     catch (e) { busy = false; return alert(e.message); }
     busy = false; revealed = false; text = ""; given = null; order = null; draw();
   }
+  // The card's question can be changed where its flaw is noticed. The card stays on show as it was; one that was
+  // started over or deleted is gone from today's line.
+  const editCard = (c) => (c.editable ? h("button", { class: "text", id: "pr-edit", type: "button", onclick: () => QForms.openEditor({ job: c.job, id: c.id, onChange: async (change) => {
+    const same = data.card && data.card.id;
+    try { data = await api("/practice" + q); } catch (e) { return; }
+    if (change.restarted || change.deleted || !data.card || data.card.id !== same) { revealed = false; text = ""; given = null; order = null; }
+    draw();
+  } }) }, "Edit question") : null);
   function draw() {
     const c = data.card, n = data.counts;
     const tally = [n.due ? `${n.due} due` : null, n.new ? `${n.new} new` : null, n.again ? `${n.again} to see again` : null].filter(Boolean).join(" / ");
@@ -851,7 +860,8 @@ async function showPractice(only) {
         h("div", { class: "acts" },
           h("div", { class: "row" },
             h("button", { class: "primary", id: "pr-next", onclick: () => answer(given.correct) }, "Continue", h("kbd", {}, "↵"), h("small", { style: "display:block;margin-top:4px;opacity:0.75" }, given.correct ? c.preview.remembered : c.preview.forgot)),
-            !given.correct && QForms.form(c) === "cloze" ? h("button", { class: "text", id: "pr-right", onclick: () => { given = { ...given, correct: true, overruled: true }; draw(); } }, "I was right") : null),
+            !given.correct && QForms.form(c) === "cloze" ? h("button", { class: "text", id: "pr-right", onclick: () => { given = { ...given, correct: true, overruled: true }; draw(); } }, "I was right") : null,
+            editCard(c)),
           h("a", { class: "btn", href: `/read/${c.job}?go=${encodeURIComponent(c.go)}` }, "Reread the section")));
       box.querySelector("#pr-next").focus();
       return;
@@ -867,7 +877,7 @@ async function showPractice(only) {
           h("div", { class: "ans" },
             h("button", { onclick: () => answer(false) }, "Forgot", h("kbd", {}, "1"), h("small", {}, c.preview.forgot)),
             h("button", { class: "primary", onclick: () => answer(true) }, "Remembered", h("kbd", {}, "2"), h("small", {}, c.preview.remembered))),
-          h("a", { class: "btn", href: `/read/${c.job}?go=${encodeURIComponent(c.go)}` }, "Reread the section"))]);
+          h("span", { class: "row" }, editCard(c), h("a", { class: "btn", href: `/read/${c.job}?go=${encodeURIComponent(c.go)}` }, "Reread the section")))]);
     (box.querySelector("textarea") || box.querySelector("button.primary"))?.focus();
   }
   practiceKeys = (e) => {
@@ -1113,7 +1123,7 @@ async function showRun(id) {
         }))),
       wantsBand(),
       band("Questions",
-        h("p", { class: "lede" }, "Untick any question you do not want, then rebuild. Rebuilding takes seconds and does not call a model."),
+        h("p", { class: "lede" }, "Untick any question you do not want, then rebuild. Rebuilding takes seconds and does not call a model. Edit changes a question's wording, its answer key or its passage, and Add a question writes one of your own for a section; both apply at once, here and in the reader, Practice and the files."),
         h("div", { class: "filters", role: "group", "aria-label": "Show" }, filters.map(([k, t]) =>
           h("button", { type: "button", "aria-pressed": String(view.filter === k), onclick: () => { view.filter = k; drawDone(); } }, t))),
         list));
@@ -1123,7 +1133,9 @@ async function showRun(id) {
       if (!qs.length && view.filter !== "all") continue;
       if (s.chapter !== chapter) { chapter = s.chapter; list.append(h("div", { class: "chap m" }, chapter)); }
       list.append(h("section", { class: "section", id: "sec-" + s.id },
-        h("header", {}, h("b", {}, s.label), h("span", { class: "m mute raw" }, `${s.id} / ${s.first_paragraph}–${s.last_paragraph.split("-")[1]} / ${fmt(s.words || 0)} words`)),
+        h("header", {}, h("b", {}, s.label), h("span", { class: "row" },
+          h("span", { class: "m mute raw" }, `${s.id} / ${s.first_paragraph}–${s.last_paragraph.split("-")[1]} / ${fmt(s.words || 0)} words`),
+          h("button", { class: "text", type: "button", style: "padding:0", "aria-label": "Add a question to " + s.label, onclick: () => QForms.openAdder({ job: id, section: s.id, onChange: changed }) }, "Add a question"))),
         s.natural_boundary === false ? h("p", { class: "note" }, "The checker doubted this section's break: " + s.boundary_note) : null,
         qs.length ? qs.map(question) : h("p", { class: "note" }, "No questions for this section.")));
     }
@@ -1139,16 +1151,32 @@ async function showRun(id) {
         document.querySelector(`.map i[data-q="${q.id}"]`)?.classList.toggle("out", !box.checked); drawSticky(); } });
     const tags = [h("span", { class: "lab quiet" }, q.id)];
     if (QForms.label(q)) tags.push(h("span", { class: "lab quiet" }, QForms.label(q)));
+    if (q.added) tags.push(h("span", { class: "lab" }, "Written by you"));
+    else if (q.edited) tags.push(h("span", { class: "lab" }, "Edited by you"));
     if (q.status === "failed") tags.push(h("span", { class: "lab inv" }, "Left out / failed the check"));
     else if (q.status === "withdrawn") tags.push(h("span", { class: "lab inv" }, "Left out / withdrawn"));
-    else if (q.status !== "passed") tags.push(h("span", { class: "lab" }, "Not checked"));
+    else if (q.status !== "passed" && q.status !== "edited") tags.push(h("span", { class: "lab" }, "Not checked"));
     else if (q.revisions) tags.push(h("span", { class: "lab" }, "Passed after revision"));
     row.append(box, h("div", {},
       h("label", { class: "qt", for: "q-" + q.id }, QForms.plain(q).question), QForms.choices(q), h("div", { class: "at" }, q.answer),
-      h("div", { class: "meta" }, tags),
+      h("div", { class: "meta" }, tags, h("button", { class: "text", type: "button", style: "padding:0 0 0 6px", "aria-label": "Edit question " + q.id,
+        onclick: () => QForms.openEditor({ job: id, id: q.id, onChange: changed }) }, "Edit")),
       q.failed_criteria.length ? h("p", { class: "note" }, "Why: " + q.failed_criteria.map((k) => CRITERIA[k] || k).join("; ") + ". " + (q.problem || "")) : null,
+      q.verdict ? h("p", { class: "note" }, q.verdict.passed ? "You had it checked: it passed." + (q.verdict.minor_note ? " " + q.verdict.minor_note : "") : "You had it checked, and the check objects: " + q.verdict.problem) : null,
       q.minor_note ? h("p", { class: "note" }, "Checker's remark: " + q.minor_note) : null));
     return row;
+  }
+  // A question was edited, added, deleted or started over: the page takes the book as it now is, and keeps the
+  // ticks that are not yet in the files.
+  async function changed() {
+    const out = [...view.removed].filter((x) => !view.saved.has(x)), back = [...view.saved].filter((x) => !view.removed.has(x));
+    try { job = await api("/jobs/" + id); } catch (e) { return; }
+    drawHead();
+    await loadReview();
+    const known = new Set(review.sections.flatMap((s) => s.questions.map((q) => q.id)));
+    for (const x of out) if (known.has(x)) view.removed.add(x);
+    for (const x of back) view.removed.delete(x);
+    drawDone();
   }
   function drawSticky() {
     const changed = [...view.removed].filter((x) => !view.saved.has(x)).length + [...view.saved].filter((x) => !view.removed.has(x)).length;

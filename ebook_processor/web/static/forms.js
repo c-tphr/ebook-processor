@@ -18,6 +18,12 @@
      QForms.choices(q)               the choices as a list with the right one marked, for pages that only show
      QForms.edit(q)                  fields to change a question of any form: { el, read() }; read() gives
                                      { question, answer } and, for a question that is not open, `form` with its members
+     QForms.compose()                the same fields for a new question, with a choice of its kind: { el, read() }
+     QForms.openEditor({ job, id, onChange })      a window to change one of a book's own questions: its wording,
+                                     its answer key and its passage, with the model's rewrite to a wish, a check on
+                                     request, the original put back, and the card started over
+     QForms.openAdder({ job, section, onChange })  a window to write a question of your own for a section
+                                     onChange({ id, edited | added | deleted | restarted }) is called after each change
 */
 (function () {
 "use strict";
@@ -170,13 +176,210 @@ function edit(q) {
     extra = el("div", { class: "qf-rows-edit" }, el("span", { class: "m" }, "The missing words, and other wordings that count"), missing, also);
     members = () => ({ form: { form: f, accept: [missing.value, ...also.value.split(";")].map((a) => a.trim()).filter(Boolean) } });
   }
-  return { el: el("div", { class: "qf-edit" }, question, extra, answer), read: () => ({ question: question.value, answer: answer.value, ...members() }) };
+  const cap = (title) => el("span", { class: "m qf-cap" }, title);
+  return { el: el("div", { class: "qf-edit" }, cap(question.getAttribute("aria-label")), question, extra, cap(answer.getAttribute("aria-label")), answer),
+    read: () => ({ question: question.value, answer: answer.value, ...members() }) };
+}
+
+/* ---------- a new question, of a kind the reader picks ---------- */
+const KINDS = [["open", "Open"], ["choice", "Multiple choice"], ["truefalse", "True or false"], ["cloze", "Fill in the blank"]];
+const EMPTY = { open: {}, choice: { form: "choice", choices: ["", "", "", ""], correct: 0 }, truefalse: { form: "truefalse", truth: true },
+  cloze: { form: "cloze", accept: [""] } };
+function compose() {
+  let kind = "open", fields = edit({ question: "", answer: "" });
+  const box = el("div", { class: "qf-compose" }), picker = el("div", { class: "qf-kinds", role: "group", "aria-label": "Kind" });
+  const draw = () => {
+    picker.replaceChildren(...KINDS.map(([k, t]) => el("button", { type: "button", "aria-pressed": String(k === kind), onclick: () => {
+      if (k === kind) return;
+      const had = fields.read();      // what was typed so far goes along to the other kind
+      kind = k; fields = edit({ question: had.question, answer: had.answer, ...EMPTY[k] }); draw();
+    } }, t)));
+    box.replaceChildren(picker, fields.el);
+  };
+  draw();
+  return { el: box, read: () => fields.read() };
+}
+
+/* ---------- changing a book's own question, and adding one ---------- */
+async function api(path, options = {}) {
+  const headers = { "X-Ebook-Processor": "1" };
+  if (options.json !== undefined) { options.body = JSON.stringify(options.json); headers["Content-Type"] = "application/json"; }
+  const response = await fetch("/api" + path, { ...options, headers });
+  const data = await response.json().catch(() => ({ error: "The app gave an unreadable answer." }));
+  if (!response.ok) throw new Error(data.error || response.statusText);
+  return data;
+}
+let open = null;                        // the window that is open, if one is
+function windowFor(title, sub) {
+  if (open) open.close();
+  const body = el("div", { class: "qf-body" }), foot = el("div", { class: "qf-foot" }), note = el("p", { class: "qf-note", role: "status", hidden: true });
+  const root = el("dialog", { class: "qf-dlg", "aria-label": title },
+    el("header", {}, el("b", {}, title), el("span", { class: "m" }, sub || ""), el("button", { type: "button", onclick: () => root.close() }, "Close")),
+    body, note, foot);
+  for (const type of ["keydown", "keyup", "keypress"]) root.addEventListener(type, (e) => e.stopPropagation());   // typing here is not a key of the page
+  root.addEventListener("click", (e) => { if (e.target === root) root.close(); });
+  root.addEventListener("close", () => { root.remove(); if (open && open.root === root) open = null; });
+  document.body.append(root);
+  root.showModal();
+  const it = { root, body, foot, close: () => root.close(),
+    say(text, bad) { note.textContent = text || ""; note.hidden = !text; note.classList.toggle("bad", !!bad); },
+    async run(button, work) {         // one request at a time, with its failure said in the window
+      const buttons = [...root.querySelectorAll("button")];
+      const label = button ? button.textContent : "";
+      for (const b of buttons) b.disabled = true;
+      if (button) button.textContent = "Working";
+      it.say("");
+      try { return await work(); }
+      catch (e) { it.say(e.message, true); return undefined; }
+      finally { for (const b of buttons) b.disabled = false; if (button && button.isConnected) button.textContent = label; }
+    } };
+  open = it;
+  return it;
+}
+// The paragraphs of the section, to tick the ones an answer rests on. `ticked` are references; `read()` gives the
+// ticked ones, or undefined while the reader has not touched the list (the app then keeps what it has).
+function passagePicker(paragraphs, ticked, open_) {
+  let touched = false;
+  const boxes = paragraphs.map((p) => [p.ref, el("input", { type: "checkbox", ...(ticked.includes(p.ref) ? { checked: true } : {}), onchange: () => { touched = true; count(); } })]);
+  const summary = el("summary", {});
+  const count = () => { const n = boxes.filter(([, b]) => b.checked).length; summary.textContent = `Passage: ${n} of the section's ${boxes.length} paragraph${boxes.length === 1 ? "" : "s"}`; };
+  count();
+  const box = el("details", { class: "qf-passage", ...(open_ ? { open: true } : {}) }, summary,
+    el("p", { class: "qf-hint" }, "The paragraphs the answer rests on. They are shown with the card, under \u201cFrom the book\u201d, and are what a check reads first."),
+    paragraphs.map((p, n) => el("label", {}, boxes[n][1], el("span", {}, p.text))));
+  return { el: box, read: () => (touched ? boxes.filter(([, b]) => b.checked).map(([ref]) => ref) : undefined),
+    set(refs) { for (const [ref, b] of boxes) b.checked = refs.includes(ref); touched = true; count(); box.open = true; } };
+}
+function verdictBox(v) {
+  if (!v) return null;
+  return el("div", { class: "qf-verdict " + (v.passed ? "right" : "wrong") },
+    el("b", { class: "qf-mark" }, v.passed ? "The check passed it" : "The check objects"),
+    v.passed ? (v.minor_note ? el("p", {}, el("span", { class: "m" }, "Remark"), v.minor_note) : null)
+      : [el("p", {}, el("span", { class: "m" }, "Why"), v.problem), v.suggested_fix ? el("p", {}, el("span", { class: "m" }, "Suggested"), v.suggested_fix) : null,
+        el("p", {}, el("span", { class: "m" }, ""), "The question is kept as you wrote it. Change it, or leave it.")]);
+}
+
+async function openEditor({ job, id, onChange }) {
+  const told = (what) => { if (onChange) onChange({ id, ...what }); };
+  const base = `/jobs/${job}/book-questions/${encodeURIComponent(id)}`;
+  let shown;
+  try { shown = await api(base); } catch (e) { alert(e.message); return; }
+  const w = windowFor("Edit question", shown.section.label);
+  function draw(draft, message) {
+    const q = draft ? { ...shown, ...draft, ...(draft.form || {}) } : shown;
+    const fields = edit(q);
+    const passage = passagePicker(shown.paragraphs, draft && draft.supporting_paragraphs ? draft.supporting_paragraphs : shown.supporting_paragraphs, false);
+    if (draft && draft.supporting_paragraphs) passage.set(draft.supporting_paragraphs);
+    const wish = el("input", { type: "text", id: "qf-wish", "aria-label": "What the model should change", maxlength: 300, placeholder: "Or tell the model what to change: make it harder, ask about the cause instead" });
+    const changed = () => ({ ...fields.read(), supporting_paragraphs: passage.read() });
+    const save = async (button, andCheck) => {
+      const saved = await w.run(button, () => api(base, { method: "PUT", json: changed() }));
+      if (!saved) return;
+      shown = saved; told({ edited: true });
+      if (!andCheck) return w.close();
+      const checked = await w.run(button, () => api(base + "/check", { method: "POST", json: {} }));
+      if (checked) shown = checked;
+      draw(null, checked ? "" : undefined);
+    };
+    const rewrite = async (button) => {
+      const made = await w.run(button, () => api(base + "/rewrite", { method: "POST", json: { wish: wish.value, draft: fields.read() } }));
+      if (made) draw(made, "The model's rewrite is in the form. Change it if you like; Save keeps it.");
+    };
+    wish.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); rewrite(wishButton); } });
+    const wishButton = el("button", { type: "button", id: "qf-rewrite", onclick: (e) => rewrite(e.currentTarget) }, "Rewrite");
+    const state = shown.left_out_because ? `Left out by the check: ${shown.left_out_because} Once you change it, it is yours and is kept.`
+      : shown.added ? "Written by you." : shown.status === "edited" ? "Edited by you." : "";
+    w.body.replaceChildren(...[state ? el("p", { class: "qf-hint", id: "qf-state" }, state) : null, fields.el, passage.el,
+      el("div", { class: "qf-wish" }, wish, wishButton), verdictBox(shown.verdict)].filter(Boolean));
+    w.foot.replaceChildren(
+      el("span", { class: "qf-side" },
+        shown.has_original ? el("button", { type: "button", class: "quiet", id: "qf-restore", onclick: async (e) => {
+          const back = await w.run(e.currentTarget, () => api(base + "/restore", { method: "POST", json: {} }));
+          if (back) { shown = back; told({ edited: true }); draw(null, "The run's own wording is back."); } } }, "Put back the original") : null,
+        shown.answered ? el("button", { type: "button", class: "quiet", id: "qf-restart", onclick: async (e) => {
+          if (!confirm("Start this question over? It will count as never answered: asked again at its checkpoint, or new in Practice if you are past it.")) return;
+          const fresh = await w.run(e.currentTarget, () => api(base + "/restart", { method: "POST", json: {} }));
+          if (fresh) { shown = fresh; told({ restarted: true }); draw(null, "Started over."); } } }, "Start this card over") : null,
+        shown.added ? el("button", { type: "button", class: "quiet", id: "qf-delete", onclick: async (e) => {
+          if (!confirm("Delete this question of yours?")) return;
+          const gone = await w.run(e.currentTarget, () => api(base, { method: "DELETE" }));
+          if (gone) { told({ deleted: true }); w.close(); } } }, "Delete") : null),
+      el("span", { class: "qf-side" },
+        el("button", { type: "button", id: "qf-check", onclick: (e) => save(e.currentTarget, true) }, "Save and check"),
+        el("button", { type: "button", class: "primary", id: "qf-save", onclick: (e) => save(e.currentTarget, false) }, "Save")));
+    if (message !== undefined) w.say(message);
+  }
+  draw(null);
+}
+
+async function openAdder({ job, section, onChange }) {
+  let data;
+  try { data = await api(`/jobs/${job}/sections/${encodeURIComponent(section)}/paragraphs`); } catch (e) { alert(e.message); return; }
+  const mode = ["pick", "model", "model_review"].includes(window.AppSettings && AppSettings.values.own_passage) ? AppSettings.values.own_passage : "section";
+  const w = windowFor("Add a question", data.section.label);
+  const fields = compose(), refs = data.paragraphs.map((p) => p.ref);
+  const passage = passagePicker(data.paragraphs, mode === "section" ? refs : [], mode === "pick");
+  const byModel = mode === "model" || mode === "model_review";
+  const how = el("p", { class: "qf-hint" }, mode === "section" ? "Its passage is the whole section, unless you tick paragraphs below."
+    : mode === "pick" ? "Tick the paragraphs the answer rests on."
+    : "The model chooses the paragraphs the answer rests on when you save" + (mode === "model_review" ? ", and shows them to you first." : "."));
+  passage.el.hidden = byModel;
+  let reviewed = false;
+  w.body.replaceChildren(fields.el, how, passage.el);
+  w.foot.replaceChildren(el("span", { class: "qf-side" }), el("span", { class: "qf-side" },
+    el("button", { type: "button", class: "primary", id: "qf-save", onclick: async (e) => {
+      const picked = passage.read();
+      if (mode === "pick" && (!picked || !picked.length)) return w.say("Tick at least one paragraph the answer rests on.", true);
+      const body = { section, ...fields.read(), passage: mode, supporting_paragraphs: byModel && !reviewed ? undefined : picked };
+      const made = await w.run(e.currentTarget, () => api(`/jobs/${job}/book-questions`, { method: "POST", json: body }));
+      if (!made) return;
+      if (made.review) {              // the model's choice, for the reader to confirm or change
+        reviewed = true; passage.el.hidden = false; passage.set(made.review);
+        how.textContent = "The model chose these paragraphs. Change them if you like, then save.";
+        return;
+      }
+      if (onChange) onChange({ id: made.id, added: true });
+      w.close();
+    } }, "Save")));
 }
 
 document.head.append(el("style", {}, `
+.qf-kinds { display: flex; flex-wrap: wrap; margin-bottom: 4px; }
+.qf-kinds button { font: 12px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid var(--ink); border-radius: 0; background: transparent; color: var(--ink); padding: 9px 12px; margin-right: -1px; cursor: pointer; }
+.qf-kinds button[aria-pressed=true] { background: var(--ink); color: var(--paper); }
+.qf-compose { display: grid; gap: 8px; }
+.qf-dlg { padding: 0; border: 1px solid var(--ink); border-radius: 0; background: var(--paper); color: var(--ink); font: 15px/1.45 var(--grot);
+  width: min(760px, calc(100vw - 24px)); max-height: calc(100vh - 24px); max-width: none; }
+.qf-dlg[open] { display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; }
+.qf-dlg::backdrop { background: rgba(0, 0, 0, 0.32); }
+.qf-dlg > header { display: flex; align-items: baseline; gap: 14px; padding: 12px 12px 12px 20px; border-bottom: 1px solid var(--ink); }
+.qf-dlg > header b { font: 500 20px/1.2 var(--grot); letter-spacing: -0.03em; }
+.qf-dlg > header .m { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px/1.5 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; color: var(--mute); }
+.qf-dlg button { font: 12px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid var(--ink); border-radius: 0; background: transparent; color: var(--ink); padding: 10px 13px; cursor: pointer; }
+.qf-dlg button:hover:not(:disabled) { background: var(--ink); color: var(--paper); }
+.qf-dlg button.primary { background: var(--ink); color: var(--paper); }
+.qf-dlg button.primary:hover:not(:disabled) { background: var(--blue); border-color: var(--blue); }
+.qf-dlg button.quiet { border-color: transparent; text-decoration: underline; text-underline-offset: 3px; padding-left: 0; padding-right: 0; }
+.qf-dlg button.quiet:hover:not(:disabled) { background: transparent; color: var(--blue); }
+.qf-dlg button:disabled { opacity: 0.5; cursor: default; }
+.qf-dlg .qf-kinds button[aria-pressed=true]:hover { background: var(--ink); color: var(--paper); }
+.qf-body { overflow: auto; padding: 18px 20px; display: grid; gap: 14px; align-content: start; }
+.qf-body textarea { display: block; width: 100%; min-height: 76px; resize: vertical; font: 16px/1.45 var(--grot); color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 9px 11px; }
+.qf-hint { margin: 0; color: var(--mute); font-size: 13.5px; line-height: 1.4; }
+.qf-note { margin: 0; padding: 10px 20px; border-top: 1px solid var(--ghost, var(--ink)); font-size: 14px; }
+.qf-note.bad { background: var(--ink); color: var(--paper); }
+.qf-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 20px; border-top: 1px solid var(--ink); }
+.qf-side { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.qf-wish { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+.qf-wish input { font: inherit; color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 9px 11px; min-width: 0; }
+.qf-passage summary { cursor: pointer; font: 12px/1.5 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; }
+.qf-passage .qf-hint { margin: 8px 0; }
+.qf-passage label { display: flex; gap: 10px; align-items: baseline; padding: 5px 0; cursor: pointer; font-size: 14px; line-height: 1.4; }
+.qf-passage input { flex: none; transform: translateY(2px); }
 .qf-edit { display: grid; gap: 8px; }
 .qf-edit input[type=text] { font: inherit; font-size: 15px; color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 8px 10px; width: 100%; min-width: 0; }
-.qf-rows-edit { display: grid; gap: 6px; } .qf-rows-edit > .m { font: 11.5px/1.5 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--mute); }
+.qf-edit > .qf-cap { margin-top: 4px; }
+.qf-rows-edit { display: grid; gap: 6px; } .qf-edit > .qf-cap, .qf-rows-edit > .m { font: 11.5px/1.5 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--mute); }
 .qf-row { display: flex; gap: 10px; align-items: center; } .qf-row label { display: inline-flex; gap: 6px; align-items: center; margin-right: 14px; cursor: pointer; }
 .qf-gap { display: inline-block; min-width: 4.5em; border-bottom: 0.12em solid currentColor; margin: 0 0.15em; text-align: center; line-height: 1.05; }
 .qf-gap.on { min-width: 0; padding: 0 0.2em; color: var(--blue); border-bottom-color: var(--blue); }
@@ -201,5 +404,6 @@ document.head.append(el("style", {}, `
 @media (max-width: 560px) { .qf-verdict p { grid-template-columns: minmax(0, 1fr); gap: 0; } }
 `));
 
-window.QForms = { form, label, key, plain, heading, matches, ask, verdict, choices, edit, GAP };
+window.QForms = { form, label, key, plain, heading, matches, ask, verdict, choices, edit, compose, openEditor, openAdder, GAP,
+  get isOpen() { return !!open; } };
 })();

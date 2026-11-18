@@ -285,7 +285,8 @@ function save(now) {
   if (PANE) return;
   clearTimeout(saveTimer);
   const send = () => fetch(`/api/jobs/${ID}/reading`, { method: "PUT", keepalive: true, headers: { "X-Ebook-Processor": "1", "Content-Type": "application/json" }, body: JSON.stringify(S) }).catch(() => {});
-  if (now) send(); else saveTimer = setTimeout(send, 700);
+  if (now) return send();
+  saveTimer = setTimeout(send, 700);
 }
 function setPos(c, w, forward) {
   if (PANE) { pos = { chapter: c, word: w }; return drawFoot(); }
@@ -762,6 +763,7 @@ function drawCp() {
         !cp.given.correct ? h("span", { class: "row" }, h("span", { class: "m" }, "Reread the section in"),
           h("span", { class: "seg" }, MODES.map(([k, t]) => h("button", { class: k === (cp.review ? mode : cp.resume.mode) ? "primary" : "", onclick: () => startReread(s, k) }, t)))) : h("span", {}),
         h("span", { class: "row" },
+          editLink(p),
           !cp.given.correct && QForms.form(p) === "cloze" ? h("button", { class: "link", id: "cp-right", onclick: overrule }, "I was right") : null,
           h("button", { class: "primary", id: "cp-next", onclick: () => next() }, "Continue", h("kbd", {}, "↵"))))];
   } else if (!cp.revealed) body = [box, h("div", { class: "acts" }, h("button", { class: "primary", onclick: () => { cp.revealed = true; drawCp(); } }, "Reveal answer", h("kbd", {}, "ctrl ↵")), skips),
@@ -771,13 +773,13 @@ function drawCp() {
     h("div", { class: "acts" },
       h("span", { class: "row" }, h("span", { class: "m" }, "Reread the section in"),
         h("span", { class: "seg" }, MODES.map(([k, t]) => h("button", { class: k === (cp.review ? mode : cp.resume.mode) ? "primary" : "", onclick: () => startReread(s, k) }, t)))),
-      h("button", { class: "primary", onclick: () => next() }, "Continue"))];
+      h("span", { class: "row" }, editLink(p), h("button", { class: "primary", onclick: () => next() }, "Continue")))];
   else body = [
     h("div", { class: "two" }, h("div", {}, h("span", { class: "m" }, "Your recall"), h("p", {}, cp.text || "Nothing typed.")), h("div", {}, h("span", { class: "m" }, "Reference answer"), h("p", {}, p.answer))),
     first ? h("p", { class: "note" }, `Your first grade for this question stays as it is: ${first.first}.`) : null,
     h("div", { class: "acts" }, h("span", { class: "row" },
       h("button", { class: "primary", onclick: () => advance("correct") }, "Correct", h("kbd", {}, "c")),
-      h("button", { class: "primary", onclick: () => advance("incorrect") }, "Incorrect", h("kbd", {}, "x"))), skips)];
+      h("button", { class: "primary", onclick: () => advance("incorrect") }, "Incorrect", h("kbd", {}, "x"))), h("span", { class: "row" }, editLink(p), skips))];
   stage.append(h("div", { class: "cp", role: "dialog", "aria-label": "Checkpoint" }, h("div", { class: "in" },
     h("div", { class: "head" }, h("span", { class: "m" }, cp.review ? "Review / " + s.label : `Checkpoint ${number} / ${s.label}`), h("span", { class: "m" }, `Question ${cp.index + 1} of ${total}` + (p.hq ? " / from your highlight" : ""))),
     graded ? h("span", { class: "m kind" }, QForms.label(p) + (QForms.form(p) === "truefalse" ? "?" : "")) : null,
@@ -989,6 +991,30 @@ function syncPrompts() {
         ...Object.fromEntries(["form", "choices", "correct", "truth", "accept"].filter((k) => k in q).map((k) => [k, q[k]])) })));
   }
 }
+// One of the book's own questions was changed in the editor: take the questions as they now are, and go on with
+// the checkpoint that is open. A question started over counts as never answered here too.
+async function questionChanged(change) {
+  if (change.restarted || change.deleted) { delete S.grades[change.id]; delete S.x_cleared[change.id]; delete S.x_previewed[change.id]; }
+  let fresh;
+  try { fresh = await api(`/jobs/${ID}/book`); } catch (e) { return; }
+  for (const now of fresh.sections) {
+    const s = book.sections.find((x) => x.id === now.id);
+    if (s) { s.own = now.prompts.filter((p) => !p.hq); s.checkpoint = now.checkpoint; }
+  }
+  syncPrompts();
+  if (cp) {
+    const list = cp.review ? cp.queue : cp.section.prompts;
+    if (cp.review) cp.queue = cp.queue.map((it) => ({ s: it.s, p: it.s.prompts.find((p) => p.id === it.p.id) })).filter((it) => it.p);
+    if (cp.index >= (cp.review ? cp.queue : list).length) return closeCp();
+    drawCp();
+  }
+  refreshPreviews(); drawFoot(); save();
+}
+const editLink = (p) => (book.editable && !p.hq && !PANE
+  ? h("button", { class: "link", id: "cp-edit", onclick: async () => {
+      await save(true);               // the editor asks the app what has been answered: it must know the grade just given
+      QForms.openEditor({ job: ID, id: p.id, onChange: questionChanged });
+    } }, "Edit question") : null);
 function say(text, label, action) {   // a quiet notice at the edge; with an action, it can be pressed
   document.querySelector(".toast")?.remove();
   const el = h("div", { class: "toast", role: "status" }, h("span", {}, text),
@@ -1031,7 +1057,7 @@ function questionPanel(hid) {         // a highlight's questions: to accept, rew
   const x = NB.highlights.find((it) => it.id === hid);
   if (!x) return closeDrawer();
   const form = (q, onSave) => {       // the fields of a question of any form; a new one of the reader's own is open
-    const fields = QForms.edit(q || { question: "", answer: "" });
+    const fields = q ? QForms.edit(q) : QForms.compose();
     fields.el.addEventListener("keydown", (e) => e.stopPropagation());   // typing here is not a key of the reader
     return h("div", { class: "one" }, fields.el, h("div", { class: "acts" },
       h("button", { class: "primary", onclick: () => onSave(fields.read()) }, "Save"), h("button", { class: "link", onclick: () => questionPanel(hid) }, "Cancel")));
@@ -1221,11 +1247,11 @@ $("b-rev").onclick = () => { save(true); setTimeout(() => { location.href = "/#/
 // playing, and the settings window would hand the keyboard back to the Settings button when it closes.
 addEventListener("click", (e) => {
   const pressed = e.detail > 0 && e.target.closest ? e.target.closest("button, a") : null;
-  if (pressed && document.activeElement === pressed && !pressed.closest(".stg")) pressed.blur();
+  if (pressed && document.activeElement === pressed && !pressed.closest(".stg, .qf-dlg")) pressed.blur();
 }, true);
 addEventListener("keydown", (e) => {
   const typing = /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName);
-  if (AppSettings.isOpen) return;      // the settings window has the keys
+  if (AppSettings.isOpen || QForms.isOpen) return;      // the settings window, or the question editor, has the keys
   if (e.key === "Escape") { if ($("drawer").classList.contains("on")) return closeDrawer(); if (stage.querySelector(".notebox")) return closeNote(); }
   if (cp) {
     const asked = cp.review ? (cp.queue[cp.index] || {}).p : cp.section.prompts[cp.index];

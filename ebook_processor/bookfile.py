@@ -124,13 +124,21 @@ def is_removed(note: vault.Note) -> bool:
     return REMOVED in note.body
 
 
-def place(store: dict[str, Any], block: str) -> dict[str, int] | None:
-    """Where in the book the entry with this block id is, to open the reader there."""
+def place(store: dict[str, Any], block: str, sections: list[dict[str, Any]] | None = None) -> dict[str, int] | None:
+    """Where in the book the entry with this block id is, to open the reader there. ``sections`` are those of
+    the book's manifest: with them, a note on a section or a chapter leads to where that begins."""
     wanted = block[:-5] if block.endswith("-note") else block
     for h in store["highlights"]:
         if h["id"] == wanted:
             return {"chapter": h["chapter"], "word": h["start"]}
     for n in store["notes"]:
-        if n["id"] == wanted and n["on"] == "place":
+        if n["id"] != wanted:
+            continue
+        if n["on"] == "place":
             return {"chapter": n["chapter"], "word": n["word"]}
+        if n["on"] == "chapter":
+            return {"chapter": n["chapter"], "word": 0}
+        section = next((s for s in sections or [] if s["id"] == n.get("section")), None)
+        if n["on"] == "section" and section is not None:
+            return {"chapter": section["chapter"], "word": section["start"]}
     return None

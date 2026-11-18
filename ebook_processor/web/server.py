@@ -51,7 +51,8 @@ JOB_ID_RE = re.compile(r"^[0-9]{8}-[0-9]{6}-[a-z0-9-]{1,40}$")
 ACTIVE = ("queued", "running")
 EVENTS_KEPT = 300
 PAGES = {"index.html": "text/html; charset=utf-8", "reader.html": "text/html; charset=utf-8",
-         "settings.js": "text/javascript; charset=utf-8", "forms.js": "text/javascript; charset=utf-8"}   # the app's own files, by content type
+         "settings.js": "text/javascript; charset=utf-8", "forms.js": "text/javascript; charset=utf-8",
+         "notes.js": "text/javascript; charset=utf-8", "editor.js": "text/javascript; charset=utf-8"}   # the app's own files, by content type
 SETTINGS_FILE = "reader-settings.json"  # what the settings window keeps, for every page of the app
 LONG_SETTINGS = ("steer_about", "steer_style")  # the reader's own texts: longer than any other setting
 WAITING = ("asking", "tried")  # a run that waits for its reader: to confirm a reading, or after a trial chapter
@@ -784,8 +785,15 @@ class Jobs:
         if out["in_library"]:
             out["job"] = job_id
             if to.get("block"):
-                out["go"] = bookfile.place(notes.load(self.folder(job_id)), to["block"])
+                out["go"] = self._place(job_id, to["block"])
         return out
+
+    def _place(self, job_id: str, block: str) -> dict[str, int] | None:
+        try:
+            sections = self.book(job_id).manifest()["sections"]
+        except ApiError:
+            sections = None
+        return bookfile.place(notes.load(self.folder(job_id)), block, sections)
 
     def _note(self, detail: dict[str, Any]) -> dict[str, Any]:
         """A note as its page shows it: with the passages it cites, and where each can be read."""
@@ -830,7 +838,7 @@ class Jobs:
             job_id = bookfile.job_of(p["book_id"])
             p["in_library"] = self._readable(job_id or "")
             if p["in_library"] and p["block"]:
-                p["job"], p["go"] = job_id, bookfile.place(notes.load(self.folder(job_id)), p["block"])
+                p["job"], p["go"] = job_id, self._place(job_id, p["block"])
         return found
 
     def vault_note(self, note_id: str) -> dict[str, Any]:
@@ -863,7 +871,11 @@ class Jobs:
             link = f"[[{book.title}#^{block}]]"
             props["sources"] = [link]
             body = (body.rstrip() + "\n\n" if body.strip() else "\n\n") + f"Source: {link}\n"
-        elif isinstance(where, dict):
+        elif isinstance(r.get("sources"), list):  # links the page was given by ``cite``
+            if not all(isinstance(x, str) and re.fullmatch(r"\[\[[^\[\]\n]{1,300}\]\]", x) for x in r["sources"]) or len(r["sources"]) > 20:
+                raise ApiError(HTTPStatus.BAD_REQUEST, "sources are links to passages")
+            props["sources"] = r["sources"]
+        if isinstance(where, dict):
             job_id = str(where.get("job") or "")
             self.get(job_id)
             self.file_book(job_id)
@@ -874,6 +886,19 @@ class Jobs:
                     props["place"] = f"{where['chapter']}:{where['word']}"
         kind = r.get("kind") if isinstance(r.get("kind"), str) else "idea"
         return self._note(self._vaulted(lambda: vault.create(r.get("title") or "", body, kind, props)))
+
+    def vault_cite(self, r: dict[str, Any]) -> dict[str, Any]:
+        """The link that cites a highlight or a note of a book, with the words it leads to. Makes the notes
+        folder and the book's file when they are not there yet."""
+        job_id, block = str(r.get("job") or ""), str(r.get("block") or "")
+        self.get(job_id)
+        vault = self.vault(make=True)
+        self.file_book(job_id)
+        book = vault.book(bookfile.book_id(job_id))
+        if book is None or block not in book.blocks:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "that highlight or note is not in the book's file")
+        to = self._cited(vault.peek(book.title, "^" + block))
+        return {"link": f"[[{book.title}#^{block}]]", **{k: to.get(k) for k in ("id", "title", "block", "text", "found", "job", "go", "in_library")}}
 
     def vault_save(self, note_id: str, r: dict[str, Any]) -> dict[str, Any]:
         """Save a note's text and properties, then give it the title that was sent, if it is a new one."""
@@ -1552,6 +1577,8 @@ class Handler(BaseHTTPRequestHandler):
             case ("POST", ["vault", "trash", "restore"]):
                 vault = jobs.vault()
                 return self.send_json(jobs._note(jobs._vaulted(lambda: vault.restore(self.json_body().get("name")))))
+            case ("POST", ["vault", "cite"]):
+                return self.send_json(jobs.vault_cite(self.json_body()))
             case ("POST", ["vault", "notes"]):
                 return self.send_json(jobs.vault_create(self.json_body()), HTTPStatus.CREATED)
             case ("GET", ["vault", "notes", note_id]):

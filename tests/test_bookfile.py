@@ -62,7 +62,10 @@ def test_the_file_reads_back_as_blocks_that_links_can_point_to(book):
         (ids["section"], "Arrival at Gannet Rock", False), (first["id"], "Arrival at Gannet Rock", True)]
     assert bookfile.place(store, first["id"]) == bookfile.place(store, first["id"] + "-note") == {"chapter": 2, "word": 3}
     assert bookfile.place(store, ids["place"]) == {"chapter": 2, "word": 61}
-    assert bookfile.place(store, ids["book"]) is None and bookfile.place(store, "h0000") is None
+    assert bookfile.place(store, ids["book"]) is None and bookfile.place(store, "h0000") is None and bookfile.place(store, ids["section"]) is None
+    sections = book.manifest()["sections"]
+    assert bookfile.place(store, ids["section"], sections) == {"chapter": 2, "word": sections[0]["start"]}
+    assert bookfile.place(store, ids["chapter"], sections) == {"chapter": 3, "word": 0}
     assert bookfile.job_of("b-" + JOB) == JOB and bookfile.job_of("n1234") is None
 
 

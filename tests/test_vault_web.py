@@ -102,7 +102,7 @@ def test_notes_are_created_read_saved_renamed_and_trashed(app):
     assert taken[0] == 400 and "already a note" in taken[1]["error"] and app("GET", f"/api/vault/notes/{nid}")[1]["body"] == "From the app."
     assert app("PUT", f"/api/vault/notes/{nid}", json_body={"title": "a/b", "token": renamed["token"]})[0] == 400
     assert app("GET", "/api/vault/complete?q=pri")[1]["notes"][0]["title"] == "Prices are signals"
-    assert app("GET", "/api/vault/anchors?" + q(target="prices are signals"))[1] == {"headings": [], "blocks": []}
+    assert app("GET", "/api/vault/anchors?" + q(target="prices are signals"))[1] == {"link": "Prices are signals", "headings": [], "blocks": []}
     assert app("GET", "/api/vault/peek?" + q(target="Prices are signals"))[1]["text"] == "From the app."
     assert app("GET", "/api/vault/peek?" + q(target="No such note"))[1] == {"found": False}
     assert app("DELETE", f"/api/vault/notes/{nid}")[1]["trash"] == "Prices are signals.md"

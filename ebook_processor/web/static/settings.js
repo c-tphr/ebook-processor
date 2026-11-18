@@ -9,7 +9,7 @@
      AppSettings.values            the settings, defaults filled in
      AppSettings.set(key, value)   change one; null puts the default back
      AppSettings.onChange(fn)      fn(key, value) after every change; key "practice" carries the schedule
-     AppSettings.open(tab)         show the window on a tab: general, add, questions, reader, notebook, practice
+     AppSettings.open(tab)         show the window on a tab: general, add, questions, reader, notebook, practice, notes
      AppSettings.processing(...)   the options of a run, as used by the Add a book form and by the Add a book tab
 */
 (function () {
@@ -26,7 +26,7 @@ const RUN_KEYS = ["density", "max_questions", "kind", "content", "rounds", "mode
 const FORMS = [["open", "Open", "You recall the answer and grade yourself"], ["choice", "Multiple choice", "One of four"],
   ["truefalse", "True or false", "A statement to judge"], ["cloze", "Fill in the blank", "You type the missing words"]];
 const formList = (value) => { const given = Array.isArray(value) ? value : String(value || "").split(","); const kept = FORMS.map(([k]) => k).filter((k) => given.includes(k)); return kept.length ? kept : ["open"]; };
-const TABS = [["general", "General"], ["add", "Add a book"], ["questions", "Your questions"], ["reader", "Reader"], ["notebook", "Notebook"], ["practice", "Practice"]];
+const TABS = [["general", "General"], ["add", "Add a book"], ["questions", "Your questions"], ["reader", "Reader"], ["notebook", "Notebook"], ["practice", "Practice"], ["notes", "Notes"]];
 const values = { ...DEFAULTS };
 const listeners = new Set();
 const channel = "BroadcastChannel" in window ? new BroadcastChannel("ebook-processor-settings") : null;
@@ -370,6 +370,32 @@ const DRAW = {
       row("Open a passage", choice("nb_beside", [[true, "Beside the notebook"], [false, "In the full reader"]]), "Beside needs a wide window. In a narrow one the full reader opens."),
       row("Reader on the", choice("nb_side", [["left", "Left"], ["right", "Right"]])),
       row("Reader shows", choice("nb_view", [["scroll", "Scroll"], ["page", "Pages"]]), "Typeface, size and spacing are those of the Reader tab.")];
+  },
+  async notes() {
+    const state = await api("/vault/folder");
+    const field = el("input", { type: "text", id: "st-notes-folder", "aria-label": "Notes folder", value: state.folder, spellcheck: "false", autocomplete: "off" });
+    const error = el("p", { class: "err", hidden: true, role: "alert" });
+    const use = async (value) => {     // a folder the app cannot use is refused, and said why
+      error.hidden = true;
+      try { await api("/settings", { method: "PUT", json: { notes_folder: value } }); }
+      catch (e) { error.textContent = e.message; error.hidden = false; return; }
+      take("notes_folder", value);
+      if (channel) channel.postMessage({ key: "notes_folder", value });
+      show("notes");
+    };
+    field.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); use(field.value.trim() || null); } });
+    return [el("h3", {}, "Notes"),
+      el("p", { class: "lede" }, "Your notes are Markdown files in one folder on this computer. The files are yours: the folder can be opened in Obsidian as a vault, synchronised or backed up like any other. The app reads a file again when another program changes it."),
+      el("div", { class: "st-field" }, el("span", { class: "m" }, "The notes folder"), field,
+        el("small", {}, state.exists ? "This folder is in use." : "This folder does not exist yet. It is made the first time you open Notes.",
+          state.chosen ? "" : " It is the one the app chooses by itself: ebook-processor-notes, beside the folder that holds your books.")),
+      error,
+      el("div", { style: "margin-top:14px;display:flex;gap:12px;flex-wrap:wrap;align-items:center" },
+        el("button", { type: "button", onclick: () => use(field.value.trim() || null) }, "Use this folder"),
+        state.chosen ? el("button", { type: "button", class: "quiet", onclick: () => use(null) }, "Go back to " + state.default) : null),
+      el("p", { style: "margin:18px 0 0;max-width:62ch" }, "Pointing the app at another folder does not move or copy anything. Notes stay where they are; the app shows what is in the folder you name, and writes each book's file there again. To move your notes, move the folder yourself while the app is closed, then name its new place here."),
+      el("h4", {}, "Quick note"),
+      el("p", { style: "margin:12px 0 0;max-width:62ch" }, "Ctrl + . (Cmd + . on a Mac) opens the Quick note box on every page, also while you are typing somewhere else. In the reader the note remembers its place in the book.")];
   },
   async practice() {
     let s = await api("/practice/settings");

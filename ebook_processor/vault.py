@@ -738,13 +738,18 @@ class Vault:
                     for _, _, n in rows[:limit]]
 
     def anchors(self, target: str) -> dict[str, Any]:
-        """The headings and blocks of a note, to complete a link to a part of it."""
+        """The headings and blocks of a note, to complete a link to a part of it. The note is the one of that
+        name, or else the first that would be offered for what was typed; ``link`` is how to write it."""
         self.refresh()
         with self.lock:
             note = self.resolve(target)
+            if note is None and target.strip():
+                first = self.complete(target, 1)
+                note = self.by_id.get(first[0]["id"]) if first else None
             if note is None:
-                return {"headings": [], "blocks": []}
-            return {"headings": note.headings, "blocks": [{"id": b, "text": t[:160]} for b, t in note.blocks.items()]}
+                return {"link": "", "headings": [], "blocks": []}
+            link = note.title if len(self.by_name.get(key(note.title), [])) == 1 else note.path[:-3]
+            return {"link": link, "headings": note.headings, "blocks": [{"id": b, "text": t[:160]} for b, t in note.blocks.items()]}
 
     # ---- writing
 

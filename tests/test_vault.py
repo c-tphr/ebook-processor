@@ -268,8 +268,9 @@ def test_links_resolve_by_name_in_any_letter_case_and_show_what_they_lead_to(vau
     assert to[5]["id"] == "b-1" and to[7]["text"].startswith("another of the same name") and to[8]["id"] == note["id"]
     assert [c["link"] for c in vault.complete("tar")] == ["Target", "sub/Target"]
     assert [c["title"] for c in vault.complete("book")] == ["The Book"] and vault.complete("zzz") == []
-    assert vault.anchors("target") == {"headings": ["A Heading"], "blocks": [{"id": "b1", "text": "A block."}]}
-    assert vault.anchors("nothing") == {"headings": [], "blocks": []}
+    assert vault.anchors("target") == {"link": "Target", "headings": ["A Heading"], "blocks": [{"id": "b1", "text": "A block."}]}
+    assert vault.anchors("the bo")["link"] == "The Book" and vault.anchors("the bo")["blocks"] == [{"id": "h1", "text": "highlighted words"}]
+    assert vault.anchors("nothing") == vault.anchors("") == {"link": "", "headings": [], "blocks": []}
 
 
 def test_delete_moves_to_the_trash_and_restore_puts_it_back(vault):

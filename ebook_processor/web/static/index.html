@@ -230,6 +230,38 @@ body.dragging { cursor: col-resize; user-select: none; } body.dragging .side ifr
 .sticky button:hover { background: var(--paper); color: var(--ink); }
 .sticky button.go { background: var(--blue); border-color: var(--blue); color: var(--on-blue); }
 
+/* notes: the front page of the notes folder, search, the trash (a note's own page is drawn by notes.js) */
+.nz-find { display: flex; gap: 10px; flex-wrap: wrap; align-items: stretch; }
+.nz-find input { flex: 1 1 260px; font: 17px/1.2 var(--grot); color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 12px 13px; min-width: 0; }
+.nz-filters { display: flex; gap: 10px 14px; flex-wrap: wrap; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--ghost); }
+.nz-filters select { width: auto; max-width: min(100%, 34ch); padding: 8px 9px; font-size: 14px; }
+.nz-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 320px); gap: 0 var(--gut); align-items: start; }
+.nz-part { padding: 28px 0 8px; }
+.nz-part > h2 { font: 500 26px/1.1 var(--grot); letter-spacing: -0.035em; margin: 0 0 12px; display: flex; gap: 10px; align-items: baseline; }
+.nz-part > h2::before { content: ""; width: 11px; height: 11px; background: var(--ink); flex: none; transform: translateY(-1px); }
+.nz-part > h2 small { font: 12px/1.5 var(--mono); letter-spacing: 0.04em; color: var(--mute); }
+.nz-side .nz-part > h2 { font-size: 12px; font-family: var(--mono); font-weight: 400; letter-spacing: 0.04em; text-transform: uppercase; padding-bottom: 8px; border-bottom: 1px solid var(--ink); }
+.nz-side .nz-part > h2::before { display: none; }
+.nz-list { border-top: 1px solid var(--ink); }
+.nz-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 16px; align-items: baseline; padding: 12px 0; border-bottom: 1px solid var(--ghost); text-decoration: none; color: inherit; }
+.nz-row b { font: 500 19px/1.25 var(--grot); letter-spacing: -0.02em; overflow-wrap: anywhere; }
+.nz-row:hover b { color: var(--blue); }
+.nz-row .sub { grid-column: 1; color: var(--mute); font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+.nz-row .when { grid-column: 2; grid-row: 1; text-align: right; white-space: nowrap; }
+.nz-row .tags { grid-column: 1 / -1; font: 12px/1.5 var(--mono); color: var(--blue); }
+.nz-chips { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.nz-chips a { font: 13px/1.6 var(--mono); color: var(--blue); text-decoration: none; cursor: pointer; }
+.nz-chips a:hover { text-decoration: underline; } .nz-chips a small { color: var(--mute); margin-left: 4px; }
+.nz-book { display: block; padding: 9px 0; border-bottom: 1px solid var(--ghost); text-decoration: none; cursor: pointer; }
+.nz-book:hover b { color: var(--blue); } .nz-book b { display: block; font: 500 16px/1.3 var(--grot); letter-spacing: -0.01em; } .nz-book small { color: var(--mute); font-size: 13px; }
+.nz-hit { padding: 14px 0; border-bottom: 1px solid var(--ghost); }
+.nz-hit blockquote { margin: 0; padding: 2px 0 2px 14px; border-left: 8px solid color-mix(in srgb, var(--blue) 40%, transparent); font: 17px/1.55 Georgia, "Iowan Old Style", serif; max-width: 76ch; }
+.nz-hit blockquote.own { border-left-color: var(--ghost); }
+.nz-hit .by { display: flex; gap: 6px 16px; flex-wrap: wrap; align-items: baseline; margin-top: 8px; font-size: 14px; color: var(--mute); }
+.nz-hit .by a { color: var(--ink); }
+.nz-go { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 6px; }
+@media (max-width: 860px) { .nz-cols { grid-template-columns: minmax(0, 1fr); } }
+
 @media (max-width: 760px) {
   .hero, .band, .title { grid-template-columns: minmax(0, 1fr); }
   .band { padding: 28px 0; }
@@ -241,12 +273,13 @@ body.dragging { cursor: col-resize; user-select: none; } body.dragging .side ifr
 </style>
 <script src="/static/settings.js"></script>
 <script src="/static/forms.js"></script>
+<script src="/static/notes.js"></script>
 </head>
 <body>
 <div class="frame">
   <header class="top">
     <a class="brand" href="#/"><span class="mark" aria-hidden="true"><i></i><i></i><i></i></span>ebook-processor</a>
-    <span class="row"><span class="m" id="claude">Checking the tools</span><button type="button" id="b-settings">Settings</button></span>
+    <span class="row"><span class="m" id="claude">Checking the tools</span><a class="btn" href="#/notes" id="b-notes">Notes</a><button type="button" id="b-capture" title="Write a quick note (Ctrl or Cmd + .)">Quick note</button><button type="button" id="b-settings">Settings</button></span>
   </header>
   <main id="app"></main>
 </div>
@@ -299,7 +332,13 @@ const FILES = [
 let info = null, timer = null, view = { removed: new Set(), saved: new Set(), filter: "all" };
 
 function route() {
-  clearTimeout(timer); $("sticky").classList.remove("on"); sideClose(); addForm = nbReload = practiceReload = null; window.scrollTo(0, 0);
+  clearTimeout(timer); $("sticky").classList.remove("on"); sideClose(); addForm = nbReload = practiceReload = notesReload = null; window.scrollTo(0, 0);
+  if (noteView) { noteView.destroy(); noteView = null; }
+  const notes = location.hash.match(/^#\/notes(?:\/([^?]*))?(?:\?(.*))?$/);
+  if (notes) {
+    const part = decodeURIComponent(notes[1] || ""), params = new URLSearchParams(notes[2] || "");
+    return part === "trash" ? showTrash() : part === "new" ? showNote(null, params) : part ? showNote(part, params) : showNotes(params);
+  }
   const m = location.hash.match(/^#\/run\/([0-9a-z-]+)$/);
   const p = location.hash.match(/^#\/practice(?:\/([0-9a-z-]+))?$/), nb = location.hash.match(/^#\/notebook\/([0-9a-z-]+)$/);
   if (nb) return showNotebook(nb[1]);
@@ -308,10 +347,12 @@ function route() {
 window.addEventListener("hashchange", route);
 
 // The settings window opens on the tab of the page it was called from.
-$("b-settings").onclick = () => AppSettings.open(location.hash.startsWith("#/notebook") ? "notebook"
+$("b-settings").onclick = () => AppSettings.open(location.hash.startsWith("#/notebook") ? "notebook" : location.hash.startsWith("#/notes") ? "notes"
   : location.hash.startsWith("#/practice") ? "practice" : location.hash === "#/add" ? "add" : "general");
 let addForm = null, nbReload = null, practiceReload = null;   // what the open page offers a changed setting
+let notesReload = null, noteView = null;                     // the front page of Notes, and the note that is open
 AppSettings.onChange((key, value) => {
+  if (key === "notes_folder" && location.hash.startsWith("#/notes")) route();
   if (key.startsWith("add_") && addForm) addForm.set(key.slice(4), value);
   if (key.startsWith("steer_") && addForm) addForm.steer();
   if (key === "practice" && practiceReload) practiceReload();
@@ -799,6 +840,154 @@ addEventListener("message", (e) => {
   else if (d.ep === "full" && Number.isInteger(d.chapter) && Number.isInteger(d.word)) location.href = `/read/${side.id}?go=${d.chapter}:${d.word}`;
 });
 addEventListener("resize", () => { if (side.el) { if (window.innerWidth < SIDE_MIN_WINDOW) sideClose(); else sideLayout(); } });
+
+/* ---------- notes: the notes folder ---------- */
+// The front page shows the inbox, the notes worked on last, the tags and the books. With something in the search
+// box or a filter chosen, it shows what was found instead: notes first, then passages of books. What is asked
+// for is kept in the address (#/notes?q=...), so that Back returns to it.
+Notes.install({ button: $("b-capture") });
+Notes.open = (id) => { location.hash = "#/notes/" + encodeURIComponent(id); };
+Notes.onChange(() => { if (notesReload) notesReload(); });
+addEventListener("pagehide", () => { if (noteView) noteView.destroy(true); });
+const notesAt = (values) => { const q = new URLSearchParams(Object.entries(values).filter(([, v]) => v)).toString(); return "#/notes" + (q ? "?" + q : ""); };
+// A place in a book, asked for from a note: beside the page when there is room, else in the reader.
+function openPlace(source, event) {
+  if (event && (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)) return;
+  if (!sideFits()) { if (!event) location.href = `/read/${source.job}?go=${source.go.chapter}:${source.go.word}`; return; }
+  if (event) event.preventDefault();
+  sideOpen(source.job, source.go.chapter, source.go.word);
+}
+function lit(text, words) {             // a text with the words that were searched for marked
+  const found = words.filter(Boolean).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  if (!found.length) return [text];
+  return text.split(new RegExp("(" + found.join("|") + ")", "gi")).map((part, i) => (i % 2 ? h("mark", {}, part) : part));
+}
+function noteRow(n, words) {
+  const name = n.untitled ? (n.excerpt ? n.excerpt.split(/\s+/).slice(0, 12).join(" ") : "An empty note") : n.title;
+  const sub = n.snippet != null ? n.snippet : n.untitled ? "" : n.excerpt;
+  return h("a", { class: "nz-row", href: "#/notes/" + encodeURIComponent(n.id) },
+    h("b", {}, lit(name, words || [])),
+    h("span", { class: "when m mute" }, n.kind !== "idea" ? h("span", { class: "lab quiet", style: "margin-right:10px" }, Notes.KINDS[n.kind] || n.kind) : null, day(n.modified)),
+    sub ? h("span", { class: "sub" }, lit(sub, words || [])) : null,
+    n.tags.length ? h("span", { class: "tags" }, n.tags.map((t) => "#" + t).join("  ")) : null);
+}
+async function showNotes(params) {
+  const app = $("app");
+  const state = { q: params.get("q") || "", kind: params.get("kind") || "", tag: params.get("tag") || "", book: params.get("book") || "" };
+  const searching = () => !!(state.q.trim() || state.kind || state.tag || state.book);
+  const find = h("input", { type: "search", id: "nz-q", "aria-label": "Search notes and highlights", placeholder: "Search notes and highlights", value: state.q, autocomplete: "off" });
+  const filters = h("div", { class: "nz-filters" }), body = h("div");
+  put(app, h("div", { class: "title" }, h("h1", {}, "Notes"),
+    h("div", { class: "nz-find" }, find, h("a", { class: "btn primary", href: "#/notes/new" }, "New note"))), filters, body);
+  let home = null, typing = null, turn = 0;
+  const go = () => { history.replaceState(null, "", notesAt(state)); load(); };
+  find.addEventListener("input", () => { state.q = find.value; clearTimeout(typing); typing = setTimeout(go, 220); });
+  find.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.q) { e.preventDefault(); find.value = state.q = ""; go(); } });
+  const pick = (key, label, options) => {
+    const s = h("select", { "aria-label": label, onchange: () => { state[key] = s.value; go(); } }, options.map(([v, t]) => h("option", { value: v }, t)));
+    s.value = state[key]; if (s.selectedIndex < 0) s.selectedIndex = 0;
+    return s;
+  };
+  function drawFilters() {
+    put(filters, h("span", { class: "m mute" }, "Show"),
+      pick("kind", "Kind", [["", "Notes of every kind, and books"], ["idea", "Idea notes"], ["quick", "Quick notes"], ["book", "Highlights and notes in books"],
+        ...[...new Set([...home.recent, ...home.inbox].map((n) => n.kind))].filter((k) => !["idea", "quick", "book"].includes(k)).map((k) => [k, Notes.KINDS[k] || k])]),
+      pick("tag", "Tag", [["", "Any tag"], ...home.tags.map((t) => [t.tag, `#${t.tag} (${t.count})`]), ...(state.tag && !home.tags.some((t) => t.tag === state.tag) ? [[state.tag, "#" + state.tag]] : [])]),
+      pick("book", "Book", [["", "Any book"], ...home.books.map((b) => [b.id, b.title])]),
+      searching() ? h("button", { class: "text", type: "button", onclick: () => { state.q = state.kind = state.tag = state.book = ""; find.value = ""; go(); } }, "Clear") : null);
+  }
+  function drawHome() {
+    const part = (title, count, ...kids) => h("section", { class: "nz-part" }, h("h2", {}, title, count != null ? h("small", {}, String(count)) : null), kids);
+    put(body, h("div", { class: "nz-cols" },
+      h("div", {},
+        part("Inbox", home.inbox.length, home.inbox.length ? h("div", { class: "nz-list", id: "nz-inbox" }, home.inbox.map((n) => noteRow(n)))
+          : h("p", { class: "empty" }, "Nothing waits here. Quick note, or Ctrl + . on any page, puts a thought in the inbox; so does a Markdown file dropped into the Inbox folder.")),
+        part("Worked on last", null, home.recent.length ? h("div", { class: "nz-list", id: "nz-recent" }, home.recent.map((n) => noteRow(n)))
+          : h("p", { class: "empty" }, "No notes yet. Start one with New note, or from a highlight while you read: select the words and choose Idea note."))),
+      h("div", { class: "nz-side" },
+        part("Tags", null, home.tags.length ? h("div", { class: "nz-chips" }, home.tags.map((t) => h("a", { onclick: () => { state.tag = t.tag; go(); } }, "#" + t.tag, h("small", {}, String(t.count)))))
+          : h("p", { class: "empty" }, "A #tag in a note, or in its properties, shows here.")),
+        part("Books", null, home.books.length ? home.books.map((b) => h("a", { class: "nz-book", onclick: () => { state.book = b.id; go(); } }, h("b", {}, b.title),
+          h("small", {}, `${fmt(b.entries)} highlight${b.entries === 1 ? "" : "s"} and notes` + (b.in_library ? "" : " / no longer in the library"))))
+          : h("p", { class: "empty" }, "Each book of your library gets a file here with what you marked in it.")),
+        part("The folder", null, kv("Notes", fmt(home.notes)), h("p", { class: "note", style: "overflow-wrap:anywhere;margin-top:4px" }, home.folder),
+          h("div", { class: "row", style: "margin-top:10px" }, h("a", { class: "m", href: "#/notes/trash" }, `Trash (${home.trash})`),
+            h("button", { class: "text", type: "button", onclick: () => AppSettings.open("notes") }, "Change the folder"))))));
+  }
+  function drawFound(found) {
+    const words = state.q.trim().split(/\s+/), book = home.books.find((b) => b.id === state.book);
+    const none = !found.notes.length && !found.passages.length;
+    put(body,
+      found.titles.length ? h("section", { class: "nz-part" }, h("div", { class: "nz-go", id: "nz-go" }, h("span", { class: "m mute", style: "align-self:center" }, "Go to"),
+        found.titles.map((n) => h("a", { class: "btn", href: "#/notes/" + encodeURIComponent(n.id) }, n.title)))) : null,
+      found.notes.length ? h("section", { class: "nz-part" }, h("h2", {}, book ? "Notes that cite this book" : "Notes", h("small", {}, String(found.notes.length))),
+        h("div", { class: "nz-list", id: "nz-notes" }, found.notes.map((n) => noteRow(n, words)))) : null,
+      found.passages.length ? h("section", { class: "nz-part" }, h("h2", {}, "In your books", h("small", {}, String(found.passages.length))),
+        h("div", { class: "nz-list", id: "nz-passages" }, found.passages.map((p) => h("div", { class: "nz-hit" },
+          h("blockquote", { class: p.quote ? null : "own" }, lit(p.text, words)),
+          h("div", { class: "by" }, h("span", {}, p.book + (p.heading ? " / " + p.heading : ""), p.quote ? "" : " / your note"),
+            p.job && p.go ? h("a", { href: `/read/${p.job}?go=${p.go.chapter}:${p.go.word}`, onclick: (e) => openPlace(p, e) }, "Open in the book") : null,
+            p.job && p.block ? h("a", { href: "#/notes/new?" + new URLSearchParams({ job: p.job, block: p.block }) }, "Idea note from this") : null,
+            p.in_library ? null : h("span", {}, "No longer in your library")))))) : null,
+      none ? h("p", { class: "empty" }, "Nothing found.") : null,
+      found.more ? h("p", { class: "note" }, "There is more than is shown here. Add a word, or choose a kind, a tag or a book.") : null);
+  }
+  async function load() {
+    const mine = ++turn;
+    try {
+      if (!home || !searching()) home = await api("/vault");
+      const found = searching() ? await api("/vault/search?" + new URLSearchParams(Object.entries(state).filter(([, v]) => v))) : null;
+      if (mine !== turn) return;        // something newer was asked for meanwhile
+      drawFilters();
+      if (found) drawFound(found); else drawHome();
+    } catch (e) { if (mine === turn) put(body, h("p", { class: "msg err" }, e.message, " ", h("button", { class: "text", type: "button", onclick: () => AppSettings.open("notes") }, "The notes folder"))); }
+  }
+  notesReload = () => { home = null; load(); };
+  load();
+}
+async function showNote(id, params) {
+  const app = $("app"), box = h("div");
+  put(app, h("a", { class: "back m", href: "#/notes" }, "← Notes"), box);
+  let draft = null;
+  if (!id) {
+    draft = { kind: "idea", body: "" };
+    if (params.get("job")) {            // an idea note that starts from a highlight or a note of a book
+      const here = location.hash;
+      try {
+        const cited = await Notes.cite(params.get("job"), params.get("block"));
+        draft = { kind: "idea", body: `\n\nSource: ${cited.link}\n`, sources: [cited.link], cited: [cited] };
+      } catch (e) { return put(box, h("p", { class: "msg err" }, e.message)); }
+      if (location.hash !== here) return;
+    }
+  }
+  noteView = Notes.mount(box, { id, draft,
+    onOpen: (other) => { location.hash = "#/notes/" + encodeURIComponent(other); },
+    onGone: () => { location.hash = "#/notes"; },
+    onTag: (tag) => { location.hash = notesAt({ tag }); },
+    onPlace: openPlace,
+    onState: (note) => {                // a new note has its id now; a file without one was given one
+      const want = "#/notes/" + encodeURIComponent(note.id);
+      if (location.hash !== want && location.hash.startsWith("#/notes/")) history.replaceState(null, "", want);
+    } });
+}
+async function showTrash() {
+  const app = $("app"), list = h("div");
+  put(app, h("a", { class: "back m", href: "#/notes" }, "← Notes"), h("div", { class: "title" }, h("h1", {}, "Trash"),
+    h("p", { style: "margin:0;max-width:46ch" }, "Deleted notes are kept in the .trash folder inside your notes folder. A note put back returns to where it was; links to it work again.")), list);
+  async function load() {
+    let rows;
+    try { ({ notes: rows } = await api("/vault/trash")); } catch (e) { return put(list, h("p", { class: "msg err" }, e.message)); }
+    put(list, rows.length ? h("div", { class: "nz-list", style: "margin-top:26px" }, rows.map((n) => h("div", { class: "nz-row" },
+      h("b", {}, n.untitled ? (n.excerpt.split(/\s+/).slice(0, 12).join(" ") || "An empty note") : n.title),
+      h("span", { class: "when" }, h("button", { type: "button", onclick: async () => {
+        try { const back = await api("/vault/trash/restore", { method: "POST", json: { name: n.name } }); location.hash = "#/notes/" + encodeURIComponent(back.id); }
+        catch (e) { alert(e.message); }
+      } }, "Put back")),
+      h("span", { class: "sub" }, (Notes.KINDS[n.kind] || n.kind) + (n.untitled ? "" : n.excerpt ? " / " + n.excerpt.slice(0, 160) : "")))))
+      : h("p", { class: "empty" }, "The trash is empty."));
+  }
+  load();
+}
 
 /* ---------- practice: spaced repetition ---------- */
 async function showPractice(only) {

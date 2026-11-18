@@ -141,7 +141,7 @@ function processing(inf, initial, onchange) {
   const formBoxes = FORMS.map(([k, t, what]) => [k, el("input", { type: "checkbox", value: k, ...(formList(v.forms).includes(k) ? { checked: true } : {}),
     onchange: (e) => { if (!formBoxes.some(([, b]) => b.checked)) e.target.checked = true; fire("forms"); } }), t, what]);
   const forms = el("div", { class: "st-ticks", role: "group", "aria-label": "Kinds of question" },
-    formBoxes.map(([, box, t, what]) => el("label", {}, box, el("span", {}, t, el("small", {}, what)))));
+    formBoxes.map(([, box, t, what]) => el("label", { title: what }, box, el("span", {}, t))));   // what each is, on hover
   const checkerHint = el("span", {}), effortHint = el("span", {});
   const text = (key, placeholder, value) => el("input", { type: "text", placeholder, value: value || "", onchange: () => fire(key) });
   const c = {
@@ -224,13 +224,12 @@ const CSS = `
 .st-field textarea, .stg textarea { display: block; width: 100%; min-height: 108px; resize: vertical; font: 15px/1.45 var(--grot); color: var(--ink);
   background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 10px 11px; }
 .st-ticks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--ink); }
-.st-ticks label { display: flex; gap: 10px; align-items: flex-start; padding: 11px 12px 10px; cursor: pointer; border-right: 1px solid var(--ink); }
+.st-ticks label { display: flex; gap: 10px; align-items: center; padding: 12px 12px 11px; cursor: pointer; border-right: 1px solid var(--ink); }
 .st-ticks label:last-child { border-right: 0; }
-.st-ticks input { appearance: none; -webkit-appearance: none; flex: none; width: 15px; height: 15px; margin: 2px 0 0; border: 1.5px solid var(--ink); background: transparent; cursor: pointer; }
+.st-ticks input { appearance: none; -webkit-appearance: none; flex: none; width: 15px; height: 15px; margin: 0; border: 1.5px solid var(--ink); background: transparent; cursor: pointer; }
 .st-ticks input:checked { background: var(--blue); border-color: var(--blue); }
 .st-ticks input:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .st-ticks span { font: 12px/1.3 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
-.st-ticks small { display: block; font: 12.5px/1.3 var(--grot); letter-spacing: 0; text-transform: none; color: var(--mute); margin-top: 3px; }
 @media (max-width: 760px) { .st-ticks { grid-template-columns: repeat(2, minmax(0, 1fr)); } .st-ticks label:nth-child(2) { border-right: 0; } .st-ticks label:nth-child(-n+2) { border-bottom: 1px solid var(--ink); } }
 .st-count { font: 11px/1.5 var(--mono); letter-spacing: 0.04em; color: var(--mute); float: right; }
 .st-seg { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--ink); }

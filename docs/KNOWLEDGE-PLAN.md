@@ -197,6 +197,10 @@ Filled in as the owner answers. Questions of section 6 that have an answer here 
 | A note without a title (3) | It waits in the inbox under a name made from the date and its first words. Giving it a title moves it out of the inbox and names its file |
 | Citing a source (4) | A link, not a copy: the note gets a line `Source: [[Book#^highlight]]` and the same link in its `sources` property. The highlighted words are shown beside the editor and on hover over the link |
 | Where the folder is (1) | `ebook-processor-notes` in the home folder, made the first time Notes is opened. Settings shows it and lets the owner point the app at another folder; the app does not move files |
+| What a book's file holds (5) | Only what the owner marked and wrote: highlights, their notes, and notes on paragraphs, sections, chapters and the book. No questions, no checkpoint answers, no link back into the app |
+| A quick note becomes an idea note (6) | In place: open it from the inbox, give it a title, rewrite it, and "Make this an idea note". One note, one file |
+| Search (7) | One box over notes of every kind and the highlights and passage notes of every book, results grouped with notes first, titles offered to jump to, filters by kind, tag and book. Searching the full text of every book is a TODO for later, recorded in `DEFERRED.md` |
+| Deleting (8) | The file moves to a `.trash` folder inside the notes folder. Links to it show as broken. The Notes area lists the trash and can put a note back |
 
 ## 7. Record of progress
 

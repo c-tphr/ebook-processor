@@ -10,6 +10,7 @@ These were chosen as later work by the project owner. The knowledge system is no
 | --- | --- | --- |
 | Personal knowledge system | Grow the per-book notebook into a full system in the spirit of Zettelkasten: conceptual "permanent notes" that stand apart from any one book, links between notes with back-links, and other features familiar from Obsidian | The first step, a notebook per book for "literature notes", is the current highlights and notes work |
 | Notebook across all books | One place for every book's highlights and notes, with search and filtering | Part of the knowledge system above |
+| Search over the full text of every book | From the Notes area, search the whole text of every book in the library, not only what was highlighted or noted, with results that open the passage | Asked for by the owner on 2026-11-18 as a later addition. Phase 1 of the knowledge system searches notes and book highlights. The reader already searches inside one book |
 
 ## Considered and not chosen for now
 

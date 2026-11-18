@@ -401,3 +401,56 @@ def test_nothing_is_written_outside_the_folder(vault, tmp_path):
         blocked = tmp_path / "a file"
         blocked.write_text("x")
         Vault(blocked / "notes").ensure()
+
+
+# ---- processing: who cites what, related notes, what the app adds to a note
+
+
+def test_the_notes_that_cite_an_entry_of_a_book_are_known(vault):
+    book = vault.put_book("b-20261118-101500-almanac", "The Almanac", lambda name: BOOK)
+    a = vault.create("One", "From [[The Almanac#^h3f9a]].")
+    b = vault.create("Two", "About the note on it: [[the almanac#^h3f9a-note]], and [[The Almanac#^n81c2|the wicks]].", props={"sources": ["[[The Almanac#^h3f9a]]"]})
+    vault.create("Three", "Only the book: [[The Almanac]], and a part [[The Almanac#The Lamp Room]].")
+    cited = vault.citing(vault.book(book.id))
+    assert {k: sorted(n.title for n in v) for k, v in cited.items()} == {"h3f9a": ["One", "Two"], "n81c2": ["Two"]}
+    vault.delete(a["id"])
+    vault.delete(b["id"])
+    assert vault.citing(vault.book(book.id)) == {}
+
+
+def test_related_notes_share_uncommon_words_or_tags_and_say_which(vault):
+    vault.put_book("b-20261118-101500-almanac", "The Almanac", lambda name: BOOK)
+    lamp = vault.create("Lamps need tending", "A lamp left alone goes out before sunrise. The keeper trims the wick.", props={"tags": ["keeping"]})
+    vault.create("Markets", "Prices carry information that no trader holds alone.")
+    tagged = vault.create("Routine", "Doing the same thing daily.", props={"tags": ["keeping", "habits"]})
+    for n in range(8):
+        vault.create(f"Filler {n}", f"Unrelated words about gardening number {n}: soil, compost, seedlings.")
+    found = vault.related("The lamp is lit at sunset and put out at sunrise, whatever the wick.", tags=["Keeping"])
+    assert [n["id"] for n in found["notes"]] == [lamp["id"], tagged["id"]]
+    assert set(found["notes"][0]["shares"]) == {"lamp", "sunrise", "wick"} and found["notes"][0]["link"] == "Lamps need tending"
+    assert found["notes"][1]["shares"] == []                                        # a tag in common, no words
+    assert [(p["block"], p["quote"]) for p in found["passages"]][0] == ("h3f9a", True) and "lamp" in found["passages"][0]["shares"]
+    less = vault.related("The lamp is lit at sunset and put out at sunrise.", but={lamp["id"], "b-20261118-101500-almanac#h3f9a"})
+    assert lamp["id"] not in [n["id"] for n in less["notes"]] and "h3f9a" not in [p["block"] for p in less["passages"]]
+    assert vault.related("the and for that with") == {"notes": [], "passages": []}
+    assert vault.related("compost")["notes"] == [] and len(vault.related("compost seedlings")["notes"]) == 6  # one common word is not enough
+    assert Vault(vault.root / "none").related("lamp wick") == {"notes": [], "passages": []}
+
+
+def test_the_app_adds_a_source_or_words_to_a_note_and_sets_its_own_properties(vault):
+    note = vault.create("Kept", "What I think.\n", props={"tags": ["x"]})
+    one = vault.add_to(note["id"], source="[[The Almanac#^h3f9a]]")
+    assert one["body"] == "What I think.\n\nSource: [[The Almanac#^h3f9a]]\n" and {"key": "sources", "value": ["[[The Almanac#^h3f9a]]"]} in one["props"]
+    assert vault.add_to(note["id"], source="[[The Almanac#^h3f9a]]")["body"] == one["body"]            # not twice
+    two = vault.add_to(note["id"], "A thought from the inbox.\n", "[[The Almanac#^n81c2]]")
+    assert two["body"].endswith("Source: [[The Almanac#^h3f9a]]\n\nA thought from the inbox.\n\nSource: [[The Almanac#^n81c2]]\n")
+    assert {"key": "sources", "value": ["[[The Almanac#^h3f9a]]", "[[The Almanac#^n81c2]]"]} in two["props"] and two["tags"] == ["x"]
+    empty = vault.create("Empty", "")
+    assert vault.add_to(empty["id"], "First words.")["body"] == "First words.\n"
+    quick = vault.create("", "a thought", "quick")
+    aside = vault.set_props(quick["id"], {"aside": True})
+    assert {"key": "aside", "value": True} in aside["props"] and aside["body"] == "a thought" and aside["id"] == quick["id"]
+    assert {"key": "aside", "value": True} not in vault.set_props(quick["id"], {"aside": None})["props"]
+    book = vault.put_book("b-1", "A Book", lambda name: "---\nid: b-1\nkind: book\n---\n> words ^h1\n")
+    with pytest.raises(VaultError):
+        vault.add_to(book.id, "mine")

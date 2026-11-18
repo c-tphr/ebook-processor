@@ -258,8 +258,8 @@ Builder's choices: every note written in a book is an item (on a paragraph, a se
 
 Order of work:
 
-1. [ ] `vault.py`: which notes cite which block of a book; related notes and passages; a property set by the app. `process.py`: a book's items in reading order, set aside. Tests.
-2. [ ] Server: `/api/process` (the view), set aside and bring back, add to an existing note, `/api/vault/related`. Tests over HTTP.
+1. [x] `vault.py`: which notes cite which block of a book; related notes and passages; a property set by the app. `process.py`: a book's items in reading order, set aside. Tests.
+2. [x] Server: `/api/process` (the view), set aside and bring back, add to an existing note, `/api/vault/related`. Tests over HTTP.
 3. [ ] The Process view in `index.html` (`#/notes/process`), its entry on the Notes front page and on a book's page; related notes in `notes.js`.
 4. [ ] Browser tests, README, `DEFERRED.md`.
 

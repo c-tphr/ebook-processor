@@ -191,3 +191,57 @@ def test_serve_remembers_the_folder_it_is_started_with(tmp_path, monkeypatch, ca
     assert f"Notes are kept in {tmp_path / 'chosen notes'}" in capsys.readouterr().out
     assert web.Jobs(tmp_path / "data").notes_folder() == tmp_path / "chosen notes"
     assert not (tmp_path / "chosen notes").exists()
+
+
+def test_processing_what_was_marked_ends_in_a_note_a_source_or_aside(app):
+    jid = app.book()
+    first = app("POST", f"/api/jobs/{jid}/notes/highlight", json_body={"chapter": 2, "start": 3, "end": 9, "note": "Why it matters."})[1]["made"]
+    second = app("POST", f"/api/jobs/{jid}/notes/highlight", json_body={"chapter": 2, "start": 70, "end": 74})[1]["made"]
+    third = app("POST", f"/api/jobs/{jid}/notes/highlight", json_body={"chapter": 3, "start": 5, "end": 9})[1]["made"]
+    app("PUT", f"/api/jobs/{jid}/notes/target", json_body={"target": {"on": "section", "section": "s0001"}, "text": "My summary."})
+    quick = app("POST", "/api/vault/notes", json_body={"body": "a thought to keep", "kind": "quick"})[1]
+    view = app("GET", "/api/process")[1]
+    assert view["counts"] == {"waiting": 5, "done": 0, "aside": 0} and [q["id"] for q in view["quick"]] == [quick["id"]]
+    rows = view["books"][0]["items"]
+    assert [(r["kind"], r["state"]) for r in rows] == [("section-note", "waiting"), ("highlight", "waiting"), ("highlight", "waiting"), ("highlight", "waiting")]
+    assert rows[1]["id"] == first and rows[1]["note"] == rows[1]["words"] == "Why it matters." and rows[1]["text"].startswith("The supply boat")
+    assert rows[1]["section"] == "s0001" and rows[1]["go"] == {"chapter": 2, "word": 3} and rows[0]["words"] == "My summary." and rows[0]["text"] == ""
+    assert rows[3]["chapter"] == 3 and app("GET", "/api/vault")[1]["waiting"] == 5
+    # an idea note that cites an item processes it, however the citation was made
+    note = app("POST", "/api/vault/notes", json_body={"title": "Boats come when they can", "body": "x", "source": {"job": jid, "block": first}})[1]
+    by_id = lambda: {r["id"]: r for r in app("GET", f"/api/process?job={jid}")[1]["books"][0]["items"]}
+    assert by_id()[first]["state"] == "done" and by_id()[first]["notes"] == [{"id": note["id"], "title": "Boats come when they can", "untitled": False}]
+    # added to a note that exists: a source line and the property, once
+    added = app("POST", "/api/process/add", json_body={"note": note["id"], "job": jid, "block": second})[1]
+    link = f"[[The Lighthouse Keeper's Almanac#^{second}]]"
+    assert added["body"].endswith(f"\n\nSource: {link}\n") and len(added["sources"]) == 2 and by_id()[second]["state"] == "done"
+    assert app("POST", "/api/process/add", json_body={"note": note["id"], "job": jid, "block": second})[1]["body"] == added["body"]
+    assert app("POST", "/api/process/add", json_body={"note": note["id"], "job": jid, "block": "h0000"})[0] == 400
+    assert app("POST", "/api/process/add", json_body={"note": "n00000000", "job": jid, "block": third})[0] == 404
+    # set aside and brought back; an item that is gone from the book is forgotten
+    assert app("POST", "/api/process/aside", json_body={"job": jid, "ids": [third, "h0000"]})[1] == {"ok": True}
+    assert by_id()[third]["state"] == "aside" and app("GET", "/api/process")[1]["counts"] == {"waiting": 2, "done": 2, "aside": 1}
+    assert json.loads((app.jobs.folder(jid) / "process.json").read_text())["aside"].keys() == {third}
+    app("POST", "/api/process/aside", json_body={"job": jid, "ids": [third], "aside": False})
+    assert by_id()[third]["state"] == "waiting"
+    app("POST", "/api/process/aside", json_body={"job": jid, "ids": [third]})
+    app("DELETE", f"/api/jobs/{jid}/notes/item/{third}")
+    assert third not in by_id() and json.loads((app.jobs.folder(jid) / "process.json").read_text())["aside"] == {}
+    # the citing note goes: its items wait again
+    app("DELETE", f"/api/vault/notes/{note['id']}")
+    assert by_id()[first]["state"] == by_id()[second]["state"] == "waiting"
+    # a quick note: set aside (it leaves the inbox's list), brought back, then its words added to a note
+    app("POST", "/api/process/aside", json_body={"quick": quick["id"]})
+    assert app("GET", "/api/process")[1]["quick"][0]["state"] == "aside" and app("GET", "/api/vault")[1]["inbox"] == []
+    app("POST", "/api/process/aside", json_body={"quick": quick["id"], "aside": False})
+    assert [n["id"] for n in app("GET", "/api/vault")[1]["inbox"]] == [quick["id"]]
+    keep = app("POST", "/api/vault/notes", json_body={"title": "Kept", "body": "Mine.\n"})[1]
+    merged = app("POST", "/api/process/add", json_body={"note": keep["id"], "quick": quick["id"]})[1]
+    assert merged["body"] == "Mine.\n\na thought to keep\n" and app("GET", "/api/process")[1]["quick"] == []
+    assert any(n["title"].endswith("a thought to keep") for n in app("GET", "/api/vault/trash")[1]["notes"])
+    assert app("POST", "/api/process/add", json_body={"note": keep["id"], "quick": keep["id"]})[0] == 400
+    assert app("POST", "/api/process/aside", json_body={"job": jid, "ids": "all"})[0] == 400 and app("GET", "/api/process?job=20200101-000000-none")[0] == 404
+    # related: found on this computer, with the way into the book
+    related = app("POST", "/api/vault/related", json_body={"text": "the supply boat and Gannet Rock at noon", "but": [keep["id"]]})[1]
+    assert related["passages"][0]["block"] == first and related["passages"][0]["go"] == {"chapter": 2, "word": 3} and related["passages"][0]["job"] == jid
+    assert set(related["passages"][0]["shares"]) >= {"gannet", "supply"} and related["notes"] == []

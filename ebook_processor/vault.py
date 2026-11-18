@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import hashlib
+import math
 import os
 import re
 import secrets
@@ -372,6 +373,20 @@ def unescape(text: str) -> str:
     return ESCAPE_RE.sub(lambda m: m.group(0)[1], text)
 
 
+WORD_RE = re.compile(r"[^\W\d_]{3,}")
+# Words too common to say that two texts are about the same thing.
+COMMON = frozenset("""the and for that this with from have has had not but are was were you your our their his her its they them
+then than there here what when where which who whom why how can could would should will shall may might must also into onto over
+under about after before between because while during such some any all each every more most much many few other another one two
+three been being does did done just only very too own same these those out off per via see say says said yes use used using get
+got make made like well even still yet now new old way thing things source note notes book books chapter section""".split())
+
+
+def terms(text: str) -> frozenset[str]:
+    """The words of a text that can tell what it is about."""
+    return frozenset(w for w in (m.group(0).casefold() for m in WORD_RE.finditer(text)) if w not in COMMON)
+
+
 @dataclass
 class Link:
     target: str  # as written, without what follows # or |
@@ -388,6 +403,7 @@ class Passage:
     text: str
     heading: str
     quote: bool
+    terms: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -409,6 +425,7 @@ class Note:
     created: str = ""
     modified: str = ""
     fold: str = ""  # title and text, for search
+    terms: frozenset[str] = frozenset()  # its words, for finding related notes
 
     @property
     def inbox(self) -> bool:
@@ -513,6 +530,11 @@ def read_text(text: str, path: str, stamp: tuple[int, int]) -> Note:
     note.created = created if isinstance(created, str) else ""
     note.modified = _dt.datetime.fromtimestamp(stamp[0] / 1e9, _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     note.fold = key(note.title + "\n" + body)
+    if note.kind == "book":
+        for p in note.passages:
+            p.terms = terms(p.text)
+    else:
+        note.terms = terms(("" if note.untitled else note.title) + "\n" + _plain_text(LINK_RE.sub(lambda m: m.group(4) or "", masked)))
     return note
 
 
@@ -529,6 +551,7 @@ class Vault:
         self.by_name: dict[str, list[Note]] = {}
         self.aliases: dict[str, str] = {}  # the id a note had before its file named one -> the id it has now
         self._back: dict[str, list[tuple[Note, Link]]] | None = None
+        self._df: dict[str, int] | None = None  # in how many notes and passages each word is
         self._looked = 0.0
 
     # ---- files
@@ -626,7 +649,7 @@ class Vault:
 
     def _settle(self) -> None:
         """Give every note its id, and rebuild what is looked up by id and by name."""
-        self.by_id, self.by_name, self._back = {}, {}, None
+        self.by_id, self.by_name, self._back, self._df = {}, {}, None, None
         for path in sorted(self.notes):
             note = self.notes[path]
             own = prop(note.props, "id")
@@ -655,6 +678,11 @@ class Vault:
                 raise Missing("There is no such note. It may have been renamed or removed outside the app.")
             return note
 
+    def prop_of(self, note_id: str, name: str) -> Any:
+        with self.lock:
+            note = self.by_id.get(note_id)
+            return prop(note.props, name) if note is not None else None
+
     def resolve(self, target: str) -> Note | None:
         """The note a link points to: by file name in any letter case, with a folder only when one is written."""
         t = _nfc(target).strip().replace("\\", "/")
@@ -679,6 +707,70 @@ class Vault:
                         back.setdefault(to.path, []).append((other, link))
             self._back = back
         return self._back.get(note.path, [])
+
+    def citing(self, book: Note) -> dict[str, list[Note]]:
+        """For each entry of a book's file (by block id), the notes that cite it. A citation of the note on a
+        highlight (``^id-note``) counts for the highlight."""
+        out: dict[str, list[Note]] = {}
+        for other, link in self.backlinks(book):
+            if other.kind == "book" or not link.anchor.startswith("^"):
+                continue
+            block = link.anchor[1:]
+            block = block[:-5] if block.endswith("-note") else block
+            if other not in out.setdefault(block, []):
+                out[block].append(other)
+        return out
+
+    def related(self, text: str, tags: list[str] | None = None, but: set[str] | None = None,
+                limit: int = 6) -> dict[str, Any]:
+        """Notes and passages of books that share uncommon words (or tags) with a text. Nothing leaves the
+        computer: it is a count over the index. ``but`` holds what to leave out: ids of notes, and
+        ``book id#block`` for passages. Each result names the words it shares."""
+        self.refresh()
+        asked = terms(text)
+        with self.lock:
+            if self._df is None:
+                df: dict[str, int] = {}
+                for note in self.notes.values():
+                    for bag in ([p.terms for p in note.passages] if note.kind == "book" else [note.terms]):
+                        for w in bag:
+                            df[w] = df.get(w, 0) + 1
+                self._df = df
+            total = max(1, sum(len(n.passages) if n.kind == "book" else 1 for n in self.notes.values()))
+            weight = lambda w: math.log(1 + total / (1 + self._df.get(w, 0)))
+            mine, skip = {key(t) for t in tags or []}, but or set()
+
+            def score(bag: frozenset[str], shared_tags: int = 0) -> tuple[float, list[str]]:
+                shared = sorted(asked & bag, key=lambda w: (-weight(w), w))
+                rare = bool(shared) and self._df.get(shared[0], 0) <= 2 and total > 8
+                if not shared_tags and len(shared) < 2 and not rare:
+                    return 0.0, []  # one everyday word in common says nothing; a tag of your own does
+                return (sum(weight(w) for w in shared) + 1.5 * shared_tags) / math.sqrt(12 + len(bag)), shared[:5]
+
+            notes, passages = [], []
+            for note in self.notes.values():
+                if note.kind == "book":
+                    for p in note.passages:
+                        if f"{note.id}#{p.block}" in skip:
+                            continue
+                        value, shared = score(p.terms)
+                        if value:
+                            passages.append((value, note, p, shared))
+                elif note.id not in skip:
+                    value, shared = score(note.terms, len(mine & {key(t) for t in note.tags}))
+                    if value:
+                        notes.append((value, note, shared))
+            notes.sort(key=lambda r: -r[0])
+            passages.sort(key=lambda r: -r[0])
+            seen: set[str] = set()
+            rows = []
+            for value, note, p, shared in passages:  # one row per entry of a book, its best paragraph
+                if f"{note.id}#{p.block}" not in seen and len(rows) < limit:
+                    seen.add(f"{note.id}#{p.block}")
+                    rows.append({"book": note.title, "book_id": note.id, "block": p.block, "heading": p.heading,
+                                 "quote": p.quote, "text": _snippet(p.text, shared, 260), "shares": shared})
+            return {"notes": [{**self.brief(n), "shares": shared, "link": n.title if len(self.by_name.get(key(n.title), [])) == 1 else n.path[:-3]}
+                              for _, n, shared in notes[:limit]], "passages": rows}
 
     # ---- what the pages show
 
@@ -894,6 +986,40 @@ class Vault:
             if note.id != was:
                 self.aliases[was] = note.id
             return self.detail(note)
+
+    def set_props(self, note_id: str, values: dict[str, Any]) -> dict[str, Any]:
+        """Set properties the app keeps itself, leaving the note's text and its other properties as they are.
+        A value of None removes the property."""
+        with self.lock:
+            self.refresh(force=True)
+            note = self.get(note_id)
+            props = [Prop(p.key, p.value, p.raw) for p in note.props if p.key not in values or p.key is None]
+            props += [Prop(name, value) for name, value in values.items() if value is not None]
+            text = compose(self._stamp_props(note, props), note.body)
+            self._write(self._inside(note.path), text)
+            self._reread(note.path)
+            return self.detail(self.notes[note.path])
+
+    def add_to(self, note_id: str, words: str = "", source: str = "") -> dict[str, Any]:
+        """Add to the end of a note: words, and a source (a link such as ``[[Book#^id]]``), which also joins the
+        note's ``sources`` property. A source the note already cites is not added twice."""
+        with self.lock:
+            self.refresh(force=True)
+            note = self.get(note_id)
+            if note.kind == "book":
+                raise VaultError("A book's file is kept by the app.")
+            body, props = note.body.rstrip("\n"), [Prop(p.key, p.value, p.raw) for p in note.props]
+            if words.strip():
+                body += ("\n\n" if body.strip() else "") + self._body(words).strip("\n")
+            if source and source not in note.body:
+                body += ("\n\n" if body.strip() else "") + f"Source: {source}"
+                held = prop(props, "sources")
+                held = list(held) if isinstance(held, list) else [held] if isinstance(held, str) and held else []
+                if source not in held:
+                    set_prop(props, "sources", held + [source])
+            self._write(self._inside(note.path), compose(self._stamp_props(note, props), body + "\n"))
+            self._reread(note.path)
+            return self.detail(self.notes[note.path])
 
     def rename(self, note_id: str, title: Any) -> dict[str, Any]:
         """Give a note a title. Its file is named after it, a note waiting in the inbox leaves the inbox, and

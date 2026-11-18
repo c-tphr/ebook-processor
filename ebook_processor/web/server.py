@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from .. import __version__, bookfile, editing, notes, reading, srs
+from .. import __version__, bookfile, editing, notes, process, reading, srs
 from .. import forms as qforms
 from .. import highlight_questions as hq
 from .. import steer as steering
@@ -834,10 +834,101 @@ class Jobs:
         rows = vault.listing()
         books = [{**r, "job": bookfile.job_of(r["id"]), "in_library": self._readable(bookfile.job_of(r["id"]) or ""),
                   "entries": len(vault.get(r["id"]).blocks)} for r in rows if r["kind"] == "book"]
-        return {"folder": str(vault.root), "inbox": [r for r in rows if r["inbox"]],
+        aside = {r["id"] for r in rows if r["kind"] == "quick" and vault.prop_of(r["id"], "aside") is True}
+        return {"folder": str(vault.root), "inbox": [r for r in rows if r["inbox"] and r["id"] not in aside],
+                "waiting": self.process_view()["counts"]["waiting"],
                 "recent": [r for r in rows if not r["inbox"] and r["kind"] != "book"][:40],
                 "notes": sum(1 for r in rows if r["kind"] != "book"), "tags": vault.tags(),
                 "books": sorted(books, key=lambda b: b["title"].casefold()), "trash": len(vault.trash())}
+
+    # ---- processing: making something of what was marked (see process.py)
+
+    def process_view(self, only: str | None = None) -> dict[str, Any]:
+        """Everything that can be processed, with what became of each item: quick notes, then each book's
+        highlights and notes in reading order. ``only`` narrows to one book."""
+        if only is not None:
+            self.get(only)
+        vault = self.vault(make=True)
+        books = []
+        for job_id in [j for j in list(self.jobs) if self._readable(j) and only in (None, j)]:
+            folder = self.folder(job_id)
+            rows = process.items(self.book(job_id), notes.load(folder))
+            with self.lock:
+                state = process.load(folder)
+                if process.tidy(state, {r["id"] for r in rows}):
+                    write_json(folder / process.FILE, state)
+            with vault.lock:
+                note = vault.book(bookfile.book_id(job_id))
+                cited = vault.citing(note) if note is not None else {}
+                for r in rows:
+                    r["notes"] = [{"id": n.id, "title": n.title, "untitled": n.untitled} for n in cited.get(r["id"], [])]
+                    r["state"] = "done" if r["notes"] else "aside" if r["id"] in state["aside"] else "waiting"
+                    r["job"] = job_id
+            read = reading.summary(reading.load_state(folder))
+            books.append({"job": job_id, "id": bookfile.book_id(job_id), "title": note.title if note is not None else self.jobs[job_id].get("title"),
+                          "last_read": (read or {}).get("last_read") or "", "items": rows})
+        books.sort(key=lambda b: b["last_read"], reverse=True)
+        quick = []
+        if only is None:
+            with vault.lock:
+                for brief in vault.listing(kind="quick"):
+                    note = vault.get(brief["id"])
+                    held = {p.key: p.value for p in note.props if p.key}
+                    quick.append({"id": note.id, "kind": "quick", "text": "", "note": note.body.strip()[:1200], "created": note.created or note.modified,
+                                  "title": "" if note.untitled else note.title, "state": "aside" if held.get("aside") is True else "waiting", "notes": []})
+            quick.sort(key=lambda q: q["created"])
+        every = quick + [r for b in books for r in b["items"]]
+        return {"quick": quick, "books": books,
+                "counts": {k: sum(1 for r in every if r["state"] == k) for k in ("waiting", "done", "aside")}}
+
+    def process_aside(self, r: dict[str, Any]) -> dict[str, Any]:
+        """Set items aside, or bring them back: ``{job, ids, aside}`` for a book's items, ``{quick, aside}``
+        for a quick note."""
+        aside = r.get("aside") is not False
+        if isinstance(r.get("quick"), str):
+            vault = self.vault()
+            self._vaulted(lambda: vault.set_props(r["quick"], {"aside": True if aside else None}))
+            return {"ok": True}
+        job_id, ids = str(r.get("job") or ""), r.get("ids")
+        self.get(job_id)
+        if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids) or len(ids) > 5000:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "name the items of the book")
+        known = {i["id"] for i in process.items(self.book(job_id), notes.load(self.folder(job_id)))}
+        with self.lock:
+            state = process.load(self.folder(job_id))
+            process.set_aside(state, [i for i in ids if i in known], aside)
+            write_json(self.folder(job_id) / process.FILE, state)
+        return {"ok": True}
+
+    def process_add(self, r: dict[str, Any]) -> dict[str, Any]:
+        """Add an item to a note that exists: a book's item as a source, a quick note by its words (the quick
+        note then goes to the trash, from which it can be put back). Gives the note as it now is."""
+        vault = self.vault(make=True)
+        target = str(r.get("note") or "")
+        if isinstance(r.get("quick"), str):
+            def merge() -> dict[str, Any]:
+                with vault.lock:
+                    quick = vault.get(r["quick"])
+                    if quick.id == vault.get(target).id:
+                        raise VaultError("A note cannot be added to itself.")
+                    out = vault.add_to(target, words=quick.body)
+                    vault.delete(quick.id)
+                    return out
+            return self._note(self._vaulted(merge))
+        link = self.vault_cite(r)["link"]
+        return self._note(self._vaulted(lambda: vault.add_to(target, source=link)))
+
+    def vault_related(self, r: dict[str, Any]) -> dict[str, Any]:
+        text = r.get("text") if isinstance(r.get("text"), str) else ""
+        tags = [t for t in r.get("tags") or [] if isinstance(t, str)][:50] if isinstance(r.get("tags"), list) else []
+        but = {b for b in r.get("but") or [] if isinstance(b, str)} if isinstance(r.get("but"), list) else set()
+        found = self.vault().related(text[:20000], tags, but)
+        for p in found["passages"]:
+            job_id = bookfile.job_of(p["book_id"])
+            p["in_library"] = self._readable(job_id or "")
+            if p["in_library"] and p["block"]:
+                p["job"], p["go"] = job_id, self._place(job_id, p["block"])
+        return found
 
     def vault_search(self, query: str, kind: str | None, tag: str | None, book: str | None) -> dict[str, Any]:
         found = self.vault().search(query[:200], kind or None, tag or None, book or None)
@@ -1588,6 +1679,14 @@ class Handler(BaseHTTPRequestHandler):
             case ("POST", ["vault", "trash", "restore"]):
                 vault = jobs.vault()
                 return self.send_json(jobs._note(jobs._vaulted(lambda: vault.restore(self.json_body().get("name")))))
+            case ("GET", ["process"]):
+                return self.send_json(jobs.process_view((query.get("job") or [None])[0]))
+            case ("POST", ["process", "aside"]):
+                return self.send_json(jobs.process_aside(self.json_body()))
+            case ("POST", ["process", "add"]):
+                return self.send_json(jobs.process_add(self.json_body()))
+            case ("POST", ["vault", "related"]):
+                return self.send_json(jobs.vault_related(self.json_body()))
             case ("POST", ["vault", "cite"]):
                 return self.send_json(jobs.vault_cite(self.json_body()))
             case ("POST", ["vault", "notes"]):

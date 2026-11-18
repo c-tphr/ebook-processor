@@ -92,6 +92,17 @@ details.adv > summary { cursor: pointer; font: 12px/1.5 var(--mono); letter-spac
 .msg { border: 1px solid var(--ink); border-left-width: 8px; padding: 10px 14px; margin: 16px 0 0; font-size: 15px; max-width: 80ch; }
 .msg.err { background: var(--ink); color: var(--paper); }
 .msg > div + div { margin-top: 6px; }
+.want textarea, .want input[type=text] { display: block; width: 100%; font: 16px/1.5 var(--grot); color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 10px 12px; }
+.want textarea { min-height: 104px; resize: vertical; }
+.want .field { margin-top: 22px; } .want .field:first-child { margin-top: 0; }
+.want select { font: 15px/1.2 var(--grot); color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 10px 11px; max-width: min(100%, 44ch); }
+.tick { display: flex; gap: 10px; align-items: baseline; margin-top: 10px; cursor: pointer; max-width: 80ch; }
+.tick input { appearance: none; -webkit-appearance: none; flex: none; width: 15px; height: 15px; border: 1.5px solid var(--ink); background: transparent; cursor: pointer; transform: translateY(2px); }
+.tick input:checked { background: var(--blue); border-color: var(--blue); }
+.tick small { color: var(--mute); }
+.est { margin-top: 26px; border-top: 1px solid var(--ghost); padding-top: 14px; max-width: 80ch; }
+.est b { font-weight: 600; font-variant-numeric: tabular-nums; } .est small { display: block; color: var(--mute); margin-top: 4px; font-size: 13px; line-height: 1.35; }
+.q.plain { grid-template-columns: minmax(0, 1fr); }
 
 /* list of books */
 .runs { border-top: 1px solid var(--ink); }
@@ -265,8 +276,8 @@ const fmt = (n) => Number(n).toLocaleString("en");
 const kv = (key, value) => h("div", { class: "kv" }, h("span", {}, key), h("i"), h("b", {}, value));
 const day = (iso) => new Date(iso).toISOString().slice(0, 10);
 const band = (title, ...kids) => h("section", { class: "band" }, h("h2", {}, title), h("div", {}, kids));
-const STATUS = { queued: "Waiting", running: "Working", done: "Finished", failed: "Failed", stopped: "Stopped" };
-const STATUS_LAB = { queued: "lab", running: "lab blue", done: "lab inv", failed: "lab", stopped: "lab" };
+const STATUS = { queued: "Waiting", running: "Working", done: "Finished", failed: "Failed", stopped: "Stopped", asking: "Waiting for you", tried: "Waiting for you" };
+const STATUS_LAB = { queued: "lab", running: "lab blue", done: "lab inv", failed: "lab", stopped: "lab", asking: "lab blue", tried: "lab blue" };
 const STAGES = [["draft", "Draft"], ["check", "Check"], ["revise", "Revise"], ["build", "Build"]];
 const CRITERIA = {
   supported_by_section: "answer says something its section does not",
@@ -300,6 +311,7 @@ $("b-settings").onclick = () => AppSettings.open(location.hash.startsWith("#/not
 let addForm = null, nbReload = null, practiceReload = null;   // what the open page offers a changed setting
 AppSettings.onChange((key, value) => {
   if (key.startsWith("add_") && addForm) addForm.set(key.slice(4), value);
+  if (key.startsWith("steer_") && addForm) addForm.steer();
   if (key === "practice" && practiceReload) practiceReload();
   if (key === "nb_side" || key === "nb_split") sideLayout();
   if (key === "nb_beside" && !value) sideClose();
@@ -318,18 +330,35 @@ async function init() {
   route();
 }
 
+/* ---------- what a run will give, and a book's chapters ---------- */
+function estimateText(e) {              // e: what /api/estimate gives
+  if (!e) return null;
+  const span = ([a, b]) => (a === b ? fmt(a) : `${fmt(a)} to ${fmt(b)}`);
+  return [h("div", {}, h("b", {}, `About ${span(e.questions)} questions`), ` at ${span(e.sections)} checkpoints, from ${fmt(e.words)} words.`),
+    h("small", {}, `The model decides both within your limits: at most ${e.max_questions} question${e.max_questions === 1 ? "" : "s"} at a checkpoint, more for a long or dense section and for one that bears on what you want from the book.`
+      + (e.firmware_limit ? ` The firmware edition holds at most ${fmt(e.firmware_limit)} questions: with more than that it is not written.` : ""))];
+}
+function chapterSelect(chapters, chosen) {
+  const sel = h("select", { "aria-label": "Chapter" }, chapters.filter((c) => c.words >= 100).map((c) => h("option", { value: c.index }, `${c.title} / ${fmt(c.words)} words`)));
+  if (chosen != null) sel.value = String(chosen);
+  if (sel.selectedIndex < 0) sel.selectedIndex = 0;
+  return sel;
+}
+const PURPOSE_HINT = "For example: I am reading this to decide how to price our product. I want to come away able to explain the main models and when each one fails.";
+
 /* ---------- home ---------- */
 function showAdd() {
   const app = $("app");
-  let file = null;
+  let file = null, looked = null, lookedOf = null;   // looked: what the app knows of the chosen book (words, chapters)
   const error = h("div", { class: "msg err", role: "alert", hidden: true });
   const name = h("span", { class: "m mute" }, "No file chosen");
   const input = h("input", { type: "file", accept: ".epub,application/epub+zip", hidden: true, onchange: () => choose(input.files[0]) });
-  const pathInput = h("input", { type: "text", placeholder: "/home/you/Books/Title.epub", id: "path" });
+  const pathInput = h("input", { type: "text", placeholder: "/home/you/Books/Title.epub", id: "path", onchange: () => { file = null; name.textContent = "No file chosen"; name.classList.add("mute"); look(); } });
   function choose(f) {
     if (!f) return;
     file = f; pathInput.value = "";
     name.textContent = `${f.name} / ${(f.size / 1048576).toFixed(1)} MB`; name.classList.remove("mute");
+    look();
   }
   const drop = h("div", { class: "drop reg",
     ondragover: (e) => { e.preventDefault(); drop.classList.add("over"); },
@@ -339,31 +368,94 @@ function showAdd() {
     h("div", { class: "row" }, h("button", { type: "button", onclick: () => input.click() }, "Choose a file"), name), input);
 
   const field = (label, control, hint) => h("label", { class: "field" }, h("span", { class: "m" }, label), control, hint ? h("small", {}, hint) : null);
-  const options = addForm = AppSettings.processing(info, AppSettings.runDefaults());   // starts from the defaults in Settings
+  const options = addForm = AppSettings.processing(info, AppSettings.runDefaults(), () => estimate());   // starts from the defaults in Settings
+
+  // What you want from this book. Settings holds what is true of every book: who you are, and how you like questions.
+  const purpose = h("textarea", { id: "purpose", maxlength: (info.limits || {}).text || 2000, placeholder: PURPOSE_HINT, oninput: () => { estimate(); next(); } });
+  const useAbout = h("input", { type: "checkbox", checked: true, id: "use-about", onchange: () => { estimate(); next(); } });
+  const about = h("div"), after = h("small", { style: "display:block;color:var(--mute);margin-top:10px;font-size:13px;max-width:80ch" });
+  const steered = () => !!(purpose.value.trim() || (useAbout.checked && AppSettings.values.steer_about) || AppSettings.values.steer_style);
+  function drawAbout() {
+    const v = AppSettings.values, open = h("button", { class: "text", type: "button", onclick: () => AppSettings.open("questions") }, v.steer_about || v.steer_style ? "Change" : "Open Settings");
+    put(about,
+      v.steer_about ? h("label", { class: "tick" }, useAbout, h("span", {}, "Also use what Settings says about me and my work")) : null,
+      h("div", { class: "row", style: "margin-top:6px" }, h("small", { class: "mute", style: "font-size:13px" },
+        v.steer_about || v.steer_style
+          ? (v.steer_style ? "How you like questions, from Settings, applies to every book." : "Settings has nothing yet on how you like questions.")
+          : "Settings can also hold what matters to you in general and how you like questions, for every book."), open));
+    estimate(); next();
+  }
+  options.steer = drawAbout;
+  function next() {                     // what pressing a button leads to
+    after.textContent = !steered() ? "" : AppSettings.values.steer_confirm === false
+      ? "Your words go to the question writers as they are. (Settings can show you first how they were read.)"
+      : "First the model shows how it reads what you want, with a look at the book's chapters. Nothing else runs until you confirm.";
+  }
+
+  // The chosen book's length and chapters: for the estimate, and for trying one chapter.
+  const est = h("div", { class: "est", hidden: true, id: "estimate", "aria-live": "polite" }), chapterBox = h("span");
+  let chapter = null, estTimer = null, estCall = 0;
+  async function look() {
+    const path = pathInput.value.trim(), key = file || path;
+    if (!key) { looked = lookedOf = null; return estimate(); }
+    if (lookedOf === key) return;
+    lookedOf = key; looked = null; error.hidden = true;
+    try {
+      const seen = file ? await api(`/look?name=${encodeURIComponent(file.name)}`, { method: "POST", body: file, headers: { "Content-Type": "application/epub+zip" } })
+        : await api("/look/local", { method: "POST", json: { path } });
+      if (lookedOf !== key) return;
+      looked = seen;
+    } catch (err) { if (lookedOf !== key) return; lookedOf = null; error.textContent = err.message; error.hidden = false; }
+    chapter = looked && looked.chapters.some((c) => c.words >= 100) ? chapterSelect(looked.chapters, looked.suggested) : null;
+    put(chapterBox, chapter);
+    $("try").hidden = !chapter;
+    estimate();
+  }
+  function estimate() {                 // follows the options as they change
+    clearTimeout(estTimer);
+    if (!looked) { est.hidden = true; return; }
+    estTimer = setTimeout(async () => {
+      const mine = ++estCall;
+      try {
+        const e = await api("/estimate", { method: "POST", json: { words: looked.chapters.map((c) => c.words), settings: options.read(), steered: steered() } });
+        if (mine === estCall && looked) { put(est, estimateText(e)); est.hidden = false; }
+      } catch (err) { if (mine === estCall) est.hidden = true; }
+    }, 150);
+  }
+
+  let trial = false;
   const form = h("form", { onsubmit: submit },
     drop,
     h("div", { style: "margin-top:18px" }, field("Or the path of a file on this computer", pathInput)),
     options.main,
     h("details", { class: "adv" }, h("summary", {}, "Advanced"), options.advanced),
-    error,
-    h("div", { class: "actions" }, h("button", { class: "primary", type: "submit", id: "go" }, "Process book"),
-      h("span", { class: "mute", style: "font-size:14px" }, "The original file is only read. Runs use your Claude plan, or your ChatGPT plan for Codex models."),
-      h("button", { class: "text", type: "button", style: "margin-left:auto", onclick: () => AppSettings.open("add") }, "Change what this form starts with")));
+    h("div", { class: "want", style: "margin-top:26px;border-top:1px solid var(--ghost);padding-top:18px" },
+      field("What do you want from this book?", purpose, "Why you are reading it and what you want to keep from it. The questions favour what bears on this, and the parts of the book that do may get more of them. Every answer still comes from the book. Leave it empty for questions on each section's own main ideas."),
+      about),
+    est, error,
+    h("div", { class: "actions" }, h("button", { class: "primary", type: "submit", id: "go", onclick: () => { trial = false; } }, "Process book"),
+      h("span", { class: "row want", id: "try", hidden: true }, h("button", { type: "submit", id: "go-try", onclick: () => { trial = true; } }, "Try on a chapter"), chapterBox),
+      h("button", { class: "text", type: "button", style: "margin-left:auto", onclick: () => AppSettings.open("add") }, "Change what this form starts with")),
+    after,
+    h("small", { class: "mute", style: "display:block;margin-top:10px;font-size:13px;max-width:80ch" }, "The original file is only read. Runs use your Claude plan, or your ChatGPT plan for Codex models. A trial writes and checks the questions of one chapter, so that you can see them before the whole book is processed; the chapter is kept if you go on unchanged."));
 
   async function submit(e) {
     e.preventDefault(); error.hidden = true;
     const settings = options.read();
     const path = pathInput.value.trim();
     if (!file && !path) { error.textContent = "Choose an EPUB first."; error.hidden = false; return; }
-    $("go").disabled = true; $("go").textContent = "Reading the book";
+    const plan = { purpose: purpose.value, interests: useAbout.checked };
+    if (trial && chapter) plan.trial = +chapter.value;
+    $("go").disabled = $("go-try").disabled = true; $("go").textContent = "Reading the book";
     try {
       const job = path && !file
-        ? await api("/jobs/local", { method: "POST", json: { path, settings } })
-        : await api(`/jobs?name=${encodeURIComponent(file.name)}&settings=${encodeURIComponent(JSON.stringify(settings))}`,
+        ? await api("/jobs/local", { method: "POST", json: { path, settings, plan } })
+        : await api(`/jobs?name=${encodeURIComponent(file.name)}&settings=${encodeURIComponent(JSON.stringify(settings))}&plan=${encodeURIComponent(JSON.stringify(plan))}`,
             { method: "POST", body: file, headers: { "Content-Type": "application/epub+zip" } });
       location.hash = "#/run/" + job.id;
-    } catch (err) { error.textContent = err.message; error.hidden = false; $("go").disabled = false; $("go").textContent = "Process book"; }
+    } catch (err) { error.textContent = err.message; error.hidden = false; $("go").disabled = $("go-try").disabled = false; $("go").textContent = "Process book"; }
   }
+  drawAbout();
 
   const importError = h("div", { class: "msg err", role: "alert", hidden: true });
   const importInput = h("input", { type: "file", accept: ".epub,application/epub+zip", hidden: true, onchange: async () => {
@@ -540,12 +632,23 @@ async function showNotebook(id) {
       h("div", { class: "row" },
         q.status !== "accepted" ? h("button", { class: "text", onclick: () => ask("/" + q.id, { method: "PUT", json: { accept: true } }) }, "Accept") : null,
         h("button", { class: "text", onclick: edit }, "Reword"),
-        hid && q.status !== "accepted" ? h("button", { class: "text", disabled: asks.pending.includes(hid), onclick: () => ask("/propose", { method: "POST", json: { highlight: hid } }) }, "Another") : null,
+        hid && q.status !== "accepted" ? h("button", { class: "text", disabled: asks.pending.includes(hid), onclick: () => another(box, hid) }, "Another") : null,
         h("button", { class: "text", onclick: () => { if (q.status !== "accepted" || confirm("Remove this question, and its place in practice?")) ask("/" + q.id, { method: "DELETE" }); } }, q.status === "accepted" ? "Remove" : "Discard"),
         q.status === "accepted" ? h("span", { class: "m mute" }, q.ask === "checkpoint" && !q.first ? "Asked at the end of its section" : "In practice") : null));
     function edit() { put(box, wording(q, (question, answer) => ask("/" + q.id, { method: "PUT", json: { question, answer } }), show)); }
     show();
     return box;
+  }
+  // Asking for another question: with a word on what should be different, if you like.
+  function another(under, hid) {
+    document.getElementById("nb-wish")?.remove();
+    const wish = h("input", { type: "text", "aria-label": "What should be different", maxlength: (info.limits || {}).instruction || 300,
+      placeholder: "What should be different? For example: ask about the cause instead. (You can leave this empty.)",
+      style: "flex:1;min-width:240px;font:15px/1.3 var(--grot);color:var(--ink);background:var(--sheet);border:1px solid var(--ink);padding:9px 11px" });
+    const send = () => ask("/propose", { method: "POST", json: { highlight: hid, instruction: wish.value } });
+    wish.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); send(); } if (e.key === "Escape") form.remove(); });
+    const form = h("div", { class: "row", id: "nb-wish", style: "margin:8px 0 4px" }, wish, h("button", { type: "button", onclick: send }, "Write it"), h("button", { class: "text", type: "button", onclick: () => form.remove() }, "Cancel"));
+    under.append(form); wish.focus();
   }
   function wording(q, save, cancel) {   // the two fields of a question, to reword one or to write your own
     const question = h("textarea", { "aria-label": "Question", placeholder: "The question", style: "min-height:64px" });
@@ -567,7 +670,7 @@ async function showNotebook(id) {
     const writing = asks.pending.includes(i.id), own = h("div");
     return h("div", { id: "nb-" + i.id }, h("div", { class: "quote" }, h("a", { ...openAt(i.chapter, i.word), title: "Open in the reader" }, i.text)),
       slot(i.note, (v) => call(`/item/${i.id}`, { method: "PUT", json: { text: v } }), "Add a note", () => [
-        h("button", { class: "text", disabled: writing, onclick: () => ask("/propose", { method: "POST", json: { highlight: i.id } }) }, i.questions.length ? "Another question" : "Make a question"),
+        h("button", { class: "text", disabled: writing, onclick: () => (i.questions.length ? another(own, i.id) : ask("/propose", { method: "POST", json: { highlight: i.id } })) }, i.questions.length ? "Another question" : "Make a question"),
         h("button", { class: "text", onclick: () => put(own, wording(null, (question, answer) => ask("", { method: "POST", json: { highlight: i.id, question, answer } }), () => put(own))) }, "Write my own"),
         h("button", { class: "text", onclick: () => removeHighlight(i) }, "Remove highlight")]),
       i.questions.map((q) => asked(q, i.id)), own,
@@ -760,6 +863,8 @@ async function showRun(id) {
     catch (e) { put(head, h("p", { class: "msg err" }, e.message)); return; }
     drawHead();
     if (job.status === "done" && lastStatus !== "done") await (job.report ? loadReview() : drawImported());
+    else if (job.status === "asking") { if (lastStatus !== "asking") drawAsking(); }   // not redrawn while you write in it
+    else if (job.status === "tried") { if (lastStatus !== "tried") drawTried(); }
     else if (job.status !== "done") drawProgress();
     lastStatus = job.status;
     if (job.status === "queued" || job.status === "running") timer = setTimeout(poll, 1500);
@@ -787,6 +892,7 @@ async function showRun(id) {
           job.can_read ? h("a", { class: "btn", href: "#/notebook/" + id }, job.notes && job.notes.highlights + job.notes.notes ? `Notebook ${job.notes.highlights + job.notes.notes}` : "Notebook") : null,
           job.practice && job.practice.cards ? h("a", { class: "btn", href: "#/practice/" + id },
             (() => { const n = job.practice.due + job.practice.again + job.practice.new; return n ? `Practice ${n}` : "Practice"; })()) : null,
+          job.status === "asking" || job.status === "tried" ? h("span", { class: "m" }, job.status === "asking" ? "Look at how your wishes were read, below." : "Look at the chapter you tried, below.") : null,
           active ? h("button", { onclick: act("/cancel") }, "Stop") : null,
           job.status === "stopped" || job.status === "failed" ? h("button", { onclick: act("/continue") }, "Continue") : null,
           !active ? h("button", { class: "text", onclick: async () => {
@@ -796,15 +902,109 @@ async function showRun(id) {
   function drawProgress() {
     const active = job.status === "queued" || job.status === "running";
     const share = job.total ? Math.min(1, (job.done || 0) / job.total) : null;
-    const at = STAGES.findIndex(([k]) => k === job.stage);
+    const stages = [...(job.reading_state && job.reading_state !== "none" ? [["reading", "Read wishes"]] : []), ...STAGES];
+    const at = stages.findIndex(([k]) => k === job.stage);
     const cells = Array.from({ length: 32 }, (_, n) => h("i", { class: share != null && n < Math.round(share * 32) ? "f" : "", style: `--n:${n}` }));
     put(body, band("Progress",
-      h("div", { class: "steps m" }, STAGES.map(([k, t], n) => h("span", { class: n < at ? "past" : n === at ? "on" : "" }, t))),
+      job.trial && job.trial.state === "wanted" ? h("p", { class: "lede" }, "Trying one chapter: its questions are written and checked as the whole book's would be.") : null,
+      h("div", { class: "steps m" }, stages.map(([k, t], n) => h("span", { class: n < at ? "past" : n === at ? "on" : "" }, t))),
       active ? h("div", { class: "cells" + (share == null ? " wait" : ""), role: "progressbar", "aria-valuemin": 0, "aria-valuemax": 100,
         "aria-valuenow": share == null ? undefined : Math.round(share * 100) }, cells) : null,
       h("p", { class: job.status === "failed" ? "msg err" : job.status === "stopped" ? "msg" : "", style: "margin-bottom:0" }, job.message || ""),
       h("ul", { class: "log", "aria-label": "Activity" }, (job.events || []).slice().reverse().map((e) =>
         h("li", { class: e.stage === "warning" ? "w" : "" }, `${new Date(e.time).toLocaleTimeString()}  ${e.stage.toUpperCase()}  ${e.message}`)))));
+  }
+  // ---- waiting for you: the reading of your wishes, and the chapter you tried
+  const go = async (path, body, method = "POST") => {
+    try { await api(`/jobs/${id}${path}`, { method, json: body }); }
+    catch (e) { alert(e.message); return; }
+    clearTimeout(timer); lastStatus = null; poll();
+  };
+  const fieldOf = (label, control, hint) => h("div", { class: "field" }, h("span", { class: "m" }, label), control, hint ? h("small", {}, hint) : null);
+  function trialPick(label, send) {     // a chapter to try, and the button that tries it
+    const chapters = (job.chapters || []).filter((c) => c.words >= 100);
+    if (!chapters.length) return null;
+    const sel = chapterSelect(chapters, (job.trial || {}).doc);
+    sel.style.maxWidth = "32ch";
+    return h("span", { class: "row", style: "flex-wrap:nowrap" }, h("button", { type: "button", style: "white-space:nowrap", onclick: () => send(+sel.value) }, label), sel);
+  }
+  function drawAsking() {
+    const r = job.read_as || { focus: "", style: "", chapters: [], questions: [] };
+    const area = (value, label) => { const t = h("textarea", { "aria-label": label }); t.value = value || ""; return t; };
+    const focus = area(r.focus, "What the questions will favour"), style = area(r.style, "How they will be written");
+    const ticks = r.chapters.map((c) => [c.doc, h("input", { type: "checkbox", checked: true })]);
+    const answers = r.questions.map((q) => h("input", { type: "text", "aria-label": q, placeholder: "Your answer, or leave it" }));
+    const feedback = h("textarea", { "aria-label": "What should change", style: "min-height:72px", placeholder: "Anything it got wrong or left out. For example: I care about the method, not the history; do not favour chapter 2." });
+    const mine = () => ({ focus: focus.value, style: style.value, chapters: ticks.filter(([, box]) => box.checked).map(([doc]) => doc), answers: answers.map((a) => a.value) });
+    const confirm_ = (next, doc) => go("/reading", { action: "confirm", ...mine(), next, doc });
+    put(body, band("How your wishes were read",
+      h("div", { class: "want" },
+        h("p", { class: "lede" }, "The model read what you want from this book, with a look at how each chapter opens. This is what the question writers will be told, word for word: they do not see your own words. Correct it here, or tell the model what to change and have it read again."),
+        fieldOf("What the questions will favour", focus),
+        fieldOf("How they will be written", style, r.style ? null : "Nothing was said about this, so the usual manner applies. You can write a wish here."),
+        r.cannot ? h("div", { class: "msg" }, h("b", {}, "Cannot be followed. "), r.cannot) : null,
+        r.gaps ? h("div", { class: "msg" }, h("b", {}, "Not found in this book. "), r.gaps) : null,
+        r.chapters.length ? fieldOf("Chapters it bears on most",
+          h("div", {}, r.chapters.map((c, n) => h("label", { class: "tick" }, ticks[n][1], h("span", {}, h("b", {}, c.title), " ", h("small", {}, c.why))))),
+          "These may get more questions, up to your limit. Untick one that does not belong. The other chapters get the usual number.") : null,
+        r.questions.length ? fieldOf("The model asks", h("div", {}, r.questions.map((q, n) => h("div", { style: "margin-top:10px" }, h("div", {}, q), answers[n]))),
+          "Answer any you like. An answer you confirm with is added to the reading in your words; with Read again it is worked in.") : null,
+        fieldOf("Tell the model what to change", feedback),
+        h("div", { class: "row", style: "margin-top:10px" }, h("button", { type: "button", id: "read-again", onclick: () => go("/reading", { action: "again", feedback: feedback.value, ...mine() }) }, "Read again")),
+        job.estimate ? h("div", { class: "est" }, estimateText(job.estimate)) : null,
+        h("div", { class: "actions" },
+          h("button", { class: "primary", type: "button", id: "confirm-whole", onclick: () => confirm_("whole") }, "Confirm and process the book"),
+          trialPick("Confirm and try a chapter", (doc) => confirm_("trial", doc)),
+          h("button", { class: "text", type: "button", style: "margin-left:auto", onclick: () => { if (confirm("Process without your wishes? The questions will be on each section's own main ideas.")) go("/reading", { action: "without" }); } }, "Go on without them")))));
+  }
+  function wants(extra) {               // the box for why you read this book, as it is kept with the book
+    const st = job.steer || {};
+    const text = h("textarea", { id: "purpose", "aria-label": "What you want from this book", placeholder: PURPOSE_HINT, maxlength: (info.limits || {}).text || 2000 });
+    text.value = st.purpose || "";
+    const use = h("input", { type: "checkbox", checked: st.interests !== false });
+    return { text, use, read: () => ({ purpose: text.value, interests: use.checked, ...extra }),
+      box: h("div", {}, text, AppSettings.values.steer_about ? h("label", { class: "tick" }, use, h("span", {}, "Also use what Settings says about me and my work")) : null) };
+  }
+  function drawTried() {
+    const t = job.tried, trial = job.trial || {}, chapter = (job.chapters || []).find((c) => c.index === trial.doc) || { title: "the chapter", words: 0 };
+    if (!t) { put(body, h("p", { class: "msg err" }, "The trial could not be read. Try the chapter again.")); return; }
+    const all = t.sections.flatMap((s) => s.questions), kept = all.filter((q) => q.kept).length;
+    const whole = job.estimate && chapter.words ? Math.round(kept / chapter.words * job.estimate.words) : null;
+    const w = wants({ next: "trial", doc: trial.doc });
+    put(body,
+      h("div", { class: "stats" }, [[kept, "Questions"], [t.sections.filter((s) => s.questions.some((q) => q.kept)).length, "Checkpoints"], [t.sections.length, "Sections"], [all.length - kept, "Left out"]].map(([n, k]) =>
+        h("div", { class: "stat" }, h("b", {}, fmt(n)), h("span", { class: "m" }, k)))),
+      band("The chapter you tried",
+        h("p", { class: "lede" }, `“${chapter.title}”, ${fmt(chapter.words)} words, written and checked as the whole book would be. Nothing else has been processed.`
+          + (whole ? ` At this rate the whole book would get about ${fmt(whole)} questions.` : "")),
+        h("div", { id: "tried" }, t.sections.map((s) => h("section", { class: "section" },
+          h("header", {}, h("b", {}, s.label), h("span", { class: "m mute raw" }, `${fmt(s.words || 0)} words`)),
+          s.questions.length ? s.questions.map((q) => h("div", { class: "q plain" + (q.kept ? "" : " off") }, h("div", {},
+            h("div", { class: "qt", style: "cursor:auto" }, q.question), h("div", { class: "at" }, q.answer),
+            !q.kept ? h("p", { class: "note" }, "Left out: it failed its check. " + (q.problem || "")) : q.minor_note ? h("p", { class: "note" }, "Checker's remark: " + q.minor_note) : null)))
+            : h("p", { class: "note" }, "No questions for this section."))))),
+      band("What next",
+        h("div", { class: "want" },
+          h("div", { class: "row" }, h("button", { class: "primary", type: "button", id: "go-whole", onclick: () => go("/next", { next: "whole" }) }, "Process the whole book"),
+            h("span", { class: "mute", style: "font-size:14px" }, "This chapter is kept as it is.")),
+          h("div", { style: "margin-top:26px" }, trialPick("Try another chapter", (doc) => go("/next", { next: "trial", doc }))),
+          h("div", { style: "margin-top:26px" }, fieldOf("Or change what you want from this book", w.box,
+            "The chapter is then written again with the new wishes" + (AppSettings.values.steer_confirm === false ? "." : ", after you have confirmed how they were read.") + " To change how you like questions for every book, use Settings first.")),
+          h("div", { class: "row", style: "margin-top:10px" }, h("button", { type: "button", id: "retry", onclick: () => go("/steer", w.read(), "PUT") }, "Try this chapter again")))));
+  }
+  function wantsBand() {                // on a finished book: guides the questions asked for on highlights
+    const w = wants({}), saved = h("span", { class: "m mute" });
+    const c = job.reading_state === "confirmed" ? job.confirmed : null;
+    return band("What you want",
+      h("div", { class: "want" },
+        h("p", { class: "lede" }, job.report ? "Why you read this book. Questions you ask for on a highlight follow it from now on. The book's own questions stay as they were written." : "Why you read this book. Questions you ask for on a highlight follow it."),
+        w.box,
+        h("div", { class: "row", style: "margin-top:10px" }, h("button", { type: "button", id: "save-purpose", onclick: async () => {
+          try { job = await api(`/jobs/${id}/steer`, { method: "PUT", json: w.read() }); saved.textContent = "Saved"; setTimeout(() => { saved.textContent = ""; }, 2000); } catch (e) { alert(e.message); } } }, "Save"), saved,
+          h("button", { class: "text", type: "button", onclick: () => AppSettings.open("questions") }, "About me and how I like questions")),
+        c ? h("details", { class: "adv" }, h("summary", {}, "How your wishes were read for this book's questions"),
+          c.focus ? fieldOf("What the questions favour", h("p", { style: "margin:0;white-space:pre-wrap;max-width:80ch" }, c.focus)) : null,
+          c.style ? fieldOf("How they were written", h("p", { style: "margin:0;white-space:pre-wrap;max-width:80ch" }, c.style)) : null) : null));
   }
   function drawImported() {
     const c = job.counts || {}, name = job.file.replace(/\.epub$/i, "") + ".prepared.epub";
@@ -813,7 +1013,8 @@ async function showRun(id) {
         h("div", { class: "stat" }, h("b", {}, fmt(n || 0)), h("span", { class: "m" }, t)))),
       band("This book", h("p", { class: "lede" }, "Added as a prepared book. It can be read with its checkpoints. Taking questions out and the Anki deck need a run made in this app from the original EPUB."),
         h("div", { class: "files" }, h("div", { class: "file" }, h("b", {}, "Book for the Picco firmware"), h("small", {}, "The file you added."),
-          h("a", { class: "btn", href: `/api/jobs/${id}/files/${encodeURIComponent(name)}`, download: name }, "Download")))));
+          h("a", { class: "btn", href: `/api/jobs/${id}/files/${encodeURIComponent(name)}`, download: name }, "Download")))),
+      wantsBand());
   }
   async function loadReview() {
     try { review = await api(`/jobs/${id}/review`); }
@@ -873,6 +1074,7 @@ async function showRun(id) {
           return h("div", { class: "file" }, h("b", {}, title), h("small", {}, name ? what : "Not written. The report says why."),
             name ? h("a", { class: "btn", href: `/api/jobs/${id}/files/${encodeURIComponent(name)}`, download: name }, "Download") : null);
         }))),
+      wantsBand(),
       band("Questions",
         h("p", { class: "lede" }, "Untick any question you do not want, then rebuild. Rebuilding takes seconds and does not call a model."),
         h("div", { class: "filters", role: "group", "aria-label": "Show" }, filters.map(([k, t]) =>

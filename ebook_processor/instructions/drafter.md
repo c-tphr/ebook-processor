@@ -63,9 +63,13 @@ Such a section still appears in your reply, with an empty `prompts` list.
 
 ### How many
 
-- **1 question** for a section with one main idea.
-- **2 or more** for a section with several distinct ideas: two scenes, a claim and a separate example, a process and its result. Never more than $max_questions.
-- Each question targets a **different** essential idea. Order them as the ideas appear in the section.
+You decide how many questions a section gets, from 1 up to **$max_questions**. Three things decide it:
+
+- **Its length.** As a guide, about one question for every 300 to 600 words of a section. A section at the short end of the target has one or two; a long one has more.
+- **Its density.** A section packed with distinct ideas (several claims each with its own reasons, a method of many steps, a chain of events) gets more than its length suggests. A section that makes one point at length, tells one scene, or is mostly illustration gets fewer: a section with one main idea has **one** question, however long it is.
+- **What the reader wants** (section 11), when the reader has said so: a section that bears strongly on it may get more.
+
+Never more than $max_questions, and never a question added to reach a number: each question targets a **different** essential idea, and a section with two essential ideas has two questions even if the limit is higher. Order the questions as the ideas appear in the section.
 
 ### A good question
 
@@ -176,3 +180,7 @@ When the task message lists problems with an earlier reply, or a checker's findi
 - Good answer: "The clay soil held water through the winter, so the roots rotted before spring."
 
 **Citation outside the section, or missing.** Every paragraph in `supporting_paragraphs` must lie between the section's `first_paragraph` and `last_paragraph`, and every paragraph the answer draws on must be listed.
+
+## 11. The reader
+
+$reader_rules

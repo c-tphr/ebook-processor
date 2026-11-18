@@ -19,6 +19,7 @@ Steps:
 
 from __future__ import annotations
 
+import copy
 import datetime as _dt
 import json
 import os
@@ -43,6 +44,7 @@ from .prep.extract import extract
 from .prep.limits import MAX_LABEL_CHARS
 from .prep.validate import exclusion_category
 from .settings import INSTRUCTIONS_VERSION, Settings
+from .steer import Steer
 
 STATE_FORMAT = "ebook-processor-state"
 STATE_VERSION = 1
@@ -132,12 +134,20 @@ class Unit:
         return self.docs[0].prefix if len(self.docs) == 1 else f"{self.docs[0].prefix}-{self.docs[-1].prefix}"
 
 
-def plan_units(book: Book, settings: Settings) -> list[Unit]:
+def plan_units(book: Book, settings: Settings, only: set[int] | None = None,
+               skip: set[str] | None = None) -> list[Unit]:
+    """The drafting work. ``only`` keeps it to the documents with these spine indexes (a trial of one chapter);
+    ``skip`` leaves out documents, by prefix, whose ranges are already there (carried over from a trial)."""
     units: list[Unit] = []
     batch: list[SpineDoc] = []
     total = 0
     for sd in book.spine:
-        if not sd.is_xhtml or not sd.blocks:
+        if not sd.is_xhtml or not sd.blocks or (only is not None and sd.index not in only):
+            continue
+        if skip and sd.prefix in skip:
+            if batch:  # the documents on either side are not drafted as neighbours
+                units.append(Unit(batch, False))
+                batch, total = [], 0
             continue
         words = words_of(sd.blocks)
         if words > settings.part_words * 1.4:
@@ -318,7 +328,8 @@ def fallback_ranges(groups: list[tuple[SpineDoc, list[Block]]], settings: Settin
 # State
 
 
-def new_state(book: Book, settings: Settings) -> dict[str, Any]:
+def new_state(book: Book, settings: Settings, steer: Steer | None = None,
+              only: set[int] | None = None) -> dict[str, Any]:
     return {
         "format": STATE_FORMAT,
         "version": STATE_VERSION,
@@ -331,6 +342,9 @@ def new_state(book: Book, settings: Settings) -> dict[str, Any]:
                    "language": book.language or "und",
                    "words": sum(len(sd.words) for sd in book.spine)},
         "settings": settings.as_json(),
+        "steer": steer.as_json() if steer is not None and not steer.empty else None,
+        "only": sorted(only) if only is not None else None,  # a trial: the spine indexes it is kept to
+        "carried": [],  # documents (by prefix) whose ranges came from a trial
         "stage": "draft",  # draft -> check -> done
         "parts": {},
         "excluded": [],
@@ -357,6 +371,69 @@ def load_state(work: Path) -> dict[str, Any] | None:
     return state
 
 
+def count_call(usage: dict[str, Any], role: str, completion: Completion) -> None:
+    """Add one call to a run's totals."""
+    per = usage["by_role"].setdefault(role, {"calls": 0, "cost_usd": 0.0, "input_tokens": 0, "output_tokens": 0,
+                                             "seconds": 0.0})
+    for target in (usage, per):
+        target["calls"] += 1
+        target["cost_usd"] = round(target["cost_usd"] + completion.cost_usd, 6)
+        target["input_tokens"] += completion.input_tokens
+        target["output_tokens"] += completion.output_tokens
+        target["seconds"] = round(target["seconds"] + completion.seconds, 1)
+    if not completion.priced:  # Codex: the tool reports no price, so the total covers the other calls only
+        usage["unpriced_calls"] = usage.get("unpriced_calls", 0) + 1
+    if completion.model:
+        usage["models"][role] = completion.model
+
+
+def add_usage(usage: dict[str, Any], other: dict[str, Any]) -> None:
+    """Add the totals of another run (a trial whose chapter is taken over) to a run's totals."""
+    def add(target: dict[str, Any], source: dict[str, Any]) -> None:
+        for key in ("calls", "input_tokens", "output_tokens"):
+            target[key] = target.get(key, 0) + source.get(key, 0)
+        target["cost_usd"] = round(target.get("cost_usd", 0.0) + source.get("cost_usd", 0.0), 6)
+        target["seconds"] = round(target.get("seconds", 0.0) + source.get("seconds", 0.0), 1)
+
+    add(usage, other)
+    for role, per in other.get("by_role", {}).items():
+        add(usage["by_role"].setdefault(role, {"calls": 0, "cost_usd": 0.0, "input_tokens": 0, "output_tokens": 0,
+                                               "seconds": 0.0}), per)
+    if other.get("unpriced_calls"):
+        usage["unpriced_calls"] = usage.get("unpriced_calls", 0) + other["unpriced_calls"]
+    for role, model in other.get("models", {}).items():
+        usage["models"].setdefault(role, model)
+
+
+def steer_key(state: dict[str, Any]) -> str:
+    return Steer.from_json(state.get("steer")).key()
+
+
+def carried_ranges(trial: dict[str, Any], book: Book) -> dict[str, list[dict[str, Any]]]:
+    """What a finished trial holds, as ranges a new run can take over: document prefix -> its ranges in reading
+    order, each question and section with everything the trial found out about it."""
+    prefix = {sd.href: sd.prefix for sd in book.spine}
+    out: dict[str, list[dict[str, Any]]] = {}
+    by_section: dict[str, list[dict[str, Any]]] = {}
+    for q in trial["questions"]:
+        by_section.setdefault(q["section"], []).append(q)
+    for s in trial["sections"]:
+        base = {k: s[k] for k in ("chapter_href", "first_paragraph", "last_paragraph")}
+        out.setdefault(prefix[s["chapter_href"]], []).append({
+            **base, "kind": "section", "label": s["label"],
+            "carried": {k: s[k] for k in ("judged", "natural_boundary", "boundary_note")},
+            "prompts": [{"prompt": q["prompt"], "answer": q["answer"], "supporting_paragraphs": q["supporting_paragraphs"],
+                         "carried": {k: copy.deepcopy(q[k]) for k in ("status", "checks", "criteria", "citations", "evidence",
+                                                                      "problem", "suggested_fix", "minor_note", "history")}}
+                        for q in by_section.get(s["id"], [])]})
+    for e in trial["excluded"]:
+        base = {k: e[k] for k in ("chapter_href", "first_paragraph", "last_paragraph")}
+        out.setdefault(prefix[e["chapter_href"]], []).append({
+            **base, "kind": "excluded", "reason": e["reason"],
+            "carried": {k: e[k] for k in ("acceptable", "note", "reviewed", "redrafted") if k in e}})
+    return out
+
+
 def kept(q: dict[str, Any]) -> bool:
     return q["status"] in KEPT and not q.get("removed")
 
@@ -367,8 +444,14 @@ def kept(q: dict[str, Any]) -> bool:
 
 class Run:
     def __init__(self, epub: Path, work: Path, settings: Settings, backend: Backend, progress: Progress | None = None,
-                 cancel: threading.Event | None = None):
+                 cancel: threading.Event | None = None, steer: Steer | None = None, only: set[int] | None = None,
+                 carry: dict[str, Any] | None = None, spent: list[Completion] | None = None):
+        """``steer`` is what the reader wants from the book. ``only`` keeps the run to some documents (a trial of
+        one chapter). ``carry`` is the finished state of such a trial, whose chapter a new run takes over instead
+        of writing it again. ``spent`` are calls made for this run before it started (the reading of the steer)."""
         self.epub, self.work, self.settings, self.backend = epub, work, settings, backend
+        self.steer = steer if steer is not None and not steer.empty else None
+        self.only, self.carry, self.spent = only, carry, spent or []
         self.progress = progress or (lambda event: None)
         self.cancel = cancel or threading.Event()
         self.lock = threading.RLock()
@@ -404,19 +487,7 @@ class Run:
         except BackendCancelled:  # stopped while the call was running or waiting for the network
             raise Cancelled() from None
         with self.lock:
-            usage = self.state["usage"]
-            per = usage["by_role"].setdefault(role, {"calls": 0, "cost_usd": 0.0, "input_tokens": 0,
-                                                     "output_tokens": 0, "seconds": 0.0})
-            for target in (usage, per):
-                target["calls"] += 1
-                target["cost_usd"] = round(target["cost_usd"] + completion.cost_usd, 6)
-                target["input_tokens"] += completion.input_tokens
-                target["output_tokens"] += completion.output_tokens
-                target["seconds"] = round(target["seconds"] + completion.seconds, 1)
-            if not completion.priced:  # Codex: the tool reports no price, so the total covers the other calls only
-                usage["unpriced_calls"] = usage.get("unpriced_calls", 0) + 1
-            if completion.model:
-                usage["models"][role] = completion.model
+            count_call(self.state["usage"], role, completion)
         return completion
 
     def parallel(self, jobs: list[Callable[[], None]]) -> None:
@@ -462,12 +533,23 @@ class Run:
                 raise PipelineError(
                     f"{self.work} holds a run made with other options ({_differences(old, self.settings)}). Use "
                     "the same options to continue it, or choose a new output folder to start again.")
+            if steer_key(existing) != (self.steer.key() if self.steer else ""):
+                raise PipelineError(
+                    f"{self.work} holds a run made with {'another' if existing.get('steer') else 'no'} statement of "
+                    "what you want from the book. Give the same one to continue it, or choose a new output folder "
+                    "to start again.")
+            if existing.get("only") != (sorted(self.only) if self.only is not None else None):
+                raise PipelineError(f"{self.work} holds a run of {'a part of' if existing.get('only') else 'the whole'} "
+                                    "book; choose a new output folder")
             self.state = existing
             self.state["settings"] = self.settings.as_json()
             self.emit("start", f"continuing the run in {self.work}")
         else:
             extract(self.epub, self.work)
-            self.state = new_state(self.book, self.settings)
+            self.state = new_state(self.book, self.settings, self.steer, self.only)
+            for completion in self.spent:
+                count_call(self.state["usage"], "reading", completion)
+            self.take_over()
         copy = self.work / SOURCE_COPY  # rebuilding the outputs later needs the book, wherever the original goes
         if not copy.is_file():
             shutil.copyfile(self.epub, copy)
@@ -477,10 +559,23 @@ class Run:
             self.read_dir = folder if self.images else None
         self.save()
 
+    def take_over(self) -> None:
+        """Start from the chapter a trial has already written and checked, when it was made the same way."""
+        trial = self.carry
+        if not trial or trial.get("stage") != "done" or trial["source"]["sha256"] != self.book.sha256 \
+                or Settings.from_json(trial["settings"]).drafting_key() != self.settings.drafting_key() \
+                or steer_key(trial) != (self.steer.key() if self.steer else ""):
+            return
+        for prefix, ranges in carried_ranges(trial, self.book).items():
+            self.state["parts"][prefix] = sorted(ranges, key=self.index.order)
+            self.state["carried"].append(prefix)
+        add_usage(self.state["usage"], trial["usage"])
+        self.emit("start", "taking over the chapter you tried: " + ", ".join(self.state["carried"]))
+
     # ---- draft
 
     def draft(self) -> None:
-        units = plan_units(self.book, self.settings)
+        units = plan_units(self.book, self.settings, self.only, set(self.state.get("carried") or []))
         total = sum(words_of(sd.blocks) for u in units for sd in u.docs)
         self.drafted_words = 0
         self.emit("draft", f"drafting {total:,} words in {len(units)} part{'s' if len(units) != 1 else ''}"
@@ -530,13 +625,13 @@ class Run:
 
     def draft_part(self, groups: list[tuple[SpineDoc, list[Block]]], continues: Block | None, previous: str | None,
                    key: str, feedback: str | None = None) -> list[dict[str, Any]]:
-        system = prompts.drafter_system(self.settings)
+        system = prompts.drafter_system(self.settings, self.steer)
         ranges: list[dict[str, Any]] = []
         structural: list[str] = []
         flaws: list[tuple[int, int, str]] = []
         for _ in range(DRAFT_ATTEMPTS):
             message = prompts.draft_message(self.book, groups, self.settings, self.images, continues, previous,
-                                            feedback)
+                                            feedback, self.steer)
             reply = self.call("draft", system, message, prompts.DRAFT_SCHEMA).data
             ranges, structural, flaws = check_part(reply, groups, continues is not None, self.settings)
             if not structural and not flaws:
@@ -560,23 +655,26 @@ class Run:
         state = self.state
         for entry in sorted(ranges, key=self.index.order):
             base = {k: entry[k] for k in ("chapter_href", "first_paragraph", "last_paragraph")}
+            carried = entry.get("carried") or {}  # what a trial already found out
             if entry["kind"] == "excluded":
                 state["excluded"].append({**base, "reason": entry["reason"], "acceptable": True if reviewed else None,
-                                          "note": "", "reviewed": reviewed})
+                                          "note": "", "reviewed": reviewed, **carried})
                 continue
             sid = f"s{state['next']['section']:04d}"
             state["next"]["section"] += 1
             section = {"id": sid, **base, "label": entry["label"], "checkpoint": None, "judged": False,
-                       "natural_boundary": None, "boundary_note": ""}
+                       "natural_boundary": None, "boundary_note": "", **carried}
             if entry["prompts"]:
                 section["checkpoint"] = f"c{state['next']['checkpoint']:04d}"
                 state["next"]["checkpoint"] += 1
             state["sections"].append(section)
             for n, q in enumerate(entry["prompts"], start=1):
+                found = q.get("carried") or {}
                 state["questions"].append({
-                    "id": f"{section['checkpoint']}-p{n}", "section": sid, **q, "status": "unchecked", "checks": 0,
+                    "id": f"{section['checkpoint']}-p{n}", "section": sid,
+                    **{k: v for k, v in q.items() if k != "carried"}, "status": "unchecked", "checks": 0,
                     "criteria": {}, "citations": [], "evidence": "", "problem": "", "suggested_fix": "",
-                    "minor_note": "", "history": [], "removed": False})
+                    "minor_note": "", "history": [], "removed": False, **copy.deepcopy(found)})
         state["sections"].sort(key=self.index.order)
         state["excluded"].sort(key=self.index.order)
         position = {s["id"]: n for n, s in enumerate(state["sections"])}
@@ -586,7 +684,7 @@ class Run:
         with self.lock:
             self.add_ranges([r for ranges in self.state["parts"].values() for r in ranges])
             self.state["stage"] = "check"
-        issues = draft_issues(self.book, self.state)
+        issues = [] if self.only is not None else draft_issues(self.book, self.state)
         if issues:
             raise PipelineError("the assembled draft does not fit the book (a fault of this tool, not of the book):\n"
                                 + "\n".join(f"  {i}" for i in issues[:20]))
@@ -661,7 +759,7 @@ class Run:
         return out
 
     def check_batch(self, items: list[dict[str, Any]], total: int) -> None:
-        system = prompts.checker_system(self.settings)
+        system = prompts.checker_system(self.settings, self.steer)
         wanted = {q["id"]: (q, {b.ref for b in item["blocks"]}) for item in items for q in item["questions"]}
         judge = {item["section"]["id"]: item["section"] for item in items if item["judge_break"]}
         feedback = None
@@ -698,7 +796,7 @@ class Run:
         self.emit("check", f"checked {done} of {total} questions", done, total)
 
     def revise_batch(self, items: list[dict[str, Any]]) -> None:
-        system = prompts.drafter_system(self.settings)
+        system = prompts.drafter_system(self.settings, self.steer)
         wanted = {q["id"]: (q, {b.ref for b in item["blocks"]}) for item in items for q in item["failed"]}
         feedback = None
         good: dict[str, dict[str, Any]] = {}
@@ -905,10 +1003,11 @@ def draft_issues(book: Book, state: dict[str, Any]) -> list[str]:
 
 
 def process(epub: Path, work: Path, settings: Settings, backend: Backend, progress: Progress | None = None,
-            cancel: threading.Event | None = None) -> tuple[Book, dict[str, Any]]:
-    """Run (or continue) the Claude part of a run. Returns the book and the final state."""
+            cancel: threading.Event | None = None, steer: Steer | None = None, only: set[int] | None = None,
+            carry: dict[str, Any] | None = None, spent: list[Completion] | None = None) -> tuple[Book, dict[str, Any]]:
+    """Run (or continue) the models' part of a run. Returns the book and the final state."""
     try:
-        run = Run(epub, work, settings, backend, progress, cancel)
+        run = Run(epub, work, settings, backend, progress, cancel, steer, only, carry, spent)
     except EpubError as exc:
         raise PipelineError(str(exc)) from exc
     return run.book, run.run()

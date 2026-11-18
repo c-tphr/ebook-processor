@@ -10,6 +10,7 @@ from .content import clipped, render_blocks
 from .prep.checkpoints import ANSWER_MAX_CHARS, PROMPT_MAX_CHARS
 from .prep.epub import Block, Book, SpineDoc
 from .settings import INSTRUCTIONS_VERSION, Settings
+from .steer import Steer, chapter_note, checker_rules, drafter_rules
 
 _DIR = Path(__file__).resolve().parent / "instructions"
 LABEL_MAX_CHARS = 100
@@ -83,15 +84,17 @@ def _template(name: str) -> Template:
     return Template((_DIR / name).read_text(encoding="utf-8"))
 
 
-def drafter_system(settings: Settings) -> str:
+def drafter_system(settings: Settings, steer: Steer | None = None) -> str:
     return _template("drafter.md").substitute(
+        reader_rules=drafter_rules(steer),
         version=INSTRUCTIONS_VERSION, min_words=settings.min_words, max_words=settings.max_words,
         max_questions=settings.max_questions, prompt_chars=PROMPT_MAX_CHARS, answer_chars=ANSWER_MAX_CHARS,
         content_rules=CONTENT_RULES[settings.content], kind_rules=DRAFTER_KIND[settings.kind])
 
 
-def checker_system(settings: Settings) -> str:
+def checker_system(settings: Settings, steer: Steer | None = None) -> str:
     return _template("checker.md").substitute(
+        reader_rules=checker_rules(steer),
         version=INSTRUCTIONS_VERSION, min_words=settings.min_words, max_words=settings.max_words,
         content_rules=CONTENT_RULES[settings.content], kind_rules=CHECKER_KIND)
 
@@ -146,7 +149,7 @@ def book_header(book: Book, current: set[int]) -> str:
 
 def draft_message(book: Book, groups: list[tuple[SpineDoc, list[Block]]], settings: Settings,
                   images: dict[str, list[str]] | None, continues: Block | None = None,
-                  previous: str | None = None, feedback: str | None = None) -> str:
+                  previous: str | None = None, feedback: str | None = None, steer: Steer | None = None) -> str:
     """The task for one part. ``groups`` are (document, blocks to cover); ``continues`` is the last block of the
     document when the part stops before it."""
     parts = [book_header(book, {sd.index for sd, _ in groups}), "", "TASK"]
@@ -164,6 +167,9 @@ def draft_message(book: Book, groups: list[tuple[SpineDoc, list[Block]]], settin
                      "of this text, and leave out what follows it.")
     else:
         parts.append("Every paragraph listed must be in exactly one range.")
+    note = chapter_note(steer, [sd.prefix for sd, _ in groups])
+    if note:
+        parts.append(note)
     parts.append("Divide the text into sections and excluded ranges and write the questions, as your instructions "
                  "say. Reply with the JSON object only.")
     if feedback:

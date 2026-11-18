@@ -164,7 +164,7 @@ def test_content_modes_show_or_hide_tables_code_and_images(tmp_path):
 def test_instructions_carry_the_settings():
     system = prompts.drafter_system(from_options(section_words="400-1200", max_questions=2, content="figures",
                                                  kind="narrative"))
-    assert "Target 400 to 1200 words" in system and "Never more than 2." in system
+    assert "Target 400 to 1200 words" in system and "from 1 up to **2**" in system
     assert "open it with the Read tool" in system and "The reader says this book is narrative." in system
     assert "$" not in system and "$" not in prompts.checker_system(Settings())
     assert "stands_alone" in prompts.checker_system(Settings())

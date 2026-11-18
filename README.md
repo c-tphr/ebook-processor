@@ -94,7 +94,7 @@ That processes the book with the default options and prints where the files are.
 | `-o FOLDER` | Where the results go | `Book-processed` beside the EPUB |
 | `--density short\|medium\|long` | Target section length: 300 to 1,000, 600 to 2,000 or 1,500 to 4,000 words. A checkpoint follows each section | `medium` |
 | `--section-words MIN-MAX` | The same, in your own numbers | |
-| `--max-questions N` | Most questions per checkpoint, 1 to 4 | 3 |
+| `--max-questions N` | Most questions per checkpoint, 1 to 8. The model chooses how many, up to this, by the section's length and density and by what you want from the book | 3 |
 | `--kind auto\|expository\|narrative\|technical` | The kind of book. `auto` decides section by section | `auto` |
 | `--content prose\|text\|figures` | What Claude sees of tables, code, formulas and pictures (below) | `text` |
 | `--rounds N` | How often a question may be checked. 0 switches checking off | 3 |
@@ -102,8 +102,19 @@ That processes the book with the default options and prints where the files are.
 | `--jobs N` | Calls to Claude at the same time | 3 |
 | `--epubcheck` | Also run EPUBCheck on both books (needs Java; downloads EPUBCheck once) | off |
 | `--preview-questions` | In the book with visible checkpoints, begin each section with a page that lists its questions (see "Previewing the questions") | off |
+| `--purpose TEXT`, `--about-me TEXT`, `--question-style TEXT` | What you want from the book, what matters to you in general, and how you like questions (see "What you want from a book"). Each takes text, or `@FILE` to read it from a file | none |
+| `--yes`, `--no-reading` | With those three: use the model's reading of them without asking you, or skip the reading and give your words to the question writers as they are | you are asked |
+| `--try-chapter N` | Write and check the questions of one chapter only, and print them. A later run of the whole book with the same options takes the chapter over | whole book |
 
 `ebook-processor process --help` lists them all.
+
+**To see what a run would give** before it uses your plan:
+
+```bash
+ebook-processor estimate path/to/Book.epub --density short --max-questions 5
+```
+
+It prints about how many sections and questions the options lead to, and the book's chapters with the numbers `--try-chapter` takes. No model is called.
 
 **If a run stops** (your plan's usage limit, a closed laptop, Ctrl-C), give the same command again. It continues where it stopped; nothing already done is repeated.
 
@@ -133,11 +144,36 @@ Every page has a **Settings** button at the top right. It opens one window with 
 | --- | --- |
 | General | Colours (as the system, light, dark) for every page; the version and where your books are kept |
 | Add a book | What the Add a book form starts with. The form keeps its options, so one book can still differ. Books already processed are not affected |
+| Your questions | What the models are told about you: what matters to you and what you work on, and how you like questions. And whether you are shown how your wishes were read before a run (see "What you want from a book") |
 | Reader | Typeface, size, line spacing, column width, and the view a new book opens in |
 | Notebook | Whether **Open** shows a passage beside the notebook or in the full reader, which side the reader is on, and whether it scrolls or turns pages |
 | Practice | The numbers of the schedule (see Practice below) |
 
 A change applies at once, also in other open tabs of the app. Settings are kept in `reader-settings.json` and `srs-settings.json` in the data folder.
+
+### What you want from a book
+
+Left to itself, the model asks about each section's own main ideas. You can tell it what matters to you, in three places:
+
+| Where | What you write | Applies to |
+| --- | --- | --- |
+| **What do you want from this book?** on the Add a book page | Why you are reading this book and what you want to keep from it | That book |
+| **About me and what I am working on**, in Settings under Your questions | What matters to you in general: your work, your projects, what you are trying to get better at | Every book, unless you untick it for one on the Add a book page |
+| **How I like questions**, in the same place | The manner: why and how rather than what, short answers, names and dates or not | Every book |
+
+**What it changes.** Which of a section's ideas are asked about, and from which side. How many questions a section gets: the model chooses the number up to your limit (1 to 8) by the section's length, its density and how strongly it bears on what you want. And the manner of the questions, where your wishes win over the tool's own taste (a reader preparing for an exam can have the dates the tool otherwise calls trivia).
+
+**What it never changes.** Every answer comes from the section it belongs to, so there are no questions about how something applies to your own work. Questions are recalled from memory: no multiple choice, true-or-false or fill-in-the-blank. Every section is still asked about: your wishes move the emphasis, they do not skip the parts you care less about. The independent check judges the same five points as before; it is told your manner only so that it does not remark on, say, a date you asked for.
+
+**How your wishes were read.** Before anything is written, the model states in its own words what it will favour and how it will write, after a look at how each chapter opens. It lists the chapters your purpose bears on most (they may get more questions), says which wishes cannot be followed and what the book does not seem to hold, and may ask you up to three questions. You correct the reading in place, or tell the model what to change and have it read again, as often as you like. What you confirm is handed to the question writers word for word; they do not see your own words. **Go on without them** processes the book with no wishes at all. This step is one short call. It can be switched off in Settings; your words then go to the writers as they are.
+
+**How many questions.** Once you choose a file, the Add a book page shows about how many questions and checkpoints the run will give, and the numbers follow the section length and the limit as you change them. It is a range, because the model decides within your limits; it was fitted to real runs.
+
+**Try on a chapter.** Instead of the whole book you can have one chapter written and checked, which takes a minute or two, and look at its questions. Then process the whole book (the chapter is kept as it is), try another chapter, or change what you want and try the same chapter again. The page also says how many questions the whole book would get at the chapter's rate.
+
+**Later.** A finished book's page has the box again. Changing it there guides the questions you ask for on highlights from then on; the book's own questions stay as they were written, with your grades and practice history.
+
+What you write in these boxes is sent to the model with every request that writes questions. It is kept in the app's data folder and in the run's work folder. The report states what the question writers were told; the books, the deck and the questions file do not contain it.
 
 ### The reader
 
@@ -166,7 +202,7 @@ The strip at the bottom is the book: one block per section, with a square for ea
 
 A highlight can become a practice question. In the reader, select text and press **q** (or **Question**); in RSVP, **q** takes the sentence being shown. In the notebook, each highlight has **Make a question** and **Write my own**, and one action proposes a question for every highlight of the book, or of a chapter, that has none yet.
 
-- **Who writes it.** The model reads the highlight inside its section, with your note on the highlight as a pointer to what you care about, and proposes one question and answer. You accept it, reword it, ask for another, or discard it; a highlight can have several. Or you write your own. The models are the ones set in Settings, on the Add a book tab.
+- **Who writes it.** The model reads the highlight inside its section, with your note on the highlight as a pointer to what you care about, and proposes one question and answer. It follows what you want from the book (above) as it is at that moment. You accept it, reword it, ask for another, or discard it; a highlight can have several. **Another** has a box for what should be different ("ask about the cause instead", "make it harder"), which you can leave empty. Or you write your own. The models are the ones set in Settings, on the Add a book tab.
 - **When it arrives.** A setting on the Reader tab decides what happens after you ask for a question while reading: it waits in the notebook (the default); a panel opens and shows it when it is written; a small notice appears that you can press or leave; or it is accepted without asking. Accepted without asking, a question first gets the same independent check as the book's own questions, and one that fails is held back for you with the reason. In the notebook a proposal always appears for you to decide.
 - **Where it is asked.** An accepted question is asked at the end of its section in the app's reader, after the book's own questions, if you have not finished that section yet. Otherwise it goes straight to Practice as a new card. The book's files and the exported books are not changed.
 - **Where it shows.** In the notebook under its highlight, set like a checkpoint answer, and in the notebook's Markdown export. In the Anki deck, the text file and the questions data file, tagged `from::highlight`; these are brought up to date when you next download them.
@@ -242,7 +278,9 @@ Reading state lives in `reading.json` in the book's folder. It follows the saved
 4. **Revise.** A question that fails goes back to the drafter with the checker's finding, and then to the checker again, up to three checks. A question that still fails is **left out** of every output and listed in the report with the reason. The run always delivers a book.
 5. **Build.** Scripts write the two books, the JSON, the deck and the text file, and check the firmware-format book against the original (13 structure checks: the text is unchanged word for word, every marker sits between two words, the data file fits the firmware's limits, and so on).
 
-The rules Claude follows are in `ebook_processor/instructions/drafter.md` and `checker.md`. Read them to see exactly what a good section, question and answer are taken to be; change them to change the questions.
+When you have said what you want from the book, a step comes first: the model reads your wishes beside a skim of the book and you confirm its reading (see "What you want from a book").
+
+The rules Claude follows are in `ebook_processor/instructions/drafter.md` and `checker.md`; `reading.md` holds the rules for reading your wishes and `highlight.md` those for a question on a highlight. Read them to see exactly what a good section, question and answer are taken to be; change them to change the questions.
 
 ### Questions that stand alone
 
@@ -293,7 +331,7 @@ Codex is a coding agent and cannot be run with no tools at all, so a call to it 
 
 - **Usage.** A run reads the book about twice (once to draft, once to check) and writes a few hundred words per section. The report gives the number of calls and tokens, and what they would have cost at API list prices, as a measure of size; a Claude plan is not billed per run.
 - **Card identities.** Importing a rebuilt deck of the same run updates the cards and keeps your review history. Processing the same book again from scratch writes new questions, so it makes new cards: delete the old deck first if you do not want both.
-- **Very long books in the firmware format.** The firmware's data file holds at most 512 sections and 1,024 questions. A very long book at a short section length can exceed that. The book with visible checkpoints and the deck are still written, and the report says so; a longer section length fixes it.
+- **Very long books in the firmware format.** The firmware's data file holds at most 512 sections and 1,024 questions. A very long book at a short section length, or with a high limit of questions per checkpoint, can exceed that; the estimate on the Add a book page warns when it may. The book with visible checkpoints and the deck are still written, and the report says so; a longer section length fixes it.
 - **Page breaks.** The visible checkpoints use standard CSS page breaks written into the chapter files. The original's own styles, fonts and images are untouched. The book's title gets the suffix " (checkpoints)" so that the two editions can be told apart in a library (`--title-suffix ''` switches that off).
 - **DRM.** A book with DRM cannot be read. Use a DRM-free EPUB.
 

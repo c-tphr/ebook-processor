@@ -38,6 +38,7 @@ from .prep.epub import Block, SpineDoc
 from .prep.checkpoints import ANSWER_MAX_CHARS, PROMPT_MAX_CHARS
 from .reading import ReadingBook
 from .settings import INSTRUCTIONS_VERSION, Settings
+from .steer import Steer, highlight_rules
 
 PROPOSE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["question", "answer"],
                   "properties": {"question": {"type": "string"}, "answer": {"type": "string"}}}
@@ -221,13 +222,14 @@ def passage_refs(book: ReadingBook, q: dict[str, Any]) -> list[tuple[SpineDoc, B
 # The model
 
 
-def system(settings: Settings) -> str:
+def system(settings: Settings, steer: Steer | None = None) -> str:
     text = (Path(__file__).resolve().parent / "instructions" / "highlight.md").read_text(encoding="utf-8")
-    return Template(text).substitute(version=INSTRUCTIONS_VERSION, prompt_chars=PROMPT_MAX_CHARS, answer_chars=ANSWER_MAX_CHARS)
+    return Template(text).substitute(version=INSTRUCTIONS_VERSION, prompt_chars=PROMPT_MAX_CHARS, answer_chars=ANSWER_MAX_CHARS,
+                                     reader_rules=highlight_rules(steer))
 
 
 def propose_message(book: ReadingBook, place: dict[str, Any], highlight: dict[str, Any], asked: list[str],
-                    settings: Settings) -> str:
+                    settings: Settings, instruction: str = "") -> str:
     sd: SpineDoc = place["doc"]
     parts = [f"BOOK\nTitle: {book.book.title or '(no title)'}\nLanguage: {book.book.language or 'unknown'}", "",
              f"SECTION \"{place['section']['label']}\" ({sd.href})", "",
@@ -235,6 +237,8 @@ def propose_message(book: ReadingBook, place: dict[str, Any], highlight: dict[st
              f"HIGHLIGHT (in {', '.join(b.ref for b in place['marked'])})", highlight["text"]]
     if highlight.get("note"):
         parts += ["", "THE READER'S NOTE", highlight["note"]]
+    if instruction:
+        parts += ["", "THE READER ASKS OF THIS QUESTION", instruction]
     if asked:
         parts += ["", "ALREADY ASKED"] + [f"- {a}" for a in asked]
     parts += ["", "Write one question about the highlight, with its reference answer. Reply with the JSON object only."]
@@ -242,16 +246,18 @@ def propose_message(book: ReadingBook, place: dict[str, Any], highlight: dict[st
 
 
 def propose(backend: Backend, book: ReadingBook, manifest: dict[str, Any], store: dict[str, Any],
-            highlight: dict[str, Any], settings: Settings) -> dict[str, Any]:
-    """Ask the model for a question about a highlight: ``{"question", "answer", "model"}``. Raises ``BackendError``
-    when the model cannot be reached or does not answer usably."""
+            highlight: dict[str, Any], settings: Settings, steer: Steer | None = None,
+            instruction: str = "") -> dict[str, Any]:
+    """Ask the model for a question about a highlight: ``{"question", "answer", "model"}``. ``steer`` is what the
+    reader wants from the book; ``instruction`` is their wish for this one question. Raises ``BackendError`` when
+    the model cannot be reached or does not answer usably."""
     place = around(book, manifest, highlight["chapter"], highlight["start"], highlight["end"])
     section = next((s for s in manifest["sections"] if s["id"] == place["section"]["id"]), None)
     asked = [q["question"] for q in of_highlight(store, highlight["id"])] + [p["prompt"] for p in (section or {}).get("prompts", [])]
-    message = propose_message(book, place, highlight, asked, settings)
+    message = propose_message(book, place, highlight, asked, settings, instruction)
     feedback = ""
     for _ in range(2):  # a reply that breaks a plain rule is sent back once, with what was wrong
-        done = backend.complete(role="draft", system=system(settings), prompt=message + feedback, schema=PROPOSE_SCHEMA,
+        done = backend.complete(role="draft", system=system(settings, steer), prompt=message + feedback, schema=PROPOSE_SCHEMA,
                                 model=settings.model)
         try:
             return {"question": _clean(done.data.get("question"), "a question", PROMPT_MAX_CHARS),
@@ -261,14 +267,15 @@ def propose(backend: Backend, book: ReadingBook, manifest: dict[str, Any], store
     raise BackendError(f"the model's question could not be used: {feedback.splitlines()[-1]}")
 
 
-def check(backend: Backend, book: ReadingBook, manifest: dict[str, Any], q: dict[str, Any], settings: Settings) -> dict[str, Any]:
+def check(backend: Backend, book: ReadingBook, manifest: dict[str, Any], q: dict[str, Any], settings: Settings,
+          steer: Steer | None = None) -> dict[str, Any]:
     """The independent check of one question, by the rules the book's own questions are checked by:
     ``{"passed", "criteria", "problem"}``. A reply that cannot be used counts as not passed."""
     place = around(book, manifest, q["chapter"], q["start"], q["end"])
     item = {"doc": place["doc"], "section": place["section"], "blocks": place["blocks"], "first": place["first"],
             "last": place["last"], "judge_break": False,
             "questions": [{"id": q["id"], "prompt": q["question"], "answer": q["answer"]}]}
-    done = backend.complete(role="check", system=prompts.checker_system(settings),
+    done = backend.complete(role="check", system=prompts.checker_system(settings, steer),
                             prompt=prompts.check_message(book.book, [item], settings, None), schema=prompts.CHECK_SCHEMA,
                             model=settings.checker_model or settings.model)
     verdict = next((p for p in done.data.get("prompts") or [] if isinstance(p, dict) and p.get("id") == q["id"]), None)

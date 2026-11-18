@@ -178,6 +178,7 @@ body.pane .sv { padding-top: 20px; }
 .hq .one .why { color: var(--mute); font-size: 14px; }
 .hq textarea { width: 100%; min-height: 70px; font: 15px/1.45 var(--grot); color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 8px 10px; resize: vertical; margin-top: 6px; }
 .hq .more { border-top: 1px solid var(--ink); padding-top: 12px; }
+.hq input[type=text] { width: 100%; font: 15px/1.45 var(--grot); color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 8px 10px; }
 .toast { position: fixed; right: 18px; bottom: 74px; z-index: 18; max-width: min(420px, calc(100vw - 36px)); background: var(--ink); color: var(--paper); padding: 10px 12px; display: flex; gap: 12px; align-items: center; font-size: 14px; }
 .toast button { border-color: var(--paper); color: var(--paper); flex: none; } .toast button:hover { background: var(--paper); color: var(--ink); }
 /* a section's questions, shown before it when previews are on */
@@ -1014,7 +1015,15 @@ function questionPanel(hid) {         // a highlight's questions: to accept, rew
     mine.map(one), writing ? h("p", { class: "m", id: "hq-writing" }, "Writing a question") : null,
     asking.failed[hid] ? h("p", { class: "why" }, "A question could not be written: " + asking.failed[hid]) : null, own,
     h("div", { class: "more" },
-      h("button", { disabled: writing, onclick: () => { awaited.set(hid, { mode: "wait", had: mine.map((q) => q.id) }); questionCall("/propose", { method: "POST", json: { highlight: hid } }); } }, mine.length ? "Another" : "Make a question"),
+      h("button", { disabled: writing, onclick: () => {
+        const send = (instruction) => { awaited.set(hid, { mode: "wait", had: mine.map((q) => q.id) }); questionCall("/propose", { method: "POST", json: { highlight: hid, instruction } }); };
+        if (!mine.length) return send("");
+        // another one: with a word on what should be different, if you like
+        const wish = h("input", { type: "text", id: "hq-wish", "aria-label": "What should be different", maxlength: 300, placeholder: "What should be different? (optional)" });
+        wish.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") send(wish.value); if (e.key === "Escape") questionPanel(hid); });
+        put(own, h("div", { class: "one" }, wish, h("div", { class: "acts" }, h("button", { class: "primary", onclick: () => send(wish.value) }, "Write it"), h("button", { class: "link", onclick: () => put(own) }, "Cancel"))));
+        wish.focus();
+      } }, mine.length ? "Another" : "Make a question"),
       h("button", { class: "link", onclick: () => put(own, form(null, (question, answer) => questionCall("", { method: "POST", json: { highlight: hid, question, answer } }))) }, "Write my own"),
       h("a", { class: "m", href: "/#/notebook/" + ID, style: "margin-left:auto" }, "Notebook"))));
   panelFor = hid;                     // kept up to date while it is open

@@ -387,7 +387,7 @@ def test_settings_presets_and_limits():
     assert (from_options(density="long").min_words, from_options(density="long").max_words) == (1500, 4000)
     assert from_options(section_words="400-1200").max_words == 1200
     assert from_options(section_words="3000-8000").part_words >= 16000  # a part holds at least two sections
-    for bad in ({"section_words": "abc"}, {"section_words": "900-300"}, {"max_questions": 5}, {"rounds": 9},
+    for bad in ({"section_words": "abc"}, {"section_words": "900-300"}, {"max_questions": 9}, {"rounds": 9},
                 {"content": "everything"}, {"density": "tiny"}):
         with pytest.raises(SettingsError):
             from_options(**bad)

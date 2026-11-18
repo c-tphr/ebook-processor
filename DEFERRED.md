@@ -72,6 +72,20 @@ Options that came up in the interviews and were passed over. They are not planne
 | Its own model setting | These questions use the Add a book defaults |
 | A question without a highlight | A card written from scratch, tied to no passage |
 
+### What you want from a book
+
+| Item | What it means |
+| --- | --- |
+| Questions about your own work | "How could this apply to your pricing project?" Passed over: such a question has no answer in the book, so it cannot be checked, graded or practised. Your work decides which ideas of the book are asked about instead |
+| Fewer or no questions for parts you care less about | Your wishes can add questions where the book bears on them. They do not remove a section's questions |
+| Several named profiles | "Work", "Exam", "Leisure", one picked per book. There is one text about you, which a book can leave out, and one about how you like questions |
+| The check judging whether a question follows your wishes | The independent check keeps its five points. It is told your manner only so that it does not remark on it |
+| Rewriting a processed book's questions after the purpose changes | A changed purpose guides questions on highlights from then on. Writing the questions of unread sections again, or processing the book again as a second copy, were the alternatives |
+| A wish with every request for a question | The box for what should be different comes with "Another". The first question for a highlight is written at one click |
+| Trying part of a very long chapter | A trial covers a whole chapter (one document of the EPUB). For a book that is a single long document the trial is the whole book |
+| Editing the reading on the command line | There you answer the model's questions and say what to change, and it reads again. Editing the reading's own words is in the app only |
+| A wish for the batch of highlight questions | "Propose for all" follows what you want from the book, without a wish of its own |
+
 ### Narration
 
 Narration itself is planned and waiting on product research. These parts were passed over when it was scoped.
@@ -94,6 +108,7 @@ Things that work in tests but have not been confirmed in real use, and facts tha
 | Revision with real Claude | In the real runs no question failed its check, so the revise-and-recheck path has only run against the scripted stand-in |
 | Recovery from a lost connection | Tested with stand-in programs that hang and a stand-in network, for both tools, and one real call through the new code path. A real loss of connection during a real run was not produced: what Claude Code and Codex themselves do then (hang, or fail with which message) was not observed |
 | Questions from highlights with a real model | Built and tested against a stand-in that writes a fixed kind of question. What a real model writes from the instructions, how long a request takes, and how often the check holds a question back have not been seen |
+| What you want from a book, with a real model | One real reading and one steered trial chapter (2,563 words, limit 8) were made: the reading was sensible, said that multiple choice cannot be written, and the 17 questions followed the purpose and manner and all passed the check. Two unsteered trials of the same chapter gave 10 questions at a limit of 8 and 7 at a limit of 3. Not seen: a whole steered book, the reading being corrected over several rounds by a real model, Codex as the reader, and how well the estimate holds for fiction and technical books (it was fitted to two expository books) |
 | Usage-limit handling | A run recognises the plan's usage limit by the wording of Claude Code's error. No real limit message has been seen |
 | Codex with a real login | The Codex side was built against the real program (codex-cli 0.169.0): it accepts every option the tool passes, its model list is read, and the instructions it would show the model were inspected. No call reached a model, because the machine it was built on had no ChatGPT login and no route to OpenAI. Unconfirmed: that the reply schema is accepted as it is, the wording of a real usage-limit message, the token counts, and that Codex opens pictures in figures mode |
 | macOS, WSL and Windows itself | The tests run on Linux, Windows and macOS after every push, with stand-ins for Claude Code and Codex, and the app's pages run in Chromium, Firefox and WebKit. Still unknown: the real tools on each system beyond what the owner has seen work on Windows, the Safari app itself (WebKit is its engine, not the app), and whether Codex's read-only sandbox needs any setup on Windows |
@@ -102,5 +117,5 @@ Things that work in tests but have not been confirmed in real use, and facts tha
 | The Anki deck in Anki | The deck was checked by reading its database, not by importing it |
 | Fiction and technical books | The rules are written; no such book has been processed |
 | Long RSVP sessions | RSVP was played for seconds at a time. Checkpoints firing during playback and stops at pictures and tables are untested in the browser |
-| Browser tests not yet written | The reader's search, footnotes and pictures; rereading a section after a missed question; taking questions out and rebuilding on a book's page; the practice schedule over several answers; Markdown export of the notebook |
+| Browser tests not yet written | Changing what you want after a trial and trying the chapter again; the reader's search, footnotes and pictures; rereading a section after a missed question; taking questions out and rebuilding on a book's page; the practice schedule over several answers; Markdown export of the notebook |
 | The schedule over real days | Practice was tested with a controlled calendar, not across days of real use |

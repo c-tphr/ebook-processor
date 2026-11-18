@@ -9,7 +9,7 @@
      AppSettings.values            the settings, defaults filled in
      AppSettings.set(key, value)   change one; null puts the default back
      AppSettings.onChange(fn)      fn(key, value) after every change; key "practice" carries the schedule
-     AppSettings.open(tab)         show the window on a tab: general, add, reader, notebook, practice
+     AppSettings.open(tab)         show the window on a tab: general, add, questions, reader, notebook, practice
      AppSettings.processing(...)   the options of a run, as used by the Add a book form and by the Add a book tab
 */
 (function () {
@@ -19,9 +19,10 @@ const DEFAULTS = {
   theme: "system",                                    // general
   face: "serif", size: 19, leading: 1.6, measure: "medium", read_mode: "page", read_preview: false, hq_review: "later",   // reader
   nb_beside: true, nb_side: "left", nb_view: "scroll", nb_split: 0.5,            // notebook and its side reader
+  steer_about: "", steer_style: "", steer_confirm: true,                         // what the question writers are told about you
 };
 const RUN_KEYS = ["density", "max_questions", "kind", "content", "rounds", "model", "checker_model", "effort", "jobs", "epubcheck", "preview"];
-const TABS = [["general", "General"], ["add", "Add a book"], ["reader", "Reader"], ["notebook", "Notebook"], ["practice", "Practice"]];
+const TABS = [["general", "General"], ["add", "Add a book"], ["questions", "Your questions"], ["reader", "Reader"], ["notebook", "Notebook"], ["practice", "Practice"]];
 const values = { ...DEFAULTS };
 const listeners = new Set();
 const channel = "BroadcastChannel" in window ? new BroadcastChannel("ebook-processor-settings") : null;
@@ -136,7 +137,7 @@ function processing(inf, initial, onchange) {
   const checkerHint = el("span", {}), effortHint = el("span", {});
   const text = (key, placeholder, value) => el("input", { type: "text", placeholder, value: value || "", onchange: () => fire(key) });
   const c = {
-    max_questions: select("max_questions", [[1, "1"], [2, "Up to 2"], [3, "Up to 3"], [4, "Up to 4"]], v.max_questions),
+    max_questions: select("max_questions", Array.from({ length: inf.max_questions || 8 }, (_, n) => [n + 1, n ? `Up to ${n + 1}` : "1"]), v.max_questions),
     kind: select("kind", [["auto", "Decide section by section"], ["expository", "Exposition (essays, science, history)"],
       ["narrative", "Narrative (novels, stories, memoir)"], ["technical", "Technical (textbooks, manuals)"]], v.kind),
     content: select("content", [["text", "Read tables, code and formulas"], ["figures", "Also look at the pictures (slower)"], ["prose", "Prose only"]], v.content),
@@ -187,7 +188,8 @@ function processing(inf, initial, onchange) {
   const main = el("div", { class: "st-grid" },
     el("div", { class: "st-field wide" }, el("span", { class: "m" }, "Section length"), density,
       el("small", {}, "A checkpoint follows each section. Breaks fall at natural boundaries, so lengths vary.")),
-    field("Questions per checkpoint", c.max_questions), field("Kind of book", c.kind),
+    field("Questions per checkpoint", c.max_questions, "The model chooses how many, up to this: more for a long or dense section, and for one that bears on what you want from the book."),
+    field("Kind of book", c.kind),
     field("Tables, code, formulas, figures", c.content, "What the model may see and ask about beyond the running text."),
     field("Independent check", c.rounds, "A question that fails its last check is left out and listed in the report."));
   const advanced = el("div", { class: "st-grid" },
@@ -207,6 +209,9 @@ const CSS = `
 .st-field select, .st-field input[type=text], .st-field input[type=number] { font: 15px/1.2 var(--grot); color: var(--ink); background: var(--sheet);
   border: 1px solid var(--ink); border-radius: 0; padding: 10px 11px; width: 100%; }
 .st-field input[type=number] { width: 11ch; font-family: var(--mono); }
+.st-field textarea, .stg textarea { display: block; width: 100%; min-height: 108px; resize: vertical; font: 15px/1.45 var(--grot); color: var(--ink);
+  background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 10px 11px; }
+.st-count { font: 11px/1.5 var(--mono); letter-spacing: 0.04em; color: var(--mute); float: right; }
 .st-seg { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--ink); }
 .st-seg label { text-align: center; padding: 11px 4px 10px; cursor: pointer; border-right: 1px solid var(--ink); font: 12px/1.3 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
 .st-seg label:last-child { border-right: 0; }
@@ -286,10 +291,37 @@ const DRAW = {
     return [el("h3", {}, "Add a book"),
       el("p", { class: "lede" }, "What the Add a book form starts with. Each can still be changed there for one book. Books already processed are not affected."),
       form.main, el("h4", {}, "Advanced"), form.advanced,
+      el("p", { style: "margin:22px 0 0;max-width:62ch" }, "What the models are told about you and how you like questions is on its own tab: ",
+        el("button", { type: "button", class: "quiet", onclick: () => show("questions") }, "Your questions"), "."),
       el("div", { style: "margin-top:26px" }, el("button", { type: "button", class: "quiet", onclick: async () => {
         for (const k of RUN_KEYS) if (values["add_" + k] != null) set("add_" + k, null);
         show("add");
       } }, "Put back the tool's own defaults"))];
+  },
+  async questions() {
+    const inf = await info().catch(() => ({}));
+    const limit = (inf.limits || {}).text || 2000;
+    const box = (key, label, placeholder, hint) => {
+      const count = el("span", { class: "st-count" });
+      const area = el("textarea", { maxlength: limit, placeholder, "aria-label": label, id: "st-" + key });
+      area.value = values[key] || "";
+      const tell = () => { count.textContent = area.value.length ? `${area.value.length.toLocaleString("en")} / ${limit.toLocaleString("en")}` : ""; };
+      area.addEventListener("input", tell);
+      area.addEventListener("change", () => set(key, area.value.trim() || null));
+      tell();
+      return el("div", { class: "st-field", style: "margin-top:22px" }, el("span", { class: "m" }, label, count), area, el("small", {}, hint));
+    };
+    return [el("h3", {}, "Your questions"),
+      el("p", { class: "lede" }, "What the models should know about you when they write questions: for a book you add, and for a question you ask for on a highlight. Each book also has a box of its own, for why you read that book. Whatever you write, every answer still comes from the book."),
+      box("steer_about", "About me and what I am working on",
+        "I run a small software company and am working out how to price a new product. I care about decisions I can act on, less about history.",
+        "Used to choose which ideas of a section are asked about, and which sections deserve more questions. It can be left out for one book on the Add a book page. It is sent to the model with each request that writes questions."),
+      box("steer_style", "How I like questions",
+        "Ask why and when to use something rather than what it is called. Keep answers to one or two sentences. I do want the names of people and the years.",
+        "Applies to every book. Questions stay recall questions with an answer from the text: multiple choice, true-or-false and fill-in-the-blank cannot be written."),
+      el("h4", {}, "Before a run"),
+      row("Show me how my wishes were read", choice("steer_confirm", [[true, "On"], [false, "Off"]]),
+        "On: before a book or a trial chapter is processed, the model states in its own words what it will favour and how it will write, with a look at the book's chapters. You correct it, answer its questions if it has any, and confirm. One short call. Off: your words go to the question writers as they are.")];
   },
   async reader() {
     const n = el("span", { class: "n" });

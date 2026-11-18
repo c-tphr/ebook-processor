@@ -32,12 +32,15 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from .. import __version__, notes, reading, srs
 from .. import highlight_questions as hq
-from ..llm import BackendCancelled, BackendError, ClaudeCodeBackend, CodexBackend, UsageLimitError, available_models
+from .. import steer as steering
+from ..llm import BackendCancelled, BackendError, ClaudeCodeBackend, CodexBackend, Completion, UsageLimitError, available_models
 from ..outputs import load_report, stem_of
-from ..pipeline import now, write_json
+from ..pipeline import STATE_FILE, now, write_json
 from ..prep.epub import EpubError, load_book_bytes
-from ..runner import Cancelled, PipelineError, default_backend, rebuild, review_data, run_book
-from ..settings import DENSITIES, Settings, SettingsError, from_options
+from ..prep.limits import MAX_PROMPTS
+from ..runner import Cancelled, PipelineError, default_backend, rebuild, review_data, run_book, trial_dir, try_chapter, work_dir
+from ..settings import DENSITIES, MAX_QUESTIONS, Settings, SettingsError, from_options
+from ..steer import Steer, SteerError
 
 STATIC = Path(__file__).resolve().parent / "static"
 MAX_UPLOAD = 300 * 1024 * 1024
@@ -47,6 +50,8 @@ EVENTS_KEPT = 300
 PAGES = {"index.html": "text/html; charset=utf-8", "reader.html": "text/html; charset=utf-8",
          "settings.js": "text/javascript; charset=utf-8"}   # the app's own files, by content type
 SETTINGS_FILE = "reader-settings.json"  # what the settings window keeps, for every page of the app
+LONG_SETTINGS = ("steer_about", "steer_style")  # the reader's own texts: longer than any other setting
+WAITING = ("asking", "tried")  # a run that waits for its reader: to confirm a reading, or after a trial chapter
 CSRF_HEADER = "X-Ebook-Processor"  # a page of another site cannot send this header, so it cannot start runs
 
 
@@ -64,6 +69,39 @@ def _safe_name(name: str) -> str:
     name = Path(name.replace("\\", "/")).name
     name = re.sub(r"[^\w .,()'&+-]", "_", name).strip(" .") or "book.epub"
     return name if name.lower().endswith(".epub") else name + ".epub"
+
+
+def _text(value: Any, limit: int = steering.TEXT_MAX) -> str:
+    try:
+        return steering.clean(value, limit)
+    except SteerError as exc:
+        raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+
+
+def suggested_chapter(chapters: list[dict[str, Any]]) -> int | None:
+    """The chapter to try a steer on: the first that is long enough to be a real one."""
+    real = next((c for c in chapters if c["words"] >= 1500), None) or max(chapters, key=lambda c: c["words"], default=None)
+    return real["index"] if real else None
+
+
+def look(name: str, data: bytes) -> dict[str, Any]:
+    """What the Add a book form shows of a book before anything is run: its length and its chapters."""
+    try:
+        book = load_book_bytes(data, _safe_name(name))
+    except EpubError as exc:
+        raise ApiError(HTTPStatus.BAD_REQUEST, f"This file cannot be read as an EPUB: {exc}") from exc
+    chapters = steering.chapter_list(book)
+    return {"title": book.title or stem_of(name), "words": sum(c["words"] for c in chapters), "chapters": chapters,
+            "suggested": suggested_chapter(chapters)}
+
+
+def estimate(words: Any, settings: Settings, steered: bool) -> dict[str, Any]:
+    if not isinstance(words, list) or len(words) > 5000 or not all(isinstance(w, int) and not isinstance(w, bool) and 0 <= w < 10**8 for w in words):
+        raise ApiError(HTTPStatus.BAD_REQUEST, "'words' is the list of the chapters' lengths")
+    out = steering.estimate(words, settings, steered)
+    out["max_questions"] = settings.max_questions
+    out["firmware_limit"] = MAX_PROMPTS if out["questions"][1] > MAX_PROMPTS else None
+    return out
 
 
 class Jobs:
@@ -269,9 +307,11 @@ class Jobs:
             return {"questions": hq.questions(store), "pending": sorted(asking["pending"]), "failed": dict(asking["failed"]),
                     "batch": dict(asking["batch"]) if asking["batch"] else None}
 
-    def propose(self, job_id: str, highlights: list[str] | None, auto: bool = False, chapter: int | None = None) -> dict[str, Any]:
+    def propose(self, job_id: str, highlights: list[str] | None, auto: bool = False, chapter: int | None = None,
+                instruction: str = "") -> dict[str, Any]:
         """Have a question written for each of the highlights, in the background. With ``highlights`` None it is
-        every highlight of the book (or of ``chapter``) that has no question yet: the batch."""
+        every highlight of the book (or of ``chapter``) that has no question yet: the batch. ``instruction`` is
+        the reader's wish for this one question."""
         self.book(job_id)
         with self.lock:
             store = notes.load(self.folder(job_id))
@@ -296,7 +336,7 @@ class Jobs:
                 asking["failed"].pop(hid, None)
             cancel = asking["cancel"]
         for hid in todo:
-            self.writers.submit(self._propose_one, job_id, hid, auto, cancel)
+            self.writers.submit(self._propose_one, job_id, hid, auto, cancel, instruction)
         return self.questions_state(job_id)
 
     def stop_questions(self, job_id: str) -> dict[str, Any]:
@@ -307,7 +347,7 @@ class Jobs:
                 asking["batch"]["running"] = False
         return self.questions_state(job_id)
 
-    def _propose_one(self, job_id: str, hid: str, auto: bool, cancel: threading.Event) -> None:
+    def _propose_one(self, job_id: str, hid: str, auto: bool, cancel: threading.Event, instruction: str = "") -> None:
         folder = self.folder(job_id)
         asking = self._asking(job_id)
         try:
@@ -316,6 +356,7 @@ class Jobs:
             book = self.book(job_id)
             settings = self.question_settings()
             with self.lock:
+                steer = self.steer_for(job_id)
                 store = notes.load(folder)
                 highlight = next((copy.deepcopy(h) for h in store["highlights"] if h["id"] == hid), None)
                 manifest = hq.with_questions(book.manifest(), store)
@@ -326,7 +367,7 @@ class Jobs:
             else:
                 backend = default_backend(settings, None, cancel)
                 backend.check_available([settings.model, settings.checker_model or settings.model] if auto else [settings.model])
-            made = hq.propose(backend, book, manifest, store, highlight, settings)
+            made = hq.propose(backend, book, manifest, store, highlight, settings, steer, instruction)
             with self.lock:
                 store = notes.load(folder)
                 # the highlight may have grown into another meanwhile: the question goes to whichever holds its start
@@ -338,7 +379,7 @@ class Jobs:
                 write_json(folder / notes.FILE, store)
                 asked = copy.deepcopy(q)
             if auto:  # accepted without the reader seeing it: checked first, and held back when it fails
-                verdict = hq.check(backend, book, manifest, asked, settings)
+                verdict = hq.check(backend, book, manifest, asked, settings, steer)
                 with self.lock:
                     store = notes.load(folder)
                     q = next((x for x in hq.questions(store) if x["id"] == asked["id"]), None)
@@ -472,7 +513,14 @@ class Jobs:
                     stored.pop(key, None)
                 elif isinstance(value, (bool, int, float)) or (isinstance(value, str) and len(value) <= 200):
                     stored[key] = value
-            if len(json.dumps(stored)) > 4000:
+                elif key in LONG_SETTINGS and isinstance(value, str):
+                    try:
+                        stored[key] = steering.clean(value)
+                    except steering.SteerError as exc:
+                        raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+                    if not stored[key]:
+                        del stored[key]
+            if len(json.dumps({k: v for k, v in stored.items() if k not in LONG_SETTINGS})) > 4000:
                 raise ApiError(HTTPStatus.BAD_REQUEST, "too many settings")
             write_json(path, stored)
         return stored
@@ -600,7 +648,144 @@ class Jobs:
         job.update({k: v for k, v in self.summary(self.jobs[job_id]).items() if k in ("can_read", "reading", "practice", "notes")})
         if job["can_read"]:
             job["results"] = reading.results(reading.load_state(self.folder(job_id)))
+        # what the reader wants from the book: their words for it, and the reading of them that is waiting or was used
+        mine = job.pop("steer", None) or {}
+        job.pop("spent", None), job.pop("again", None)
+        job["steer"] = {"purpose": mine.get("purpose", ""), "interests": mine.get("interests", True),
+                        "steered": bool(mine.get("purpose") or mine.get("about") or mine.get("style"))}
+        if job.get("reading_state") != "ready":  # the reading is shown while it waits for the reader's word
+            job["read_as"] = None
+        if job.get("chapters") and job.get("settings"):
+            try:
+                job["estimate"] = estimate([c["words"] for c in job["chapters"]], Settings.from_json(job["settings"]),
+                                           job["steer"]["steered"] and job.get("reading_state") != "without")
+            except SettingsError:
+                pass
+        if job["status"] == "tried":
+            try:
+                job["tried"] = review_data(trial_dir(self.folder(job_id)))
+            except PipelineError:
+                job["tried"] = None
         return job
+
+    # ---- what the reader wants from a book
+
+    def _run_steer(self, job: dict[str, Any]) -> Steer | None:
+        """What the question writers of this book's run are told: the confirmed reading, or without one the
+        reader's own words as they were when the book was added."""
+        state = job.get("reading_state")
+        mine = job.get("steer") or {}
+        if state == "without" or not mine:
+            return None
+        steer = Steer(mine.get("purpose", ""), mine.get("about", ""), mine.get("style", ""),
+                      job.get("confirmed") if state == "confirmed" else None)
+        return None if steer.empty else steer
+
+    def steer_for(self, job_id: str) -> Steer | None:
+        """What the writer of a question on a highlight is told: the reader's words as they are now. The reading
+        confirmed for the book's run stands for them for as long as they are the words it was made from."""
+        job = self.get(job_id)
+        ui = self.ui_settings()
+        mine = job.get("steer") or {}
+        now_ = Steer(mine.get("purpose", ""), str(ui.get("steer_about") or "") if mine.get("interests", True) else "",
+                     str(ui.get("steer_style") or ""))
+        if job.get("reading_state") == "confirmed" and job.get("confirmed") and job.get("confirmed_for") == now_.raw_key():
+            return Steer(now_.purpose, now_.about, now_.style, job["confirmed"])
+        return None if now_.empty else now_
+
+    def _plan(self, job: dict[str, Any], request: dict[str, Any]) -> None:
+        """What the run does next, when the request says: the whole book, or a trial of one chapter."""
+        step = request.get("next")
+        if step == "trial":
+            doc = request.get("doc")
+            if not isinstance(doc, int) or isinstance(doc, bool) or doc not in {c["index"] for c in job.get("chapters") or []}:
+                raise ApiError(HTTPStatus.BAD_REQUEST, "choose a chapter of the book to try")
+            job["trial"] = {"doc": doc, "state": "wanted"}
+        elif step == "whole":
+            if job.get("trial") and job["trial"]["state"] == "wanted":
+                job["trial"] = None
+        elif step is not None:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "'next' is whole or trial")
+
+    def _waiting(self, job_id: str, *statuses: str) -> dict[str, Any]:
+        job = self.get(job_id)
+        if job["status"] not in statuses or job_id in self.cancels:
+            raise ApiError(HTTPStatus.CONFLICT, "this run is not waiting for that")
+        return job
+
+    def answer_reading(self, job_id: str, request: dict[str, Any]) -> None:
+        """The reader's answer to the reading of their wishes: confirm it (as they edited it), have it written
+        again with what they say about it, or go on without a steer."""
+        with self.lock:
+            job = self._waiting(job_id, "asking")
+            shown = job.get("read_as") or {}
+            given = request.get("answers") if isinstance(request.get("answers"), list) else []
+            answers = [(q, _text(given[n], 600) if n < len(given) else "") for n, q in enumerate(shown.get("questions", []))]
+            edited = {"focus": request["focus"] if isinstance(request.get("focus"), str) else shown.get("focus", ""),
+                      "style": request["style"] if isinstance(request.get("style"), str) else shown.get("style", ""),
+                      "chapters": [c for c in shown.get("chapters", [])
+                                   if not isinstance(request.get("chapters"), list) or c["doc"] in request["chapters"]]}
+            action = request.get("action")
+            if action == "again":
+                feedback = _text(request.get("feedback"), 1500)
+                if not feedback and not any(a for _, a in answers):
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "Say what should change, or answer one of the questions.")
+                job["again"] = {"previous": steering.clean_reading(edited), "feedback": feedback, "answers": answers}
+                job["reading_state"] = "wanted"
+            elif action == "confirm":
+                mine = job["steer"]
+                try:
+                    job["confirmed"] = steering.confirm(Steer(mine["purpose"], mine["about"], mine["style"]), edited, answers).reading
+                except SteerError as exc:
+                    raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+                job["reading_state"] = "confirmed"
+                job["confirmed_for"] = Steer(mine["purpose"], mine["about"], mine["style"]).raw_key()
+            elif action == "without":
+                job["reading_state"] = "without"
+            else:
+                raise ApiError(HTTPStatus.BAD_REQUEST, "'action' is confirm, again or without")
+            if action != "again":
+                self._plan(job, request)
+            self._store(job)
+        self.start(job_id)
+
+    def go_on(self, job_id: str, request: dict[str, Any]) -> None:
+        """After a trial chapter: the whole book, or a trial of another chapter."""
+        with self.lock:
+            job = self._waiting(job_id, "tried")
+            if request.get("next") not in ("whole", "trial"):
+                raise ApiError(HTTPStatus.BAD_REQUEST, "'next' is whole or trial")
+            self._plan(job, request)
+            self._store(job)
+        self.start(job_id)
+
+    def set_steer(self, job_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """Change what the reader wants from a book. For a finished book it guides the questions asked for on
+        highlights from then on. For a run that waits for its reader, the new words are read again and the run
+        goes on with ``next`` from there."""
+        purpose = _text(request.get("purpose"))
+        with self.lock:
+            job = self.get(job_id)
+            waiting = job["status"] in WAITING and job_id not in self.cancels
+            if not waiting and job["status"] != "done":
+                raise ApiError(HTTPStatus.CONFLICT, "This can be changed when the run has finished, or while it waits for you.")
+            mine = job.setdefault("steer", {"purpose": "", "interests": True, "about": "", "style": ""})
+            mine["purpose"] = purpose
+            if isinstance(request.get("interests"), bool):
+                mine["interests"] = request["interests"]
+            if waiting:
+                ui = self.ui_settings()
+                mine.update(about=str(ui.get("steer_about") or "") if mine["interests"] else "", style=str(ui.get("steer_style") or ""))
+                steered = bool(purpose or mine["about"] or mine["style"])
+                job.update(read_as=None, confirmed=None,
+                           reading_state="wanted" if steered and ui.get("steer_confirm") is not False else "none")
+                job.pop("again", None)
+                self._plan(job, {"next": request.get("next") or ("trial" if job.get("trial") else "whole"),
+                                 "doc": request.get("doc", (job.get("trial") or {}).get("doc"))})
+            self._store(job)
+        if waiting:
+            self.start(job_id)
+        return self.detail(job_id)
 
     # ---- writing
 
@@ -608,12 +793,24 @@ class Jobs:
         job["updated"] = now()
         write_json(self.folder(job["id"]) / "job.json", {k: v for k, v in job.items() if k != "report"})
 
-    def create(self, name: str, data: bytes, settings: Settings) -> dict[str, Any]:
+    def create(self, name: str, data: bytes, settings: Settings, plan: Any = None) -> dict[str, Any]:
+        """Add a book and start its run. ``plan`` holds what the reader wants from it: ``purpose``, whether their
+        interests from the settings apply (``interests``), and ``trial``, a chapter to try before the whole book."""
         name = _safe_name(name)
         try:
             book = load_book_bytes(data, name)
         except EpubError as exc:
             raise ApiError(HTTPStatus.BAD_REQUEST, f"This file cannot be read as an EPUB: {exc}") from exc
+        plan = plan if isinstance(plan, dict) else {}
+        ui = self.ui_settings()
+        interests = plan.get("interests") is not False
+        mine = {"purpose": _text(plan.get("purpose")), "interests": interests,
+                "about": str(ui.get("steer_about") or "") if interests else "", "style": str(ui.get("steer_style") or "")}
+        steered = bool(mine["purpose"] or mine["about"] or mine["style"])
+        chapters = steering.chapter_list(book)
+        trial = plan.get("trial")
+        if trial is not None and (isinstance(trial, bool) or trial not in {c["index"] for c in chapters}):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "choose a chapter of the book to try")
         stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
         with self.lock:
             job_id = f"{stamp}-{_slug(stem_of(name))}"
@@ -625,7 +822,9 @@ class Jobs:
             job = {"id": job_id, "file": name, "title": book.title or stem_of(name), "created": now(),
                    "status": "queued", "message": "Waiting to start", "stage": None, "done": None, "total": None,
                    "words": sum(len(sd.words) for sd in book.spine), "settings": settings.as_json(), "events": [],
-                   "counts": None}
+                   "counts": None, "steer": mine, "chapters": chapters, "read_as": None, "confirmed": None, "spent": [],
+                   "reading_state": "wanted" if steered and ui.get("steer_confirm") is not False else "none",
+                   "trial": {"doc": trial, "state": "wanted"} if trial is not None else None}
             self.jobs[job_id] = job
             self._store(job)
         self.start(job_id)
@@ -666,6 +865,28 @@ class Jobs:
                 job.update(stage=event["stage"], message=event["message"], done=event.get("done"),
                            total=event.get("total"))
 
+    def _read(self, job: dict[str, Any], epub: Path, settings: Settings, backend: Any, cancel: threading.Event) -> None:
+        """Have the model state how it reads what the reader wants, and wait for the reader."""
+        self._event(job, {"time": now(), "stage": "reading", "done": None, "total": None,
+                          "message": "Reading what you want from the book, with a look at each chapter"})
+        if backend is None:
+            backend = default_backend(settings, lambda e: self._event(job, e), cancel)
+            backend.check_available([settings.model])
+        mine, again = job["steer"], job.get("again") or {}
+        try:
+            book = load_book_bytes(epub.read_bytes(), job["file"])
+            shown, done = steering.read(backend, book, Steer(mine["purpose"], mine["about"], mine["style"]), settings,
+                                        again.get("previous"), again.get("feedback", ""),
+                                        [tuple(a) for a in again.get("answers", [])])
+        except BackendCancelled:
+            raise Cancelled() from None
+        with self.lock:
+            job.pop("again", None)
+            job["spent"] = (job.get("spent") or []) + [{k: getattr(done, k) for k in ("model", "cost_usd", "input_tokens",
+                                                                                      "output_tokens", "seconds", "priced")}]
+            job.update(read_as=shown, reading_state="ready", status="asking", stage="reading", done=None, total=None,
+                       message="Waiting for you: look at how your wishes were read.")
+
     def _work(self, job_id: str) -> None:
         job = self.jobs[job_id]
         cancel = self.cancels[job_id]
@@ -679,8 +900,29 @@ class Jobs:
                     self._store(job)
                 settings = Settings.from_json(job["settings"])
                 backend = self.backend_factory(settings) if self.backend_factory else None
-                report = run_book(folder / "input" / job["file"], folder, settings, backend=backend,
-                                  progress=lambda e: self._event(job, e), cancel=cancel)
+                epub = folder / "input" / job["file"]
+                if job.get("reading_state") == "wanted":  # first the reading, and the reader's word on it
+                    self._read(job, epub, settings, backend, cancel)
+                    return
+                steer = self._run_steer(job)
+                spent = [Completion({}, **c) for c in job.get("spent") or []]
+                trial = job.get("trial")
+                progress = lambda e: self._event(job, e)  # noqa: E731
+                try:
+                    if trial and trial["state"] == "wanted":
+                        tried = try_chapter(epub, folder, settings, trial["doc"], backend=backend, progress=progress,
+                                            cancel=cancel, steer=steer, spent=spent)
+                        with self.lock:
+                            trial.update(state="done", sections=len(tried["sections"]),
+                                         questions=sum(q["kept"] for sec in tried["sections"] for q in sec["questions"]))
+                            job.update(status="tried", stage="tried", done=None, total=None,
+                                       message="Waiting for you: the chapter you tried is ready to look at.")
+                        return
+                    report = run_book(epub, folder, settings, backend=backend, progress=progress, cancel=cancel,
+                                      steer=steer, spent=spent)
+                finally:  # the calls made before the run are in its totals from the moment it has a state
+                    if any((work_dir(f) / STATE_FILE).is_file() for f in (folder, trial_dir(folder))):
+                        job["spent"] = []
                 with self.lock:
                     job.update(status="done", message="Finished", counts=report["counts"], stage="done")
             except Cancelled:
@@ -844,7 +1086,8 @@ class Handler(BaseHTTPRequestHandler):
             case ("GET", ["info"]):
                 defaults = Settings()
                 return self.send_json({"version": __version__, "claude": self.claude, "codex": self.codex, "data": str(jobs.data),
-                                       "densities": DENSITIES, "defaults": defaults.as_json(),
+                                       "densities": DENSITIES, "defaults": defaults.as_json(), "max_questions": MAX_QUESTIONS,
+                                       "limits": {"text": steering.TEXT_MAX, "instruction": steering.INSTRUCTION_MAX},
                                        "models": self.models})
             case ("GET", ["jobs"]):
                 return self.send_json({"jobs": jobs.listing()})
@@ -855,10 +1098,14 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError as exc:
                     raise ApiError(HTTPStatus.BAD_REQUEST, "settings are not JSON") from exc
                 settings = self.settings(raw)
+                try:
+                    plan = json.loads((query.get("plan") or ["{}"])[0])
+                except ValueError as exc:
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "the plan is not JSON") from exc
                 data = self.body()
                 if not data:
                     raise ApiError(HTTPStatus.BAD_REQUEST, "no file was sent")
-                return self.send_json(jobs.summary(jobs.create(name, data, settings)), HTTPStatus.CREATED)
+                return self.send_json(jobs.summary(jobs.create(name, data, settings, plan)), HTTPStatus.CREATED)
             case ("POST", ["jobs", "local"]):
                 request = self.json_body()
                 path = Path(str(request.get("path", ""))).expanduser()
@@ -867,8 +1114,24 @@ class Handler(BaseHTTPRequestHandler):
                 if path.stat().st_size > MAX_UPLOAD:
                     raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "the file is larger than 300 MB")
                 settings = self.settings(request.get("settings") or {})
-                return self.send_json(jobs.summary(jobs.create(path.name, path.read_bytes(), settings)),
+                return self.send_json(jobs.summary(jobs.create(path.name, path.read_bytes(), settings, request.get("plan"))),
                                       HTTPStatus.CREATED)
+            case ("POST", ["look"]):  # a book's length and chapters, before anything is run or kept
+                data = self.body()
+                if not data:
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "no file was sent")
+                return self.send_json(look((query.get("name") or ["book.epub"])[0], data))
+            case ("POST", ["look", "local"]):
+                path = Path(str(self.json_body().get("path", ""))).expanduser()
+                if not path.is_file():
+                    raise ApiError(HTTPStatus.BAD_REQUEST, f"There is no file at {path}")
+                if path.stat().st_size > MAX_UPLOAD:
+                    raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "the file is larger than 300 MB")
+                return self.send_json(look(path.name, path.read_bytes()))
+            case ("POST", ["estimate"]):
+                request = self.json_body()
+                return self.send_json(estimate(request.get("words"), self.settings(request.get("settings") or {}),
+                                               request.get("steered") is True))
             case ("POST", ["books", "import"]):
                 data = self.body()
                 if not data:
@@ -924,7 +1187,8 @@ class Handler(BaseHTTPRequestHandler):
             case ("POST", ["jobs", job_id, "questions", "propose"]):
                 r = self.json_body()
                 if isinstance(r.get("highlight"), str):
-                    return self.send_json(jobs.propose(job_id, [r["highlight"]], auto=r.get("auto") is True))
+                    return self.send_json(jobs.propose(job_id, [r["highlight"]], auto=r.get("auto") is True,
+                                                       instruction=_text(r.get("instruction"), steering.INSTRUCTION_MAX)))
                 chapter = r.get("chapter")
                 if chapter is not None and (not isinstance(chapter, int) or isinstance(chapter, bool)):
                     raise ApiError(HTTPStatus.BAD_REQUEST, "'chapter' must be a number")
@@ -992,6 +1256,14 @@ class Handler(BaseHTTPRequestHandler):
             case ("POST", ["jobs", job_id, "cancel"]):
                 jobs.cancel(job_id)
                 return self.send_json({"ok": True})
+            case ("POST", ["jobs", job_id, "reading"]):
+                jobs.answer_reading(job_id, self.json_body())
+                return self.send_json({"ok": True})
+            case ("POST", ["jobs", job_id, "next"]):
+                jobs.go_on(job_id, self.json_body())
+                return self.send_json({"ok": True})
+            case ("PUT", ["jobs", job_id, "steer"]):
+                return self.send_json(jobs.set_steer(job_id, self.json_body()))
             case ("POST", ["jobs", job_id, "continue"]):
                 if jobs.get(job_id)["status"] not in ("stopped", "failed"):
                     raise ApiError(HTTPStatus.CONFLICT, "this run cannot be continued")

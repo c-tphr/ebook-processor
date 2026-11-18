@@ -1,6 +1,8 @@
 """The command line.
 
     ebook-processor Book.epub                 process a book (the same as: ebook-processor process Book.epub)
+    ebook-processor Book.epub --purpose "Why I read it"    ... with what you want from the book
+    ebook-processor estimate Book.epub        how many questions a run would write, and the book's chapters
     ebook-processor rebuild Book-processed --remove c0004-p2
     ebook-processor serve                     the local web app
 
@@ -17,12 +19,17 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from . import steer as steering
+from .pipeline import load_state
+from .prep.epub import EpubError, load_book
+from .prep.limits import MAX_PROMPTS
 from .llm import BackendError, UsageLimitError
-from .runner import Cancelled, PipelineError, default_out_dir, rebuild, run_book
-from .settings import CONTENT_MODES, DENSITIES, EFFORTS, KINDS, Settings, SettingsError, from_options
+from .runner import default_backend
+from .runner import Cancelled, PipelineError, default_out_dir, rebuild, run_book, trial_dir, try_chapter, work_dir
+from .settings import CONTENT_MODES, DENSITIES, EFFORTS, KINDS, MAX_QUESTIONS, Settings, SettingsError, from_options
 
 EXIT_OK, EXIT_INPUT, EXIT_USAGE, EXIT_STOPPED = 0, 1, 2, 3
-COMMANDS = ("process", "rebuild", "serve", "models", "update")
+COMMANDS = ("process", "estimate", "rebuild", "serve", "models", "update")
 
 
 def add_run_options(p: argparse.ArgumentParser) -> None:
@@ -32,8 +39,9 @@ def add_run_options(p: argparse.ArgumentParser) -> None:
                    help="target section length: " + ", ".join(f"{k} {a}-{b} words" for k, (a, b) in DENSITIES.items())
                         + " (default: medium)")
     g.add_argument("--section-words", metavar="MIN-MAX", help="target section length in words, instead of --density")
-    g.add_argument("--max-questions", type=int, metavar="N", help=f"most questions per checkpoint, 1 to 4 "
-                                                                   f"(default: {d.max_questions})")
+    g.add_argument("--max-questions", type=int, metavar="N",
+                   help=f"most questions per checkpoint, 1 to {MAX_QUESTIONS}; the model chooses how many by the "
+                        f"section's length and density and by what you want from the book (default: {d.max_questions})")
     g = p.add_argument_group("what the model reads and how strictly it is checked")
     g.add_argument("--content", choices=CONTENT_MODES,
                    help="tables, code and formulas: 'prose' hides them, 'text' shows their text, 'figures' also "
@@ -61,6 +69,20 @@ def add_run_options(p: argparse.ArgumentParser) -> None:
                                           f"(default: {d.title_suffix!r}; '' for none)")
 
 
+def add_steer_options(p: argparse.ArgumentParser) -> None:
+    g = p.add_argument_group("what you want from the book (each takes text, or @FILE to read it from a file)")
+    g.add_argument("--purpose", metavar="TEXT", help="why you read this book and what you want to keep from it")
+    g.add_argument("--about-me", metavar="TEXT", help="what matters to you and what you work on")
+    g.add_argument("--question-style", metavar="TEXT", help="how you like questions")
+    g.add_argument("--yes", action="store_true",
+                   help="use the model's reading of these without asking you to confirm it")
+    g.add_argument("--no-reading", action="store_true",
+                   help="skip the reading: give your own words to the question writers as they are")
+    g.add_argument("--try-chapter", type=int, metavar="N",
+                   help="write the questions of one chapter only and print them (N as 'estimate' lists it); a later "
+                        "run of the whole book with the same options takes the chapter over")
+
+
 def settings_from(args: argparse.Namespace) -> Settings:
     return from_options(
         density=args.density, section_words=args.section_words, max_questions=args.max_questions,
@@ -84,7 +106,16 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("epub", type=Path, help="the EPUB to process")
     p.add_argument("-o", "--output", type=Path, help="output folder (default: <name>-processed beside the EPUB)")
     add_run_options(p)
+    add_steer_options(p)
     p.set_defaults(func=cmd_process)
+
+    p = sub.add_parser("estimate", help="say how many questions a run would write, and list the book's chapters",
+                       description="Print about how many sections and questions a run with these options would "
+                                   "give, and the book's chapters with the numbers --try-chapter takes. No model "
+                                   "is called.")
+    p.add_argument("epub", type=Path, help="the EPUB")
+    add_run_options(p)
+    p.set_defaults(func=cmd_estimate)
 
     p = sub.add_parser("rebuild", help="build the outputs again after taking questions out (no model is called)",
                        description="Build every output again from a finished run, with some questions taken out "
@@ -153,12 +184,114 @@ def print_summary(report: dict[str, Any], out_dir: Path) -> None:
         print("  The firmware-format book did not pass all its structure checks; the report says which.")
 
 
+def _text(value: str | None) -> str:
+    if value and value.startswith("@"):
+        try:
+            value = Path(value[1:]).expanduser().read_text(encoding="utf-8")
+        except OSError as exc:
+            raise PipelineError(f"cannot read {value[1:]}: {exc}") from exc
+    return steering.clean(value)
+
+
+def estimate_line(book: Any, settings: Settings, steered: bool) -> str:
+    e = steering.estimate([c["words"] for c in steering.chapter_list(book)], settings, steered)
+    line = (f"{e['words']:,} words: about {e['sections'][0]} to {e['sections'][1]} sections and {e['questions'][0]} to "
+            f"{e['questions'][1]} questions (at most {settings.max_questions} at a checkpoint)")
+    if e["ceiling"] > MAX_PROMPTS:
+        line += f". The firmware edition holds at most {MAX_PROMPTS:,} questions"
+    return line + "."
+
+
+def print_reading(reading: dict[str, Any]) -> None:
+    out = sys.stderr
+    print("\nHow your wishes were read", file=out)
+    for title, text in (("What the questions will favour", reading["focus"]), ("How they will be written", reading["style"]),
+                        ("Cannot be followed", reading["cannot"]), ("Not found in this book", reading["gaps"])):
+        if text:
+            print(f"\n  {title}:\n" + "\n".join("    " + line for line in text.splitlines()), file=out)
+    if reading["chapters"]:
+        print("\n  Chapters it bears on most:", file=out)
+        for c in reading["chapters"]:
+            print(f"    {c['doc']} {c['title']}: {c['why']}", file=out)
+    print(file=out, flush=True)
+
+
+def confirmed_steer(args: argparse.Namespace, epub: Path, out_dir: Path, settings: Settings,
+                    cancel: threading.Event) -> tuple[steering.Steer | None, list[Any]]:
+    """What the reader wants from the book, as the question writers will be told it, and the calls it took. With
+    a terminal the model's reading is shown for the reader to confirm, to correct or to do without."""
+    raw = steering.Steer(_text(args.purpose), _text(args.about_me), _text(args.question_style))
+    if raw.empty:
+        return None, []
+    for folder in (out_dir, trial_dir(out_dir)):  # a run or a trial made from these same words: its reading stands
+        try:
+            old = steering.Steer.from_json((load_state(work_dir(folder)) or {}).get("steer"))
+        except PipelineError:
+            continue
+        if not old.empty and old.raw_key() == raw.raw_key():
+            return old, []
+    if args.no_reading:
+        return raw, []
+    book = load_book(epub)
+    backend = default_backend(settings, None, cancel)
+    backend.check_available([settings.model])
+    spent: list[Any] = []
+    previous, feedback, answers = None, "", None
+    while True:
+        print("Reading what you want from the book ...", file=sys.stderr, flush=True)
+        reading, done = steering.read(backend, book, raw, settings, previous, feedback, answers)
+        spent.append(done)
+        print_reading(reading)
+        if args.yes or not sys.stdin.isatty():
+            return steering.confirm(raw, reading), spent
+        answers = []
+        for question in reading["questions"]:
+            answers.append((question, input(f"  The model asks: {question}\n  (Enter to pass) > ")))
+        choice = input("Enter: use this reading   f: say what to change   n: go on without it   q: stop > ").strip().lower()
+        if choice == "q":
+            raise Cancelled("nothing was started")
+        if choice == "n":
+            return None, spent
+        if choice == "f" or any(a.strip() for _, a in answers):
+            feedback = input("What should change? > ") if choice == "f" else ""
+            previous = reading
+            continue
+        return steering.confirm(raw, reading), spent
+
+
+def print_trial(data: dict[str, Any]) -> None:
+    for s in data["sections"]:
+        print(f"\n{s['label']}  ({s['words']:,} words)")
+        for q in s["questions"]:
+            mark = "" if q["kept"] else "  [left out: failed the check]"
+            print(f"  Q  {q['question']}{mark}\n  A  {q['answer']}")
+        if not s["questions"]:
+            print("  (no questions)")
+    count = sum(q["kept"] for s in data["sections"] for q in s["questions"])
+    print(f"\n{count} question{'s' if count != 1 else ''} in {len(data['sections'])} section"
+          f"{'s' if len(data['sections']) != 1 else ''}. Run the same command without --try-chapter for the whole "
+          "book; this chapter is taken over as it is.")
+
+
 def cmd_process(args: argparse.Namespace) -> int:
     settings = settings_from(args)
     out_dir = (args.output or default_out_dir(args.epub)).resolve()
     cancel = threading.Event()
+    epub = args.epub.resolve()
+    if not epub.is_file():
+        raise PipelineError(f"{epub} does not exist")
     try:
-        report = run_book(args.epub, out_dir, settings, progress=Printer(), cancel=cancel)
+        steer, spent = confirmed_steer(args, epub, out_dir, settings, cancel)
+        if args.try_chapter is None:
+            print(estimate_line(load_book(epub), settings, steer is not None), file=sys.stderr)
+            report = run_book(epub, out_dir, settings, progress=Printer(), cancel=cancel, steer=steer, spent=spent)
+        else:
+            chapters = {c["index"]: c for c in steering.chapter_list(load_book(epub))}
+            if args.try_chapter not in chapters:
+                raise PipelineError(f"there is no chapter {args.try_chapter}; 'ebook-processor estimate' lists them")
+            print_trial(try_chapter(epub, out_dir, settings, args.try_chapter, progress=Printer(), cancel=cancel,
+                                    steer=steer, spent=spent))
+            return EXIT_OK
     except KeyboardInterrupt:
         cancel.set()
         print(f"\nStopped. The run is saved in {out_dir}; give the same command again to continue.", file=sys.stderr)
@@ -167,7 +300,23 @@ def cmd_process(args: argparse.Namespace) -> int:
         print(f"\nStopped: {exc or 'on request'}\nThe run is saved in {out_dir}; give the same command again to "
               "continue.", file=sys.stderr)
         return EXIT_STOPPED
+    except EpubError as exc:
+        raise PipelineError(str(exc)) from exc
     print_summary(report, out_dir)
+    return EXIT_OK
+
+
+def cmd_estimate(args: argparse.Namespace) -> int:
+    settings = settings_from(args)
+    try:
+        book = load_book(args.epub.resolve())
+    except (EpubError, OSError) as exc:
+        raise PipelineError(str(exc)) from exc
+    print(f"{book.title or args.epub.name}: {estimate_line(book, settings, False)}")
+    print("The model decides both within your limits, so this is a range. With a statement of what you want from "
+          "the book, the parts that bear on it may get more.\n\nChapters (the number is what --try-chapter takes):")
+    for c in steering.chapter_list(book):
+        print(f"  {c['index']:>3}  {c['words']:>7,} words  {c['title']}")
     return EXIT_OK
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, fields
 from typing import Any
 
-INSTRUCTIONS_VERSION = "2.0"
+INSTRUCTIONS_VERSION = "2.1"
 
 # Target section length in words, by name. At 240 words per minute "medium" is 3 to 8 minutes of reading.
 DENSITIES = {
@@ -15,6 +15,7 @@ DENSITIES = {
 }
 CONTENT_MODES = ("prose", "text", "figures")
 KINDS = ("auto", "expository", "narrative", "technical")
+MAX_QUESTIONS = 8  # the highest limit a checkpoint's questions can be given
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 
@@ -26,7 +27,7 @@ class SettingsError(ValueError):
 class Settings:
     min_words: int = 600  # target section length, lower end
     max_words: int = 2000  # ... and upper end
-    max_questions: int = 3  # most questions one checkpoint may have
+    max_questions: int = 3  # most questions one checkpoint may have; the model chooses how many, up to this
     content: str = "text"  # what Claude sees of tables, code, formulas and figures: prose, text or figures
     kind: str = "auto"  # the kind of book: auto, expository, narrative or technical
     rounds: int = 3  # how often a question may be checked (0: no check at all)
@@ -42,8 +43,8 @@ class Settings:
     def validate(self) -> None:
         if not 50 <= self.min_words < self.max_words <= 20000:
             raise SettingsError(f"section length {self.min_words}-{self.max_words} words: need 50 <= min < max <= 20000")
-        if not 1 <= self.max_questions <= 4:
-            raise SettingsError("the most questions per checkpoint must be 1 to 4")
+        if not 1 <= self.max_questions <= MAX_QUESTIONS:
+            raise SettingsError(f"the most questions per checkpoint must be 1 to {MAX_QUESTIONS}")
         if self.content not in CONTENT_MODES:
             raise SettingsError(f"content must be one of {', '.join(CONTENT_MODES)}")
         if self.kind not in KINDS:

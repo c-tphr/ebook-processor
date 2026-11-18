@@ -46,6 +46,7 @@ class Script:
     checks_seen: dict[str, int] = field(default_factory=dict)
     drafts: int = 0
     questions: int = 0
+    readings: int = 0
 
     def backend(self) -> ScriptedBackend:
         return ScriptedBackend(self.reply)
@@ -60,9 +61,29 @@ class Script:
         marked = prompt.split("\nHIGHLIGHT (", 1)[1].split("\n", 2)[1]
         again = prompt.count("\n- ") if "\nALREADY ASKED\n" in prompt else 0
         note = " (steered by the note)" if "\nTHE READER'S NOTE\n" in prompt else ""
+        if "\nTHE READER ASKS OF THIS QUESTION\n" in prompt:
+            note += f" (as asked: {prompt.split(chr(10) + 'THE READER ASKS OF THIS QUESTION' + chr(10), 1)[1].splitlines()[0]})"
         self.questions += 1
         return {"question": f"What does the book say about \"{' '.join(marked.split()[:4])}\"{note}, take {again + 1}?",
                 "answer": f"That {' '.join(marked.split()[:12])}."}
+
+    def reading(self, prompt: str) -> dict[str, Any]:
+        """A reading of the reader's wishes: their purpose restated, the second document as the one it bears on,
+        one question back the first time, and the reader's feedback worked in when there is any."""
+        self.readings += 1
+        words = prompt.split("\nTHE READER'S WORDS\n", 1)[1].split("\nTHE BOOK'S DOCUMENTS", 1)[0]
+        fenced = re.findall(r"~~~\n(.*?)\n~~~", words, re.S)
+        again = "\nYOUR EARLIER READING" in prompt
+        said = words.split("WHAT THE READER SAYS ABOUT YOUR EARLIER READING\n~~~\n", 1)[1].split("\n~~~", 1)[0] if "WHAT THE READER SAYS" in words else ""
+        told = "; ".join(line.strip() for line in words.split("THE READER'S ANSWERS TO YOUR QUESTIONS\n", 1)[1].split("\n\n", 1)[0].splitlines()
+                         if line.startswith("  ")) if "THE READER'S ANSWERS" in words else ""
+        docs = re.findall(r"^(d\d+)[ ,]", prompt.split("THE BOOK'S DOCUMENTS, IN READING ORDER\n", 1)[1], re.M)
+        focus = f"The reader wants: {fenced[0] if fenced else 'nothing'}" + (f" Changed as asked: {said}." if said else "") \
+            + (f" Answered: {told}." if told else "")
+        return {"focus": focus, "style": "Short answers." if "How I like questions:\n~~~" in words else "",
+                "chapters": [{"doc": docs[1], "why": "It opens on the reader's subject."}] if len(docs) > 1 else [],
+                "cannot": "Multiple choice cannot be written; recall questions are written instead." if "multiple choice" in words.lower() else "",
+                "gaps": "", "questions": [] if again else ["Do you mean the lamp or the fog?"]}
 
     def draft(self, prompt: str) -> dict[str, Any]:
         self.drafts += 1

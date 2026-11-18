@@ -168,6 +168,8 @@ def make_report(state: dict[str, Any], doc: dict[str, Any], files: dict[str, str
         "book": doc["book"],
         "run_id": state["run_id"],
         "settings": state["settings"],
+        # what the reader wanted from the book, as the question writers were told it (their own texts stay in the run)
+        "steer": _steer(state),
         "instructions_version": state["instructions_version"],
         "counts": counts,
         "files": files,
@@ -193,6 +195,16 @@ def make_report(state: dict[str, Any], doc: dict[str, Any], files: dict[str, str
         "usage": state["usage"],
         "section_labels": {sid: s["label"] for sid, s in by_id.items()},
     }
+
+
+def _steer(state: dict[str, Any]) -> dict[str, Any] | None:
+    from .steer import Steer
+
+    steer = Steer.from_json(state.get("steer"))
+    if steer.empty:
+        return None
+    return {"confirmed": steer.reading is not None, "focus": steer.focus(), "style": steer.manner(),
+            "chapters": [{"doc": doc, "why": why} for doc, why in steer.chapters().items()]}
 
 
 def _cell(text: Any) -> str:
@@ -297,6 +309,8 @@ def report_markdown(r: dict[str, Any]) -> str:
     lines += _table(("", ""), [
         ("Source", f"{r['book']['source_file']} (SHA-256 {r['book']['source_sha256']})"),
         ("Section length", f"{s['min_words']} to {s['max_words']} words; at most {s['max_questions']} questions each"),
+        ("What you wanted from the book", "nothing given" if not r.get("steer") else
+         ("as you confirmed it; see below" if r["steer"]["confirmed"] else "in your own words; see below")),
         ("Tables, code, formulas, figures", {"prose": "not shown to the model", "text": "shown as text; figures by caption only",
                                              "figures": "shown as text; figures viewed"}[s["content"]]),
         ("Kind of book", s["kind"]),
@@ -308,6 +322,13 @@ def report_markdown(r: dict[str, Any]) -> str:
                                 f"{_price(u)}{u['seconds'] / 60:.0f} minutes of model time)"),
         ("Tool", f"ebook-processor {r['tool_version']}, run {r['run_id']}, {r['generated']}"),
     ])
+    if r.get("steer"):
+        lines += ["", "## What the questions were written for", ""]
+        for title, text in (("What mattered to you", r["steer"]["focus"]), ("How you like questions", r["steer"]["style"])):
+            if text:
+                lines += [f"**{title}**", "", *[f"> {line}" for line in text.splitlines()], ""]
+        if r["steer"]["chapters"]:
+            lines += ["**Parts of the book it bears on most**", ""] + [f"- {c['doc']}: {c['why']}" for c in r["steer"]["chapters"]] + [""]
     return "\n".join(lines).rstrip() + "\n"
 
 

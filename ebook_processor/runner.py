@@ -7,13 +7,15 @@ import threading
 from pathlib import Path
 from typing import Any, Iterable
 
-from .llm import PROVIDERS, Backend, Backends, ClaudeCodeBackend, CodexBackend, Connection, service_urls
+from .llm import PROVIDERS, Backend, Backends, ClaudeCodeBackend, CodexBackend, Completion, Connection, service_urls
 from .outputs import build_outputs
 from .pipeline import SOURCE_COPY, STATE_FILE, Cancelled, PipelineError, Progress, kept, load_state, now, process, write_json
 from .prep.epub import EpubError, load_book_bytes
 from .settings import Settings
+from .steer import Steer
 
-__all__ = ["Cancelled", "PipelineError", "default_out_dir", "run_book", "rebuild", "review_data", "work_dir"]
+__all__ = ["Cancelled", "PipelineError", "default_out_dir", "run_book", "try_chapter", "rebuild", "review_data", "work_dir",
+           "trial_dir"]
 
 
 def default_out_dir(epub: Path) -> Path:
@@ -22,6 +24,11 @@ def default_out_dir(epub: Path) -> Path:
 
 def work_dir(out_dir: Path) -> Path:
     return out_dir / "work"
+
+
+def trial_dir(out_dir: Path) -> Path:
+    """Where the trial of one chapter is kept: a run of its own, beside the book's."""
+    return out_dir / "trial"
 
 
 def default_backend(settings: Settings, progress: Progress | None = None,
@@ -43,24 +50,61 @@ def default_backend(settings: Settings, progress: Progress | None = None,
                     CodexBackend(effort=settings.effort, cancel=cancel, link=watch("codex")))
 
 
-def run_book(epub: Path, out_dir: Path, settings: Settings, backend: Backend | None = None,
-             progress: Progress | None = None, cancel: threading.Event | None = None) -> dict[str, Any]:
-    """Process ``epub`` into ``out_dir`` (continuing an unfinished run there) and return the report."""
+def _ready(epub: Path, settings: Settings, backend: Backend | None, progress: Progress | None,
+           cancel: threading.Event | None) -> tuple[Path, Backend]:
     epub = epub.resolve()
     if not epub.is_file():
         raise PipelineError(f"{epub} does not exist")
     settings.validate()
-    work = work_dir(out_dir)
     if backend is None:
         # Claude Code and Codex both stand ready; only the ones the two model settings name are looked for.
         backend = default_backend(settings, progress, cancel)
         backend.check_available([settings.model, settings.checker_model or settings.model])
-    book, state = process(epub, work, settings, backend, progress, cancel)
+    return epub, backend
+
+
+def run_book(epub: Path, out_dir: Path, settings: Settings, backend: Backend | None = None,
+             progress: Progress | None = None, cancel: threading.Event | None = None, steer: Steer | None = None,
+             spent: list[Completion] | None = None) -> dict[str, Any]:
+    """Process ``epub`` into ``out_dir`` (continuing an unfinished run there) and return the report. A chapter
+    tried before with the same options and the same steer is taken over as it is."""
+    epub, backend = _ready(epub, settings, backend, progress, cancel)
+    work = work_dir(out_dir)
+    try:
+        trial = load_state(work_dir(trial_dir(out_dir)))
+    except PipelineError:
+        trial = None
+    book, state = process(epub, work, settings, backend, progress, cancel, steer, carry=trial, spent=spent)
     original = (work / SOURCE_COPY).read_bytes()
     if progress:
         progress({"stage": "build", "message": "building the books, the deck and the report", "done": None,
                   "total": None, "time": state["updated"]})
     return build_outputs(book, original, state, out_dir, settings.epubcheck)
+
+
+def try_chapter(epub: Path, out_dir: Path, settings: Settings, chapter: int, backend: Backend | None = None,
+                progress: Progress | None = None, cancel: threading.Event | None = None, steer: Steer | None = None,
+                spent: list[Completion] | None = None) -> dict[str, Any]:
+    """Write and check the questions of one document of the book (``chapter`` is its spine index), and nothing
+    else: no books are built. Returns what ``review_data`` gives for it. A trial that was made of another chapter,
+    or in another way, is replaced."""
+    import shutil
+
+    epub, backend = _ready(epub, settings, backend, progress, cancel)
+    folder = trial_dir(out_dir)
+    work = work_dir(folder)
+    try:
+        old = load_state(work)
+    except PipelineError:
+        old = None
+    if old is not None:
+        from .pipeline import steer_key
+        same = old.get("only") == [chapter] and steer_key(old) == (steer.key() if steer and not steer.empty else "") \
+            and Settings.from_json(old["settings"]).drafting_key() == settings.drafting_key()
+        if not same:
+            shutil.rmtree(folder, ignore_errors=True)
+    process(epub, work, settings, backend, progress, cancel, steer, only={chapter}, spent=spent)
+    return review_data(folder)
 
 
 def _open_run(out_dir: Path) -> tuple[Any, bytes, dict[str, Any]]:

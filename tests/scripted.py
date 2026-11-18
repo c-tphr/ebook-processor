@@ -45,12 +45,24 @@ class Script:
     draft_hook: Callable[[dict[str, Any], str], dict[str, Any]] | None = None
     checks_seen: dict[str, int] = field(default_factory=dict)
     drafts: int = 0
+    questions: int = 0
 
     def backend(self) -> ScriptedBackend:
         return ScriptedBackend(self.reply)
 
     def reply(self, role: str, system: str, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
+        if schema.get("required") == ["question", "answer"]:
+            return self.question(prompt)
         return getattr(self, role)(prompt)
+
+    def question(self, prompt: str) -> dict[str, Any]:
+        """A question for a highlight: about its first words, and each one for the same highlight different."""
+        marked = prompt.split("\nHIGHLIGHT (", 1)[1].split("\n", 2)[1]
+        again = prompt.count("\n- ") if "\nALREADY ASKED\n" in prompt else 0
+        note = " (steered by the note)" if "\nTHE READER'S NOTE\n" in prompt else ""
+        self.questions += 1
+        return {"question": f"What does the book say about \"{' '.join(marked.split()[:4])}\"{note}, take {again + 1}?",
+                "answer": f"That {' '.join(marked.split()[:12])}."}
 
     def draft(self, prompt: str) -> dict[str, Any]:
         self.drafts += 1

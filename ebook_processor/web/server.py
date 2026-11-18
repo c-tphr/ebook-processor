@@ -13,6 +13,7 @@ Each run lives in its own folder under the data folder:
 
 from __future__ import annotations
 
+import copy
 import datetime as _dt
 import json
 import mimetypes
@@ -23,17 +24,19 @@ import threading
 import traceback
 import webbrowser
 from http import HTTPStatus
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .. import __version__, notes, reading, srs
-from ..llm import BackendError, ClaudeCodeBackend, CodexBackend, UsageLimitError, available_models
+from .. import highlight_questions as hq
+from ..llm import BackendCancelled, BackendError, ClaudeCodeBackend, CodexBackend, UsageLimitError, available_models
 from ..outputs import load_report, stem_of
 from ..pipeline import now, write_json
 from ..prep.epub import EpubError, load_book_bytes
-from ..runner import Cancelled, PipelineError, rebuild, review_data, run_book
+from ..runner import Cancelled, PipelineError, default_backend, rebuild, review_data, run_book
 from ..settings import DENSITIES, Settings, SettingsError, from_options
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -75,6 +78,9 @@ class Jobs:
         self.cancels: dict[str, threading.Event] = {}
         self.books: dict[str, tuple[int, reading.ReadingBook]] = {}
         self.backend_factory = backend_factory
+        # questions being written from highlights: book id -> what is under way (see ``propose``)
+        self.asks: dict[str, dict[str, Any]] = {}
+        self.writers = ThreadPoolExecutor(max_workers=2, thread_name_prefix="questions")
         for path in sorted(self.data.glob("*/job.json")):
             try:
                 job = json.loads(path.read_text(encoding="utf-8"))
@@ -144,10 +150,11 @@ class Jobs:
             if not store["cards"]:
                 continue
             try:
-                manifest = self.book(job_id).manifest()
+                manifest = self.manifest(job_id)
             except ApiError:
                 continue
             prompts = {p["id"]: (s, p) for s in manifest["sections"] for p in s["prompts"]}
+            prompts.update(hq.practice_prompts(manifest, notes.load(self.folder(job_id))))  # cards from highlights
             order = {pid: n for n, pid in enumerate(prompts)}
             stores[job_id] = (store, manifest, prompts)
             new_done += srs.new_today(store, today)
@@ -187,14 +194,18 @@ class Jobs:
     def passage(self, job_id: str, pid: str) -> list[list[dict[str, Any]]]:
         """The paragraphs that support a question's answer, when the book was processed here. Each paragraph is
         a list of runs ``{"t": text, "h": highlighted?}``, so that what the reader highlighted shows here too."""
-        path = self.folder(job_id) / f"{stem_of(self.jobs[job_id]['file'])}.questions.json"
-        try:
-            doc = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return []
-        refs = next((q["passage"] for q in doc.get("questions", []) if q["id"] == pid), [])
-        where = {b.ref: (sd, b) for sd in self.book(job_id).book.spine for b in sd.blocks}
         store = notes.load(self.folder(job_id))
+        mine = next((q for q in hq.questions(store) if q["id"] == pid), None)
+        if mine is not None:  # made from a highlight: the paragraphs the highlight lies in
+            refs = [{"ref": b.ref, "text": " ".join(b.words)} for _, b in hq.passage_refs(self.book(job_id), mine)]
+        else:
+            path = self.folder(job_id) / f"{stem_of(self.jobs[job_id]['file'])}.questions.json"
+            try:
+                doc = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return []
+            refs = next((q["passage"] for q in doc.get("questions", []) if q["id"] == pid), [])
+        where = {b.ref: (sd, b) for sd in self.book(job_id).book.spine for b in sd.blocks}
         out = []
         for entry in refs:
             sd, block = where.get(entry["ref"], (None, None))
@@ -230,6 +241,209 @@ class Jobs:
                     out[q["id"]] = {"chapter": sd.index, "word": block.start}
                     break
         return out
+
+    def manifest(self, job_id: str) -> dict[str, Any]:
+        """The book as the reader needs it, with the questions from highlights that its checkpoints ask."""
+        return hq.with_questions(self.book(job_id).manifest(), notes.load(self.folder(job_id)))
+
+    # ---- questions from highlights
+
+    def question_settings(self) -> Settings:
+        """The models that write and check these questions: the Add a book defaults of the settings window."""
+        ui = self.ui_settings()
+        options = {k: ui.get("add_" + k) or None for k in ("model", "checker_model", "effort")}
+        try:
+            return from_options(**options)
+        except SettingsError:
+            return from_options(model=options["model"], checker_model=options["checker_model"])
+
+    def _asking(self, job_id: str) -> dict[str, Any]:
+        return self.asks.setdefault(job_id, {"pending": {}, "failed": {}, "batch": None, "cancel": threading.Event()})
+
+    def questions_state(self, job_id: str) -> dict[str, Any]:
+        """The book's questions from highlights, and what is being written right now."""
+        self.get(job_id)
+        with self.lock:
+            store = notes.load(self.folder(job_id))
+            asking = self._asking(job_id)
+            return {"questions": hq.questions(store), "pending": sorted(asking["pending"]), "failed": dict(asking["failed"]),
+                    "batch": dict(asking["batch"]) if asking["batch"] else None}
+
+    def propose(self, job_id: str, highlights: list[str] | None, auto: bool = False, chapter: int | None = None) -> dict[str, Any]:
+        """Have a question written for each of the highlights, in the background. With ``highlights`` None it is
+        every highlight of the book (or of ``chapter``) that has no question yet: the batch."""
+        self.book(job_id)
+        with self.lock:
+            store = notes.load(self.folder(job_id))
+            asking = self._asking(job_id)
+            batch = highlights is None
+            if batch:
+                if asking["batch"] and asking["batch"]["running"]:
+                    raise ApiError(HTTPStatus.CONFLICT, "questions are already being written for this book")
+                have = {q["highlight"] for q in hq.questions(store)}
+                highlights = [h["id"] for h in store["highlights"]
+                              if h["id"] not in have and (chapter is None or h["chapter"] == chapter)]
+            known = {h["id"] for h in store["highlights"]}
+            todo = [h for h in highlights if h in known and h not in asking["pending"]]
+            if not batch and not todo and not any(h in asking["pending"] for h in highlights):
+                raise ApiError(HTTPStatus.NOT_FOUND, "no such highlight")
+            if todo and not asking["pending"]:
+                asking["cancel"] = threading.Event()  # a stop that ended earlier work must not end this
+            if batch:
+                asking["batch"] = {"total": len(todo), "done": 0, "running": bool(todo), "error": ""}
+            for hid in todo:
+                asking["pending"][hid] = batch
+                asking["failed"].pop(hid, None)
+            cancel = asking["cancel"]
+        for hid in todo:
+            self.writers.submit(self._propose_one, job_id, hid, auto, cancel)
+        return self.questions_state(job_id)
+
+    def stop_questions(self, job_id: str) -> dict[str, Any]:
+        with self.lock:
+            asking = self._asking(job_id)
+            asking["cancel"].set()
+            if asking["batch"]:
+                asking["batch"]["running"] = False
+        return self.questions_state(job_id)
+
+    def _propose_one(self, job_id: str, hid: str, auto: bool, cancel: threading.Event) -> None:
+        folder = self.folder(job_id)
+        asking = self._asking(job_id)
+        try:
+            if cancel.is_set():
+                return
+            book = self.book(job_id)
+            settings = self.question_settings()
+            with self.lock:
+                store = notes.load(folder)
+                highlight = next((copy.deepcopy(h) for h in store["highlights"] if h["id"] == hid), None)
+                manifest = hq.with_questions(book.manifest(), store)
+            if highlight is None:
+                return
+            if self.backend_factory:
+                backend = self.backend_factory(settings)
+            else:
+                backend = default_backend(settings, None, cancel)
+                backend.check_available([settings.model, settings.checker_model or settings.model] if auto else [settings.model])
+            made = hq.propose(backend, book, manifest, store, highlight, settings)
+            with self.lock:
+                store = notes.load(folder)
+                # the highlight may have grown into another meanwhile: the question goes to whichever holds its start
+                now_h = next((h for h in store["highlights"] if h["id"] == hid), None) or next(
+                    (h for h in store["highlights"] if h["chapter"] == highlight["chapter"] and h["start"] <= highlight["start"] < h["end"]), None)
+                if now_h is None or cancel.is_set():
+                    return
+                q = hq.add(store, manifest, now_h, made["question"], made["answer"], "model", made["model"])
+                write_json(folder / notes.FILE, store)
+                asked = copy.deepcopy(q)
+            if auto:  # accepted without the reader seeing it: checked first, and held back when it fails
+                verdict = hq.check(backend, book, manifest, asked, settings)
+                with self.lock:
+                    store = notes.load(folder)
+                    q = next((x for x in hq.questions(store) if x["id"] == asked["id"]), None)
+                    if q is not None and q["status"] == "proposed":
+                        q["checked"] = verdict
+                        if verdict["passed"]:
+                            self._accept(job_id, store, q["id"])
+                        else:
+                            q.update(status="held", problem=verdict["problem"])
+                        write_json(folder / notes.FILE, store)
+        except BackendCancelled:
+            pass
+        except UsageLimitError as exc:  # no point in going on: the rest of a batch is given up
+            with self.lock:
+                asking["failed"][hid] = str(exc)
+                if asking["batch"] and asking["pending"].get(hid):
+                    asking["batch"]["error"] = str(exc)
+                    cancel.set()
+        except (BackendError, hq.QuestionError, ApiError) as exc:
+            with self.lock:
+                asking["failed"][hid] = str(exc)
+        except Exception as exc:  # a fault of the tool: say so instead of leaving the request "being written"
+            traceback.print_exc()
+            with self.lock:
+                asking["failed"][hid] = f"Unexpected error: {exc!r}"
+        finally:
+            with self.lock:
+                in_batch = asking["pending"].pop(hid, False)
+                if in_batch and asking["batch"]:
+                    asking["batch"]["done"] += 1
+                    if asking["batch"]["done"] >= asking["batch"]["total"] or cancel.is_set():
+                        asking["batch"]["running"] = False
+
+    def _accept(self, job_id: str, store: dict[str, Any], qid: str) -> dict[str, Any]:
+        """Accept a question (the caller holds the lock and writes the store). One that goes straight to Practice
+        gets its card now; one for a checkpoint gets it when it is answered there."""
+        q = hq.accept(store, self.book(job_id).manifest(), reading.load_state(self.folder(job_id)), qid)
+        if q["ask"] == "practice":
+            cards = self.cards(job_id)
+            if q["id"] not in cards["cards"]:
+                cards["cards"][q["id"]] = srs.new_card()
+                write_json(self.folder(job_id) / srs.FILE, cards)
+        self._exports_stale(job_id)
+        return q
+
+    def _exports_stale(self, job_id: str) -> None:
+        """The deck and the other exports no longer hold the book's questions from highlights as they are now."""
+        job = self.jobs[job_id]
+        if job.get("kind") != "imported" and not job.get("exports_stale"):
+            job["exports_stale"] = True
+            self._store(job)
+
+    def question_do(self, job_id: str, change: Any) -> dict[str, Any]:
+        """Change the book's questions from highlights with ``change(store)``, and return their state."""
+        self.book(job_id)
+        with self.lock:
+            store = notes.load(self.folder(job_id))
+            try:
+                change(store)
+            except hq.QuestionError as exc:
+                raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+            write_json(self.folder(job_id) / notes.FILE, store)
+        return self.questions_state(job_id)
+
+    def write_question(self, job_id: str, hid: Any, question: Any, answer: Any) -> dict[str, Any]:
+        """The reader's own question for a highlight: accepted as it is written."""
+        def change(store: dict[str, Any]) -> None:
+            highlight = next((h for h in store["highlights"] if h["id"] == hid), None)
+            if highlight is None:
+                raise hq.QuestionError("no such highlight")
+            q = hq.add(store, self.book(job_id).manifest(), highlight, question, answer, "you")
+            self._accept(job_id, store, q["id"])
+        return self.question_do(job_id, change)
+
+    def change_question(self, job_id: str, qid: str, request: dict[str, Any]) -> dict[str, Any]:
+        def change(store: dict[str, Any]) -> None:
+            if "question" in request or "answer" in request:
+                hq.reword(store, qid, request.get("question"), request.get("answer"))
+                if hq.find(store, qid)["status"] == "accepted":
+                    self._exports_stale(job_id)
+            if request.get("accept") is True:
+                self._accept(job_id, store, qid)
+        return self.question_do(job_id, change)
+
+    def discard_question(self, job_id: str, qid: str) -> dict[str, Any]:
+        def change(store: dict[str, Any]) -> None:
+            self._forget(job_id, [hq.discard(store, qid)])
+        return self.question_do(job_id, change)
+
+    def _forget(self, job_id: str, gone: list[dict[str, Any]]) -> None:
+        """Questions that were removed take their practice cards with them."""
+        accepted = [q["id"] for q in gone if q["status"] == "accepted"]
+        if not accepted:
+            return
+        cards = self.cards(job_id)
+        if any(cards["cards"].pop(qid, None) is not None for qid in accepted):
+            write_json(self.folder(job_id) / srs.FILE, cards)
+        self._exports_stale(job_id)
+
+    def remove_marked(self, job_id: str, item: str, keep_questions: bool) -> dict[str, Any]:
+        """Remove a highlight or a note. A highlight's accepted questions stay, without it, when asked to."""
+        def change(store: dict[str, Any], book: Any) -> None:
+            notes.remove_item(store, item)
+            self._forget(job_id, hq.highlight_removed(store, item, keep_questions))
+        return self.notes_do(job_id, change)
 
     def notebook(self, job_id: str) -> dict[str, Any]:
         return notes.notebook(self.book(job_id), self.notes_do(job_id), reading.load_state(self.folder(job_id)),
@@ -321,6 +535,7 @@ class Jobs:
         book = self.book(job_id)
         known = {p["id"] for c in book.data["checkpoints"] for p in c["prompts"]}
         with self.lock:
+            known |= hq.ids(notes.load(self.folder(job_id)))  # questions from highlights are graded too
             old = reading.load_state(self.folder(job_id))
             state = reading.merge_state(old, reading.clean_state(raw, book.data["book"]["source_sha256"], known))
             write_json(self.folder(job_id) / reading.STATE_FILE, state)
@@ -499,6 +714,7 @@ class Jobs:
             raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
         with self.lock:
             job["counts"] = report["counts"]
+            job.pop("exports_stale", None)
             self._store(job)
         return self.detail(job_id)
 
@@ -701,7 +917,29 @@ class Handler(BaseHTTPRequestHandler):
                 r = self.json_body()
                 return self.send_json(jobs.notes_do(job_id, lambda st, bk: notes.update_item(st, item, r.get("text"))))
             case ("DELETE", ["jobs", job_id, "notes", "item", item]):
-                return self.send_json(jobs.notes_do(job_id, lambda st, bk: notes.remove_item(st, item)))
+                keep = (query.get("questions") or ["remove"])[0] == "keep"
+                return self.send_json(jobs.remove_marked(job_id, item, keep))
+            case ("GET", ["jobs", job_id, "questions"]):
+                return self.send_json(jobs.questions_state(job_id))
+            case ("POST", ["jobs", job_id, "questions", "propose"]):
+                r = self.json_body()
+                if isinstance(r.get("highlight"), str):
+                    return self.send_json(jobs.propose(job_id, [r["highlight"]], auto=r.get("auto") is True))
+                chapter = r.get("chapter")
+                if chapter is not None and (not isinstance(chapter, int) or isinstance(chapter, bool)):
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "'chapter' must be a number")
+                if chapter is None and r.get("book") is not True:
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "name a highlight, a chapter or the book")
+                return self.send_json(jobs.propose(job_id, None, chapter=chapter))
+            case ("POST", ["jobs", job_id, "questions", "stop"]):
+                return self.send_json(jobs.stop_questions(job_id))
+            case ("POST", ["jobs", job_id, "questions"]):
+                r = self.json_body()
+                return self.send_json(jobs.write_question(job_id, r.get("highlight"), r.get("question"), r.get("answer")))
+            case ("PUT", ["jobs", job_id, "questions", qid]):
+                return self.send_json(jobs.change_question(job_id, qid, self.json_body()))
+            case ("DELETE", ["jobs", job_id, "questions", qid]):
+                return self.send_json(jobs.discard_question(job_id, qid))
             case ("GET", ["jobs", job_id, "notebook"]):
                 return self.send_json(jobs.notebook(job_id))
             case ("GET", ["jobs", job_id, "notebook.md"]):
@@ -717,7 +955,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(text)
                 return None
             case ("GET", ["jobs", job_id, "book"]):
-                return self.send_json(jobs.book(job_id).manifest())
+                return self.send_json(jobs.manifest(job_id))
             case ("GET", ["jobs", job_id, "book", "chapter", number]):
                 try:
                     return self.send_json(jobs.book(job_id).chapter(int(number)))
@@ -784,6 +1022,8 @@ class Handler(BaseHTTPRequestHandler):
                 if Path(name).name != name or not name.startswith(stem + ".") or path.parent != folder \
                         or not path.is_file():
                     raise ApiError(HTTPStatus.NOT_FOUND, "no such file")
+                if job.get("exports_stale") and name.endswith((".anki.apkg", ".cards.tsv", ".questions.json")):
+                    jobs.rebuild(job_id, None)  # questions from highlights changed since the files were written
                 return self.send_file(path, download=True)
         raise ApiError(HTTPStatus.NOT_FOUND, "not found")
 

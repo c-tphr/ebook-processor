@@ -83,7 +83,7 @@ def test_the_notebook_follows_the_book_and_the_export_leaves_out_what_is_empty(b
              "x_attempts": [{"id": "c0001-p1", "at": "t", "grade": "incorrect", "text": "what I said"},
                             {"id": "c0001-p1", "at": "t2", "grade": "correct", "text": ""}]}
     data = notes.notebook(book, store, state)
-    assert data["counts"] == {"highlights": 1, "notes": 4, "answers": 1}
+    assert data["counts"] == {"highlights": 1, "notes": 4, "answers": 1, "questions": 0, "proposals": 0}
     chapter = next(c for c in data["chapters"] if c["index"] == 2)
     first = chapter["sections"][0]
     assert first["note"]["text"].startswith("My summary") and [i["type"] for i in first["items"]] == ["highlight", "note"]

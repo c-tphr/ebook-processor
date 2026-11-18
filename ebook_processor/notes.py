@@ -90,6 +90,9 @@ def add_highlight(store: dict[str, Any], book: ReadingBook, chapter: Any, start:
               "updated": stamp}
     store["highlights"] = [h for h in store["highlights"] if h not in touching] + [merged]
     store["highlights"].sort(key=lambda h: (h["chapter"], h["start"]))
+    if len(touching) > 1 and store.get("questions"):  # highlights that became one: their questions go with it
+        from . import highlight_questions
+        highlight_questions.highlights_joined(store, [h["id"] for h in touching], merged["id"])
     return merged
 
 
@@ -178,6 +181,17 @@ def notebook(book: ReadingBook, store: dict[str, Any], reading_state: dict[str, 
     attempts: dict[str, list[dict[str, Any]]] = {}
     for a in (reading_state or {}).get("x_attempts") or []:
         attempts.setdefault(a["id"], []).append({"at": a["at"], "grade": a["grade"], "text": a.get("text") or ""})
+
+    def asked(q: dict[str, Any]) -> dict[str, Any]:
+        """A question made from a highlight, with what the reader has answered to it so far."""
+        return {**{k: q[k] for k in ("id", "question", "answer", "status", "by", "problem", "ask", "text", "chapter")},
+                "word": q["start"], "first": grades.get(q["id"], {}).get("first"), "attempts": attempts.get(q["id"], [])}
+
+    made = store.get("questions") or []
+    of_highlight: dict[str, list[dict[str, Any]]] = {}
+    for q in made:
+        if q["highlight"]:
+            of_highlight.setdefault(q["highlight"], []).append(asked(q))
     on = {t: {} for t in ("section", "chapter")}
     for n in store["notes"]:
         if n["on"] in on:
@@ -186,8 +200,11 @@ def notebook(book: ReadingBook, store: dict[str, Any], reading_state: dict[str, 
     for c in manifest["chapters"]:
         sections = [s for s in manifest["sections"] if s["chapter"] == c["index"]]
         items = sorted(
-            [{"type": "highlight", "word": h["start"], **h} for h in store["highlights"] if h["chapter"] == c["index"]]
-            + [{"type": "note", **n} for n in store["notes"] if n["on"] == "place" and n["chapter"] == c["index"]],
+            [{"type": "highlight", "word": h["start"], **h, "questions": of_highlight.get(h["id"], [])}
+             for h in store["highlights"] if h["chapter"] == c["index"]]
+            + [{"type": "note", **n} for n in store["notes"] if n["on"] == "place" and n["chapter"] == c["index"]]
+            # a question kept after its highlight was removed stands where the highlight was, with its words
+            + [{"type": "question", **asked(q)} for q in made if not q["highlight"] and q["chapter"] == c["index"]],
             key=lambda i: (i["word"], i["type"]))
         rows, used = [], set()
         for s in sections:
@@ -197,13 +214,14 @@ def notebook(book: ReadingBook, store: dict[str, Any], reading_state: dict[str, 
                         "first": grades.get(p["id"], {}).get("first"), "attempts": attempts.get(p["id"], []),
                         "previewed": previewed(p["id"]),
                         "go": sources.get(p["id"]) or {"chapter": c["index"], "word": s["start"]}}
-                       for p in s["prompts"] if p["id"] in grades or p["id"] in attempts]
+                       for p in s["prompts"] if not p.get("hq") and (p["id"] in grades or p["id"] in attempts)]
             rows.append({"id": s["id"], "label": s["label"], "start": s["start"], "end": s["end"],
                          "note": on["section"].get(s["id"]), "items": mine, "answers": answers})
         chapters.append({"index": c["index"], "title": c["title"], "note": on["chapter"].get(c["index"]),
                          "sections": rows, "loose": [i for i in items if i["id"] not in used]})
     counts = {"highlights": len(store["highlights"]), "notes": len(store["notes"]) + sum(bool(h["note"]) for h in store["highlights"]),
-              "answers": sum(len(s["answers"]) for c in chapters for s in c["sections"])}
+              "answers": sum(len(s["answers"]) for c in chapters for s in c["sections"]),
+              "questions": sum(q["status"] == "accepted" for q in made), "proposals": sum(q["status"] != "accepted" for q in made)}
     return {"title": manifest["title"], "authors": manifest["authors"], "counts": counts,
             "note": next((n for n in store["notes"] if n["on"] == "book"), None), "chapters": chapters}
 
@@ -220,6 +238,16 @@ def markdown(data: dict[str, Any], answers: bool = True) -> str:
     if data["note"]:
         lines += [data["note"]["text"], ""]
 
+    def asked(rows: list[dict[str, Any]]) -> list[str]:
+        """The accepted questions made from a highlight. Proposals are not part of the notebook yet."""
+        out: list[str] = []
+        for q in rows:
+            if q["status"] != "accepted":
+                continue
+            state = {"correct": "recalled", "incorrect": "missed"}.get(q["first"] or "", "not asked yet")
+            out += [f"- **{q['question']}** ({state})", "  - Reference: " + q["answer"].replace("\n", " ")]
+        return out + [""] if out else out
+
     def items(rows: list[dict[str, Any]]) -> list[str]:
         out: list[str] = []
         for i in rows:
@@ -227,6 +255,10 @@ def markdown(data: dict[str, Any], answers: bool = True) -> str:
                 out += _quote(i["text"]) + [""]
                 if i["note"]:
                     out += [i["note"], ""]
+                out += asked(i.get("questions") or [])
+            elif i["type"] == "question":
+                if i["status"] == "accepted":
+                    out += _quote(i["text"]) + [""] + asked([i])
             else:
                 out += [i["text"], ""]
         return out

@@ -62,8 +62,10 @@
         "properties": {
           "id": { "$ref": "#/$defs/id", "description": "For example c0007-p2: question 2 of checkpoint c0007. The same id names the question in the prepared EPUB's rsvp/checkpoints.json." },
           "order": { "type": "integer", "minimum": 1 },
-          "checkpoint": { "$ref": "#/$defs/id" },
-          "section": { "$ref": "#/$defs/id" },
+          "checkpoint": { "description": "The checkpoint that asks the question. Null for a question from a highlight that is practised without being asked at a checkpoint.", "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+          "section": { "description": "The section the question belongs to. Null for a question from a highlight outside every section.", "anyOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+          "origin": { "enum": ["highlight"], "description": "Present on a question the reader made from a highlight in the app, whose id begins with hq. The book's own questions have no origin." },
+          "highlight": { "type": "string", "description": "For a question from a highlight: the highlighted words." },
           "section_label": { "type": "string" },
           "chapter_href": { "type": "string" },
           "chapter": { "type": "string" },

@@ -132,6 +132,41 @@ def questions_document(book: Book, state: dict[str, Any], results: dict[str, str
     }
 
 
+def add_from_highlights(doc: dict[str, Any], book: Book, asked: list[dict[str, Any]], results: dict[str, str] | None = None,
+                        reached: set[str] | None = None) -> int:
+    """Add the reader's accepted questions from highlights to the questions document, after the book's own.
+    Their passage is the paragraphs the highlight lies in. Returns how many were added."""
+    results, reached = results or {}, reached or set()
+    titles = chapter_titles(book)
+    book_tag = slug(doc["book"]["title"])
+    sections = {s["id"]: s for s in doc["sections"]}
+    added = 0
+    for q in asked:
+        sd = next((d for d in book.spine if d.index == q["chapter"] and d.doc is not None), None)
+        if sd is None:
+            continue
+        blocks = [b for b in sd.blocks if b.start < q["end"] and q["start"] < b.end]
+        section = sections.get(q["section"])
+        checked = q.get("checked") or {}
+        doc["questions"].append({
+            "id": q["id"], "order": len(doc["questions"]) + 1,
+            "checkpoint": section["checkpoint"] if section and q["ask"] == "checkpoint" else None,
+            "section": section["id"] if section else None, "section_label": section["label"] if section else "",
+            "chapter_href": sd.href, "chapter": titles[sd.href], "question": q["question"], "answer": q["answer"],
+            "supporting_paragraphs": [b.ref for b in blocks],
+            "passage": [{"ref": b.ref, "text": passage_text(sd, b)} for b in blocks],
+            "status": "passed" if checked.get("passed") else "unchecked",
+            "check": {"criteria": checked.get("criteria") or {}, "citations": [], "evidence": "", "minor_note": "",
+                      "times_checked": 1 if checked else 0, "revisions": 0},
+            "origin": "highlight", "highlight": q["text"],
+            "result": results.get(q["id"]), "reached": q["id"] in reached or q["id"] in results,
+            "tags": [book_tag, f"{book_tag}::ch{sd.index:02d}", "from::highlight"]
+            + ([f"recall::{results[q['id']]}"] if q["id"] in results else ["recall::unseen"] if results else []),
+        })
+        added += 1
+    return added
+
+
 def _passage_plain(q: dict[str, Any]) -> str:
     return "\n\n".join(p["text"] for p in q["passage"])
 

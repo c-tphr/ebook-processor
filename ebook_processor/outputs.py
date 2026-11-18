@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__, exports, reading
+from . import highlight_questions as hq
+from . import notes as notes_mod
 from .pipeline import KEPT, draft_bytes, kept, now, write_json
 from .prep import epubcheck as epubcheck_mod
 from .prep.build import BuildError, build_bytes
@@ -109,6 +111,8 @@ def build_outputs(book: Book, original: bytes, state: dict[str, Any], out_dir: P
     read = reading.load_state(out_dir)
     met = {a["id"] for a in (read or {}).get("x_attempts", [])}
     doc = exports.questions_document(book, state, reading.results(read), met)
+    # the reader's own questions, made from highlights in the app
+    exports.add_from_highlights(doc, book, hq.accepted(notes_mod.load(out_dir)), reading.results(read), met)
     cards = state.get("cards", "all")
     if cards != "all":
         chosen = len(exports.selected_cards(doc, cards))
@@ -150,6 +154,7 @@ def make_report(state: dict[str, Any], doc: dict[str, Any], files: dict[str, str
         "failed": sum(q["status"] == "failed" for q in questions),
         "withdrawn": sum(q["status"] == "withdrawn" for q in questions),
         "removed": sum(bool(q.get("removed")) and q["status"] in KEPT for q in questions),
+        "from_highlights": sum(q.get("origin") == "highlight" for q in doc["questions"]),
         "words_in_sections": sum(s["word_count"] for s in doc["sections"]),
         "words": state["source"]["words"],
     }

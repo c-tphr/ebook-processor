@@ -101,6 +101,7 @@ def estimate(words: Any, settings: Settings, steered: bool) -> dict[str, Any]:
         raise ApiError(HTTPStatus.BAD_REQUEST, "'words' is the list of the chapters' lengths")
     out = steering.estimate(words, settings, steered)
     out["max_questions"] = settings.max_questions
+    out["steered"] = steered
     out["firmware_limit"] = MAX_PROMPTS if out["questions"][1] > MAX_PROMPTS else None
     return out
 

@@ -31,7 +31,7 @@ def test_wishes_are_said_read_back_tried_on_a_chapter_and_kept_with_the_book(pag
     before = estimate.inner_text()
     page.locator("#app form .st-seg label", has_text="short").click()
     page.wait_for_function("(old) => document.querySelector('#estimate').innerText !== old", arg=before)
-    expect(estimate).to_contain_text("at most 3 questions at a checkpoint")
+    expect(estimate).to_contain_text("Your maximum of 3 at a checkpoint allows up to")
     page.locator("#purpose").fill("I want to understand how the lamp is kept burning.")
     expect(page.locator("#app form")).to_contain_text("Nothing else runs until you confirm")
     page.locator("#try select").select_option(label="The Fog Season / 608 words")
@@ -70,6 +70,27 @@ def test_wishes_are_said_read_back_tried_on_a_chapter_and_kept_with_the_book(pag
     page.wait_for_function("() => document.body.innerText.includes('SAVED') || document.body.innerText.includes('Saved')")
     assert book.call("GET", f"/jobs/{job_id}")["steer"]["purpose"] == "Now I care about the fog."
     book.call("DELETE", f"/jobs/{job_id}")
+
+
+def test_the_estimate_answers_to_every_value_of_the_maximum(page: Page, book: App):
+    page.goto(book.url + "/#/add")
+    page.locator("#app form input[type=file]").set_input_files(str(FIXTURE))
+    expect(page.locator("#estimate")).to_contain_text("from 1,380 words")
+    limit = page.locator("#app form .st-field", has_text="Maximum questions per checkpoint").locator("select")
+    allowed, about = [], []
+    for n in range(1, 9):
+        limit.select_option(str(n))
+        expect(page.locator("#estimate-most")).to_contain_text(f"Your maximum of {n} at a checkpoint allows up to")
+        allowed.append(int(page.locator("#estimate-most").inner_text().split("allows up to ")[1].split(".")[0].replace(",", "")))
+        about.append(page.locator("#estimate b").inner_text())
+    assert allowed == [allowed[0] * n for n in range(1, 9)]      # what the maximum allows moves with each value
+    assert len(set(about[:3])) == 3 and about[2:] == [about[2]] * 6   # the estimate itself rises, then says why it stops
+    expect(page.locator("#estimate-most")).to_contain_text("seldom writes more than about 3 at a checkpoint, unless a section bears on what you want")
+    limit.select_option("2")
+    expect(page.locator("#estimate-most")).not_to_contain_text("seldom")
+    page.locator("#purpose").fill("The lamp.")                   # with a wish, more of the room is used
+    limit.select_option("8")
+    expect(page.locator("#estimate-most")).to_contain_text("seldom writes more than about 4 at a checkpoint, so")
 
 
 def test_a_book_without_wishes_starts_at_once_and_one_with_them_can_go_on_without(page: Page, book: App):

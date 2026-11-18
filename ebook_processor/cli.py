@@ -201,6 +201,10 @@ def estimate_line(book: Any, settings: Settings, steered: bool) -> str:
     e = steering.estimate([c["words"] for c in steering.chapter_list(book)], settings, steered)
     line = (f"{e['words']:,} words: about {e['sections'][0]} to {e['sections'][1]} sections and {e['questions'][0]} to "
             f"{e['questions'][1]} questions (at most {settings.max_questions} at a checkpoint)")
+    line += f". That maximum allows up to {e['ceiling']:,}"
+    if e["usual"] < settings.max_questions:
+        line += (f"; for sections of this length the model seldom writes more than about {e['usual']} at a checkpoint"
+                 + ("" if steered else ", unless a section bears on what you want from the book"))
     if e["ceiling"] > MAX_PROMPTS:
         line += f". The firmware edition holds at most {MAX_PROMPTS:,} questions"
     return line + "."

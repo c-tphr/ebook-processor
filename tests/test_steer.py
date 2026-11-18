@@ -248,6 +248,36 @@ def test_the_estimate_follows_the_options_and_matches_real_runs():
     assert steer.estimate([], SHORT)["questions"] == [0, 0] and steer.estimate([30], SHORT)["sections"] == [0, 0]
 
 
+def test_the_limit_is_one_cap_for_every_value_and_the_estimate_says_where_it_stops_mattering():
+    paine = [192, 19335, 657, 2563, 847, 8704, 9624, 8076, 164, 345]
+    for density in ("short", "medium", "long"):
+        for steered in (False, True):
+            rows = [steer.estimate(paine, from_options(density=density, max_questions=n), steered) for n in range(1, 9)]
+            sections = rows[0]["sections"]
+            assert all(r["sections"] == sections for r in rows)
+            # what the limit allows rises with every value from 1 to 8, by the same step
+            assert [r["ceiling"] for r in rows] == [sections[1] * n for n in range(1, 9)]
+            # the estimate is the ceiling while the limit is below what the sections call for, and then stays there
+            tops = [r["questions"][1] for r in rows]
+            assert tops == sorted(tops) and all(t <= r["ceiling"] for t, r in zip(tops, rows))
+            usual = rows[-1]["usual"]
+            assert [r["usual"] for r in rows] == [min(n, usual) for n in range(1, 9)]
+            for n, r in enumerate(rows, start=1):
+                if n < usual:
+                    assert r["questions"][1] == r["ceiling"], (density, steered, n)
+                if n > usual:
+                    assert r["questions"][1] == rows[-1]["questions"][1], (density, steered, n)
+    # where the point lies follows the section length and the steer, not the limit: real runs of one chapter at
+    # medium length without a steer gave 10, 10, 8 and 10 questions at limits of 4, 5, 6 and 8
+    assert steer.estimate(paine, from_options(density="short", max_questions=8))["usual"] == 3
+    assert steer.estimate(paine, from_options(max_questions=8))["usual"] == 4
+    assert steer.estimate(paine, from_options(max_questions=8), steered=True)["usual"] == 6
+    assert steer.estimate(paine, from_options(density="long", max_questions=8), steered=True)["usual"] == 8
+    for limit in (4, 5, 6, 8):
+        low, high = steer.estimate([2563], from_options(max_questions=limit))["questions"]
+        assert low <= 8 and high >= 10
+
+
 # --------------------------------------------------------------------------
 # A question on a highlight
 
@@ -318,6 +348,7 @@ def test_the_app_looks_at_a_book_and_estimates_before_anything_runs(app):
     assert status == 200 and e["sections"] == [3, 4] and e["max_questions"] == 3 and e["firmware_limit"] is None
     more = app("POST", "/estimate", json_body={"words": words, "settings": {"density": "short", "max_questions": 8}, "steered": True})[1]
     assert more["questions"][1] > e["questions"][1] and more["max_questions"] == 8
+    assert more["steered"] is True and e["steered"] is False and e["usual"] == 3 and more["ceiling"] == more["sections"][1] * 8
     big = app("POST", "/estimate", json_body={"words": [400000], "settings": {"density": "short", "max_questions": 8}})[1]
     assert big["firmware_limit"] == 1024
     assert app("POST", "/estimate", json_body={"words": "many", "settings": {}})[0] == 400

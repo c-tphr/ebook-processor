@@ -336,8 +336,13 @@ async function init() {
 function estimateText(e) {              // e: what /api/estimate gives
   if (!e) return null;
   const span = ([a, b]) => (a === b ? fmt(a) : `${fmt(a)} to ${fmt(b)}`);
+  // The maximum is a cap: `ceiling` is what it allows, and moves with every value of it. The estimate stops rising
+  // once the cap is above what sections of this length are usually given (`usual`), and the page says so.
+  const room = e.usual < e.max_questions;
   return [h("div", {}, h("b", {}, `About ${span(e.questions)} questions`), ` at ${span(e.sections)} checkpoints, from ${fmt(e.words)} words.`),
-    h("small", {}, `The model decides both within your limits: at most ${e.max_questions} question${e.max_questions === 1 ? "" : "s"} at a checkpoint, more for a long or dense section and for one that bears on what you want from the book.`
+    h("small", { id: "estimate-most" }, `Your maximum of ${e.max_questions} at a checkpoint allows up to ${fmt(e.ceiling)}.`
+      + (room ? ` For sections of this length the model seldom writes more than about ${e.usual} at a checkpoint${e.steered ? "" : ", unless a section bears on what you want from the book"}, so a higher maximum changes the estimate little.` : "")),
+    h("small", {}, "The model decides both numbers within your limits: more questions for a long or dense section and for one that bears on what you want from the book."
       + (e.firmware_limit ? ` The firmware edition holds at most ${fmt(e.firmware_limit)} questions: with more than that it is not written.` : ""))];
 }
 function chapterSelect(chapters, chosen) {

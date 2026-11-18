@@ -355,7 +355,12 @@ def estimate(doc_words: list[int], settings: Settings, steered: bool = False) ->
     The model decides both within the reader's limits, so this is a range. Its numbers come from real runs:
     sections fall around the middle of the target length, and a section gets one or two questions plus one for
     every 350 to 900 of its words (more where the reader's purpose bears on it), never more than the limit.
-    ``ceiling`` is the most the limits allow at the upper number of sections.
+
+    The limit is a cap and nothing else: every value of it goes through the same lines below. What the model
+    writes for a section follows the section's length, so a limit above that changes the estimate no further. In
+    real runs of one chapter without a steer, limits of 4, 5, 6 and 8 gave 10, 10, 8 and 10 questions. ``usual``
+    says where that point lies (the most questions a checkpoint usually gets at this section length), and
+    ``ceiling`` is what the limit allows when every checkpoint is full, which does move with every value.
     """
     low_s = high_s = 0
     middle = (settings.min_words + settings.max_words) / 2
@@ -369,12 +374,16 @@ def estimate(doc_words: list[int], settings: Settings, steered: bool = False) ->
         high = max(low, round(w / (middle * 0.75)), 2 if w >= settings.min_words * 2 else 1)
         low_s, high_s = low_s + low, high_s + high
     if not low_s:
-        return {"words": words, "sections": [0, high_s], "questions": [0, high_s * settings.max_questions], "ceiling": high_s * settings.max_questions}
+        return {"words": words, "sections": [0, high_s], "questions": [0, high_s * settings.max_questions],
+                "ceiling": high_s * settings.max_questions, "usual": settings.max_questions}
 
-    def per_section(sections: int, base: float, words_per_question: float) -> float:
-        return max(1.0, min(float(settings.max_questions), base + (words / sections) / words_per_question))
+    def wanted(sections: int, base: float, words_per_question: float) -> float:
+        """How many questions a section of the average length calls for, whatever the limit."""
+        return max(1.0, base + (words / sections) / words_per_question)
 
-    low_q = math.floor(low_s * per_section(low_s, 1.0, 900) * 0.9)  # some sections get no question at all
-    high_q = math.ceil(high_s * (per_section(high_s, 2.5, 250) if steered else per_section(high_s, 1.6, 350)))
+    limit = float(settings.max_questions)
+    most = wanted(high_s, 2.5, 250) if steered else wanted(high_s, 1.6, 350)
+    low_q = math.floor(low_s * min(limit, wanted(low_s, 1.0, 900)) * 0.9)  # some sections get no question at all
+    high_q = math.ceil(high_s * min(limit, most))
     return {"words": words, "sections": [low_s, high_s], "questions": [max(1, low_q), max(low_q, high_q)],
-            "ceiling": high_s * settings.max_questions}
+            "ceiling": high_s * settings.max_questions, "usual": min(settings.max_questions, round(most))}

@@ -2,7 +2,7 @@
 
 This is the working plan for the knowledge system, agreed with the project owner in a six-round interview on 2026-11-18. It is written for whoever builds it, so that the work can start from this file alone. It holds what was decided, the phases, a design for each phase, and the questions that are still open. Keep it up to date as phases are finished: mark what is done, and move what was passed over to `DEFERRED.md`.
 
-**Status: nothing is built yet. The next step is the Phase 1 interview (section 6), then Phase 1.**
+**Status: the Phase 1 interview is done (section 6a). Phase 1 is being built in the order of section 6b.**
 
 ## 1. What it is for
 
@@ -201,9 +201,29 @@ Filled in as the owner answers. Questions of section 6 that have an answer here 
 | A quick note becomes an idea note (6) | In place: open it from the inbox, give it a title, rewrite it, and "Make this an idea note". One note, one file |
 | Search (7) | One box over notes of every kind and the highlights and passage notes of every book, results grouped with notes first, titles offered to jump to, filters by kind, tag and book. Searching the full text of every book is a TODO for later, recorded in `DEFERRED.md` |
 | Deleting (8) | The file moves to a `.trash` folder inside the notes folder. Links to it show as broken. The Notes area lists the trash and can put a note back |
+| "Idea note" in the reader | The editor opens beside the text, as the reader sits beside the notebook today; over the text in a narrow window |
+| The Notes front page | The inbox on top (quick and untitled notes, with a count), then the notes worked on last, with tags and books beside them. Search and "New note" always at the top |
+| The capture key | Ctrl/Cmd + . on every page, also while typing in another field, and a button at the top of every page |
+| A book removed from the library (9) | Its file stays, with a line at the top saying the book is no longer in the library. Links keep working in the folder; they no longer open the reader |
+
+The Phase 1 interview is complete. Question 10 (splitting Phase 1) was not asked: build it whole, in the order below, and tell the owner if the editor takes long.
+
+## 6b. Phase 1: order of work
+
+Each step ends with its tests passing. Tick a step here when it is pushed.
+
+1. [ ] `ebook_processor/vault.py`: the folder (make it, `Books`, `Inbox`, `.trash`); safe titles and file names; the front-matter reader and writer (small YAML subset, unknown keys kept); parsing links, tags, headings and block ids; the in-memory index with a refresh by modification time; create, read, save (refusing when the file changed on disk since it was loaded), rename with links rewritten, delete to trash and restore; search over notes and book files. Tests in `tests/test_vault.py`, including Windows-unsafe names and letter case.
+2. [ ] `ebook_processor/bookfile.py`: a book's file from `notes.json` and the manifest, with block ids; rewritten after every change to the book's highlights and notes; marked when the book is removed. Tests.
+3. [ ] Server: the notes folder (`serve --notes`, the `notes_folder` setting, default `~/ebook-processor-notes`), routes under `/api/vault/`, the hook that rewrites a book's file, book files written for the books already in the library when Notes is first opened. Tests over HTTP.
+4. [ ] The editor: `editor/` source, CodeMirror 6 bundled with esbuild into `web/static/editor.js`, added to `PAGES`. Formatting as you type for headings, emphasis, strong, inline code, code blocks, lists, quotes, links, wiki links (all three details), tags; `[[` completion from the index; the properties panel. Build command and versions in the README's developer section.
+5. [ ] The Notes area in `index.html`: front page (inbox, recent, tags, books), search with filters, a note's page (editor, properties, back-links, the source passage beside it), new idea note, "Make this an idea note" for a quick note, rename, trash and restore, the "changed on disk" question. A Notes tab in Settings (the folder).
+6. [ ] Capture: Ctrl/Cmd + . and a button on every page (both HTML files), saved to the inbox, with the place in the book when made in the reader.
+7. [ ] The reader: "Idea note" on a highlight, with the editor beside the text and the source filled in; the same from the section note offered after a checkpoint.
+8. [ ] Browser tests for 5 to 7 in the three engines; README section "Notes"; `DEFERRED.md`; a look at the folder in real Obsidian is the owner's (not available here): say so.
 
 ## 7. Record of progress
 
 | Date | What |
 | --- | --- |
 | 2026-11-18 | Six-round interview; this plan written. `main` is at `9b1dbf0` (editing a book's questions). Nothing of the knowledge system is built |
+| 2026-11-18 | Phase 1 interview done (three rounds). Building starts at step 1 of section 6b |

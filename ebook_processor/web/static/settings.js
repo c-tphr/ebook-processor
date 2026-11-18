@@ -137,7 +137,7 @@ function processing(inf, initial, onchange) {
   const checkerHint = el("span", {}), effortHint = el("span", {});
   const text = (key, placeholder, value) => el("input", { type: "text", placeholder, value: value || "", onchange: () => fire(key) });
   const c = {
-    max_questions: select("max_questions", Array.from({ length: inf.max_questions || 8 }, (_, n) => [n + 1, n ? `Up to ${n + 1}` : "1"]), v.max_questions),
+    max_questions: select("max_questions", Array.from({ length: inf.max_questions || 8 }, (_, n) => [n + 1, String(n + 1)]), v.max_questions),
     kind: select("kind", [["auto", "Decide section by section"], ["expository", "Exposition (essays, science, history)"],
       ["narrative", "Narrative (novels, stories, memoir)"], ["technical", "Technical (textbooks, manuals)"]], v.kind),
     content: select("content", [["text", "Read tables, code and formulas"], ["figures", "Also look at the pictures (slower)"], ["prose", "Prose only"]], v.content),
@@ -188,7 +188,7 @@ function processing(inf, initial, onchange) {
   const main = el("div", { class: "st-grid" },
     el("div", { class: "st-field wide" }, el("span", { class: "m" }, "Section length"), density,
       el("small", {}, "A checkpoint follows each section. Breaks fall at natural boundaries, so lengths vary.")),
-    field("Questions per checkpoint", c.max_questions, "The model chooses how many, up to this: more for a long or dense section, and for one that bears on what you want from the book."),
+    field("Maximum questions per checkpoint", c.max_questions, "The model chooses how many, up to this: more for a long or dense section, and for one that bears on what you want from the book."),
     field("Kind of book", c.kind),
     field("Tables, code, formulas, figures", c.content, "What the model may see and ask about beyond the running text."),
     field("Independent check", c.rounds, "A question that fails its last check is left out and listed in the report."));

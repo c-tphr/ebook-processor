@@ -4,7 +4,7 @@ Things that were discussed and put off, in one place. Nothing here is being work
 
 ## Decided for later
 
-These were chosen as later work by the project owner. The knowledge system is now planned in phases: see `docs/KNOWLEDGE-PLAN.md`. Nothing of it is built yet.
+These were chosen as later work by the project owner. The knowledge system is planned in five phases: see `docs/KNOWLEDGE-PLAN.md`. Phase 1 (the notes folder, the editor, idea notes and quick notes, search) is built; phases 2 to 5 are not.
 
 | Item | What it means | Notes |
 | --- | --- | --- |
@@ -125,12 +125,34 @@ Narration itself is planned and waiting on product research. These parts were pa
 | Expressive voices for fiction | Acted dialogue, or different voices for different characters |
 | A private local voice as a fallback | A voice running on the user's own machine for books that should not be sent to a service. Local voices are being researched only as the answer to the budget |
 
+### The notes folder (Phase 1 of the knowledge system)
+
+Passed over while Phase 1 was built. The later phases are in `docs/KNOWLEDGE-PLAN.md` and are not repeated here.
+
+| Item | What it means |
+| --- | --- |
+| Emptying the trash | Deleted notes stay in `.trash` until they are removed in a file manager. The app only lists them and puts them back |
+| Moving the notes for you | Pointing the app at another folder never moves or copies files. A "move my notes there" button was left out as too easy to get wrong |
+| Index notes and project notes in the app | The kinds exist in the files (`kind: index`, `project-note`, `project`) and are kept and shown, but the page offers only Idea note and Quick note until Phase 3 |
+| Embeds, callouts, footnotes, tables and task lists in the editor | They are kept in the text and shown as written. Formatting them as you type is Phase 3 |
+| An idea note from RSVP | "Idea note" is offered on selected text in the page and scroll views. In RSVP a sentence can be highlighted and noted, and the idea note started from the highlight afterwards |
+| Citing a second passage with one click | A note cites more passages by typing `[[Book#^`, which offers the book's passages. A button that adds a citation from a search or from the reader was left for the Process view (Phase 2) |
+| A list of every note | The front page shows the inbox and the notes worked on last (forty at most); the rest are found by search, tag or book. A full, sortable list was not asked for |
+| Checkpoint answers and questions in a book's file | By the owner's choice a book's file holds only highlights and the reader's own notes |
+| Aliases for merged highlights | When two highlights become one, the id that goes is not kept as an alias: a link to it shows as broken. This is rare: it needs a citation of a highlight that is later joined to another |
+| Watching the folder | The app looks at the files when Notes asks for something, and every four seconds for a note that is open. It does not watch the folder, so a list on screen can be up to one reload old |
+| Full YAML | Properties are read for a small subset (one value, a list in brackets, a list of `- item` lines). Anything else is kept as written and shown as text that cannot be changed in the app |
+
 ## To verify
 
 Things that work in tests but have not been confirmed in real use, and facts that are still unknown.
 
 | Item | What is missing |
 | --- | --- |
+| The notes folder in Obsidian | The folder is written to be an Obsidian vault: file names as titles, `[[links]]` by name, block ids, YAML properties, `.trash`. Obsidian itself has not opened one, because it is not available where the app is built. To check: open the folder as a vault, follow a `Source: [[Book#^id]]` link to its highlight (a highlight is written as `> words ^id`; if Obsidian does not find an id at the end of a quoted line, the id belongs on a line of its own after the quote, a form the app already reads), edit a note there and see it change in the app, rename a note in the app and see Obsidian's links follow |
+| The notes folder on Windows and macOS | File names, letter case and renaming are tested, and GitHub runs the tests on both systems. Not seen in real use: a note open in another program while the app saves it (Windows refuses, and the app says so), and a folder inside OneDrive or iCloud |
+| The editor on a phone or tablet | CodeMirror supports touch, but the Notes pages were laid out and tested for a laptop or desktop browser |
+| A large notes folder | The index is kept in memory and files are read again when they change. Measured only with a handful of notes; the design expects a few thousand to be read in under a second |
 | Mochi's actual defaults | Mochi does not publish its multipliers. Reading them off the Review Settings screen of a fresh install would settle the Remembered multiplier (1.8 here), the Forgot multiplier (0.5), the longest interval and the size of the due-date variation |
 | Revision with real Claude | In the real runs no question failed its check, so the revise-and-recheck path has only run against the scripted stand-in |
 | Recovery from a lost connection | Tested with stand-in programs that hang and a stand-in network, for both tools, and one real call through the new code path. A real loss of connection during a real run was not produced: what Claude Code and Codex themselves do then (hang, or fail with which message) was not observed |

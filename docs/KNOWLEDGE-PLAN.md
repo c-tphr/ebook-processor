@@ -2,7 +2,7 @@
 
 This is the working plan for the knowledge system, agreed with the project owner in a six-round interview on 2026-11-18. It is written for whoever builds it, so that the work can start from this file alone. It holds what was decided, the phases, a design for each phase, and the questions that are still open. Keep it up to date as phases are finished: mark what is done, and move what was passed over to `DEFERRED.md`.
 
-**Status: the Phase 1 interview is done (section 6a). Phase 1 is being built in the order of section 6b.**
+**Status: Phase 1 is built and on the development branch (section 6b). It goes to `main` when the owner says. Phase 2 starts with its interview.**
 
 ## 1. What it is for
 
@@ -215,11 +215,26 @@ Each step ends with its tests passing. Tick a step here when it is pushed.
 1. [x] `ebook_processor/vault.py`: the folder (make it, `Books`, `Inbox`, `.trash`); safe titles and file names; the front-matter reader and writer (small YAML subset, unknown keys kept); parsing links, tags, headings and block ids; the in-memory index with a refresh by modification time; create, read, save (refusing when the file changed on disk since it was loaded), rename with links rewritten, delete to trash and restore; search over notes and book files. Tests in `tests/test_vault.py`, including Windows-unsafe names and letter case.
 2. [x] `ebook_processor/bookfile.py`: a book's file from `notes.json` and the manifest, with block ids; rewritten after every change to the book's highlights and notes; marked when the book is removed. Tests.
 3. [x] Server: the notes folder (`serve --notes`, the `notes_folder` setting, default `~/ebook-processor-notes`), routes under `/api/vault/`, the hook that rewrites a book's file, book files written for the books already in the library when Notes is first opened. Tests over HTTP.
-4. [ ] The editor: `editor/` source, CodeMirror 6 bundled with esbuild into `web/static/editor.js`, added to `PAGES`. Formatting as you type for headings, emphasis, strong, inline code, code blocks, lists, quotes, links, wiki links (all three details), tags; `[[` completion from the index; the properties panel. Build command and versions in the README's developer section.
-5. [ ] The Notes area in `index.html`: front page (inbox, recent, tags, books), search with filters, a note's page (editor, properties, back-links, the source passage beside it), new idea note, "Make this an idea note" for a quick note, rename, trash and restore, the "changed on disk" question. A Notes tab in Settings (the folder).
-6. [ ] Capture: Ctrl/Cmd + . and a button on every page (both HTML files), saved to the inbox, with the place in the book when made in the reader.
-7. [ ] The reader: "Idea note" on a highlight, with the editor beside the text and the source filled in; the same from the section note offered after a checkpoint.
-8. [ ] Browser tests for 5 to 7 in the three engines; README section "Notes"; `DEFERRED.md`; a look at the folder in real Obsidian is the owner's (not available here): say so.
+4. [x] The editor: `editor/` source, CodeMirror 6 bundled with esbuild into `web/static/editor.js`, added to `PAGES`. Formatting as you type for headings, emphasis, strong, inline code, code blocks, lists, quotes, links, wiki links (all three details), tags; `[[` completion from the index; the properties panel. Build command and versions in the README's developer section.
+5. [x] The Notes area in `index.html`: front page (inbox, recent, tags, books), search with filters, a note's page (editor, properties, back-links, the source passage beside it), new idea note, "Make this an idea note" for a quick note, rename, trash and restore, the "changed on disk" question. A Notes tab in Settings (the folder).
+6. [x] Capture: Ctrl/Cmd + . and a button on every page (both HTML files), saved to the inbox, with the place in the book when made in the reader.
+7. [x] The reader: "Idea note" on a highlight, with the editor beside the text and the source filled in; the same from the section note offered after a checkpoint.
+8. [x] Browser tests for 5 to 7 in the three engines; README section "Notes"; `DEFERRED.md`; a look at the folder in real Obsidian is the owner's (not available here): say so.
+
+What Phase 1 turned out to be, where it differs from the design above:
+
+- **Where the folder is.** `ebook-processor-notes` beside the data folder, which is the home folder for the default data folder. `serve --notes FOLDER` stores the folder as the setting `notes_folder`; there is one source of truth.
+- **A note is addressed by its `id`.** A file with no id of its own (dropped in, or made in Obsidian) has a provisional one made from its path until the app first saves it.
+- **Nothing is kept until something is written.** "New note" and "Idea note" open a draft; the file is made by the first save. An untitled note is then in the inbox under the date and its first words.
+- **A quick note written in the reader** keeps its place in two properties, `book: "[[Title]]"` and `place: "chapter:word"`, not in its text.
+- **The pane beside the text in the reader** is the same component as a note's page (`Notes.mount` in `notes.js`), in a column that the text makes room for.
+- **Links in any property count as links**, not only those in `sources`.
+- **Titles also exclude `# ^ [ ]`**, which would break a link to the note.
+- **Routes** are as planned, plus `POST /api/vault/cite` (the link that cites a highlight or a note of a book, making the folder and the book's file when needed) and `GET /api/vault/notes/<id>/token` (has the file changed).
+- **The editor** was built without `@codemirror/lang-markdown`'s `markdown()` helper, which pulls in the HTML, CSS and JavaScript languages; the language is assembled in `editor/src/index.js` instead. The built file is about 360 KB and is loaded only when a note is opened.
+- **What was passed over** is in `DEFERRED.md` under "The notes folder".
+
+For Phase 2, start from: `vault.py` (`Vault.search`, `Vault.backlinks`, `Note.passages`), `Jobs._note` and `Jobs.vault_cite` in the server, `Notes.mount` in `notes.js`, and `showNotes` in `index.html`.
 
 ## 7. Record of progress
 
@@ -227,3 +242,4 @@ Each step ends with its tests passing. Tick a step here when it is pushed.
 | --- | --- |
 | 2026-11-18 | Six-round interview; this plan written. `main` is at `9b1dbf0` (editing a book's questions). Nothing of the knowledge system is built |
 | 2026-11-18 | Phase 1 interview done (three rounds). Building starts at step 1 of section 6b |
+| 2026-11-18 | Phase 1 built in the order of section 6b and pushed to the development branch: `vault.py`, `bookfile.py`, the server routes, the editor, `notes.js`, the Notes area, capture, and the reader's Idea note |

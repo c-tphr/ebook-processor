@@ -149,6 +149,7 @@ Every page has a **Settings** button at the top right. It opens one window with 
 | Reader | Typeface, size, line spacing, column width, and the view a new book opens in |
 | Notebook | Whether **Open** shows a passage beside the notebook or in the full reader, which side the reader is on, and whether it scrolls or turns pages |
 | Practice | The numbers of the schedule (see Practice below) |
+| Notes | Where your notes folder is (see Notes below) |
 
 A change applies at once, also in other open tabs of the app. Settings are kept in `reader-settings.json` and `srs-settings.json` in the data folder.
 
@@ -277,6 +278,47 @@ The reader beside the notebook is for looking things up. It does not move your p
 
 Highlights are drawn with the browser's CSS Custom Highlight API (Chrome and Edge 105, Safari 17.2, Firefox 140, or later). In an older browser, highlights are kept and listed but not drawn in the text. They live in `notes.json` in the book's folder.
 
+### Notes
+
+**Notes**, at the top of the library's pages, is where reading becomes your own thinking. It holds notes that stand apart from any one book: one idea each, in your own words, linked to each other and to the passages they came from.
+
+Your notes are **Markdown files in one folder** on this computer. The files are the truth, not a copy: the app reads and writes them, and any other program can too. The folder can be opened in [Obsidian](https://obsidian.md) as a vault, and what you write in either shows in the other.
+
+```
+ebook-processor-notes/
+  Books/The Lighthouse Keeper's Almanac.md     one file per book, kept by the app
+  Inbox/2026-11-18 1530 a thought.md           quick notes, and notes that have no title yet
+  Prices carry information.md                  a note: its title is its file name
+  .trash/                                      deleted notes, which can be put back
+```
+
+The folder is `ebook-processor-notes`, beside the folder that holds your books (so `~/ebook-processor-notes` unless you moved that). It is made the first time you open Notes. **Settings > Notes** shows where it is and lets you point the app at another folder, as does `ebook-processor serve --notes FOLDER`. The app never moves files: to move your notes, move the folder yourself and then name its new place.
+
+There are two kinds of note for now:
+
+| Kind | What it is for |
+| --- | --- |
+| **Idea note** | One idea, in your own words, with a title that says it. It cites where it came from and links to other notes. This is what the folder is for |
+| **Quick note** | A thought caught before it goes. It waits in the inbox until you make something of it |
+
+**Writing.** A note has a title, which is also the name of its file, and its text. The text is one pane that formats as you type: headings, emphasis, lists, quotes, code and links look like what they are, and the marks of a construct show only while the cursor is in it. Type `[[` to link to another note: the app offers your notes as you type, and after `#` the headings of the note, or after `#^` its passages. A link can be written `[[Title]]`, `[[Title|other words]]`, `[[Title#Heading]]` or `[[Title#^passage]]`. Click a link to follow it; point at it to see what it leads to; a link to a note that does not exist yet offers to make it. `#tag` anywhere in the text is a tag. Ctrl or Cmd with **B**, **I** and **K** make bold, italic and a link. A note is saved a moment after you stop typing, when you leave it, and with Ctrl or Cmd + **S**.
+
+Beside the text are the note's **sources** (the passages it cites, with a way to open each in the book) and **Linked from**: every note that links to this one, with the sentence the link is in. **Properties** shows the block at the top of the file as fields: the kind, the tags, and any property of your own. Properties the app does not know, written in Obsidian or by hand, are kept as they are.
+
+**Renaming** a note renames its file and rewrites the links to it in every other note. Two notes cannot have the same title, also not in different letter case, because Windows and macOS would not tell their files apart; and a title cannot contain `\ / : * ? " < > | # ^ [ ]`. **Delete** moves the file to the `.trash` folder inside the notes folder; **Trash** on the front page lists what is there and puts a note back.
+
+**Starting an idea note.** From nothing: **New note**. From a book: select words in the reader and choose **Idea note** (or press **i**). The words are highlighted, and the note opens **beside the text** with its source filled in: a line `Source: [[Book#^highlight]]` and the same link in the note's `sources` property. The highlighted words are shown with the note, not copied into it. Nothing is kept until you write something. A note you wrote in the book, on a section or a paragraph, can also be made an idea note: its words are where the idea note starts. A note without a title waits in the inbox under a name made of the date and its first words; giving it a title moves it out and names its file.
+
+**Quick notes.** **Quick note** at the top of every page, or **Ctrl + .** (Cmd + . on a Mac) anywhere, also while typing in another field, opens a small box. What you write goes to the inbox. Written in the reader, the note remembers its book and the place you were at. A Markdown file dropped into the `Inbox` folder shows in the inbox too. To keep a quick note, open it, rewrite it, give it a title and press **Make this an idea note**: it stays the same file, moved out of the inbox.
+
+**A file per book.** Every book of your library has a file in `Books`, written by the app whenever you change something in the book: your highlights, the notes on them, and your notes on paragraphs, sections, chapters and the book, in reading order under the book's chapters and sections. Each entry ends with a block id (`^h3f9a`), which is what a citation points to, in the app and in Obsidian. These files are the app's: what you change in them is written over. A book removed from the library keeps its file, marked at the top; links to it still show the words, and no longer open the reader.
+
+**The front page** shows the inbox, the notes you worked on last, your tags and your books. The **search** box looks through notes of every kind and through the highlights and notes of every book: notes first, then passages, with titles you can jump to, and filters by kind, tag and book. Choosing a book shows its passages and the notes that cite it. A passage that is found can be opened in the book or made the start of an idea note.
+
+**Edits made in another program** are seen: the app looks at the files again whenever Notes asks for something. A note that is open reloads when its file changes. If you have also changed it in the app, the app does not write over the file: it asks which version to keep.
+
+This is the first part of a larger plan (`docs/KNOWLEDGE-PLAN.md`). Working through highlights one by one, index notes and projects, a graph, and help from the model in finding connections are still to come.
+
 ### Practice (spaced repetition)
 
 A question becomes a **card** when you meet it at its checkpoint. From then on it comes back in **Practice**, in the library for every book together or on a book's page for that book alone, on a schedule that follows the default scheduler of [Mochi](https://mochi.cards/docs/reviewing):
@@ -381,7 +423,7 @@ python3 -m pip install -e '.[test]' && python3 -m pytest -q
 
 The tests never call a model: `tests/scripted.py` is a stand-in that answers from the task message alone, and small stand-in programs take the place of Claude Code and Codex.
 
-The browser tests (`tests/browser/`) drive the app itself: reading in the three views, checkpoints, highlights and notes, the notebook and the reader beside it, settings, adding a book, previews, practice. They need Playwright and are left out without it:
+The browser tests (`tests/browser/`) drive the app itself: reading in the three views, checkpoints, highlights and notes, the notebook and the reader beside it, settings, adding a book, previews, practice, and the Notes area with its editor. They need Playwright and are left out without it:
 
 ```bash
 python3 -m pip install -e '.[browser]' && python3 -m playwright install
@@ -405,10 +447,21 @@ After every push GitHub runs both (`.github/workflows/tests.yml`): the test suit
 | `ebook_processor/notes.py` | Highlights and notes, the notebook made from them, and its Markdown export |
 | `ebook_processor/highlight_questions.py`, `instructions/highlight.md` | Questions made from highlights: their store, what the model is sent, the check, and where an accepted question is asked |
 | `ebook_processor/srs.py` | The spaced-repetition scheduler and a book's cards |
+| `ebook_processor/vault.py` | The notes folder: files and their names, the properties at the top of a file (read and written without a YAML library), links, tags and block ids, the index kept in memory, saving that does not write over a change made on disk, renaming with links rewritten, the trash, search |
+| `ebook_processor/bookfile.py` | A book's file in the notes folder, made from its highlights and notes |
+| `editor/` | The source of the note editor: CodeMirror 6 with the additions a notes folder needs (see below) |
 | `ebook_processor/reading.py` | A prepared EPUB as the reader needs it (clean chapter HTML with word positions, sections, search) and the saved reading state |
 | `ebook_processor/update.py` | `ebook-processor update`: find and stop the running app, fast-forward the checkout, install, start again |
-| `ebook_processor/web/` | The local web app: a standard-library HTTP server, the library page (`index.html`), the reader (`reader.html`, which is also the reader beside the notebook when opened with `?pane=1` in a frame) and the settings window both share (`settings.js`) |
+| `ebook_processor/web/` | The local web app: a standard-library HTTP server, the library page (`index.html`), the reader (`reader.html`, which is also the reader beside the notebook when opened with `?pane=1` in a frame), and the scripts both share: the settings window (`settings.js`), the questions' forms (`forms.js`), a note's page and the Quick note box (`notes.js`) and the built editor (`editor.js`) |
 | `tests/data/` | A small made-up book with its expected results, broken prepared books the validator must reject, and Thomas Paine's *Essays* (Standard Ebooks, CC0) |
+
+**The note editor** is the one part of the app that is built from other people's code in the browser: [CodeMirror 6](https://codemirror.net) and the Lezer Markdown parser, both MIT. Its source is `editor/src/index.js`; the file the app serves, `ebook_processor/web/static/editor.js`, is built from it with esbuild and committed, so that installing and running the app needs no Node. To change the editor (Node 20 or later):
+
+```bash
+cd editor && npm ci && npm run build
+```
+
+`editor/package-lock.json` fixes every version, so the same source gives the same file; the versions are also listed at the top of the built file, and the licence texts are in `editor/THIRD-PARTY.md`. As built now: `@codemirror/view` 6.43.15, `@codemirror/state` 6.7.6, `@codemirror/language` 6.13.1, `@codemirror/commands` 6.11.1, `@codemirror/autocomplete` 6.20.4, `@codemirror/lang-markdown` 6.5.2, `@lezer/markdown` 1.8.1, `@lezer/common` 1.5.5, `@lezer/highlight` 1.2.5, built with esbuild 0.28.2. The page loads the editor only when a note is opened.
 
 The firmware format (`rsvp/checkpoints.json`, version 1, and the `rsvp-<section>-start` and `-end` markers) is the one eink-learner-aid defines; its names are kept so that books from this tool load on that firmware. The two repositories share no code at run time.
 

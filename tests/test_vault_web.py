@@ -139,6 +139,8 @@ def test_an_idea_note_cites_a_highlight_and_a_quick_note_remembers_its_place(app
                                                        "where": {"job": jid, "chapter": 2, "word": 61}})[1]
     assert {"key": "book", "value": "[[The Lighthouse Keeper's Almanac]]"} in quick["props"] and {"key": "place", "value": "2:61"} in quick["props"]
     assert quick["links"][0]["to"]["job"] == jid and quick["body"] == "a thought while reading"
+    assert quick["written"] == {"title": "The Lighthouse Keeper's Almanac", "job": jid, "in_library": True, "go": {"chapter": 2, "word": 61}}
+    assert "written" not in note and quick["sources"] == []
     peek = app("GET", "/api/vault/peek?" + q(target="the lighthouse keeper's almanac", anchor="^" + hid))[1]
     assert peek["text"] == words and peek["go"] == {"chapter": 2, "word": 3} and peek["job"] == jid
     found = app("GET", "/api/vault/search?q=supply+boat")[1]

@@ -116,7 +116,7 @@ class Jobs:
     def __init__(self, data: Path, backend_factory: Any = None):
         self.data = data
         self.data.mkdir(parents=True, exist_ok=True)
-        self.notes_default = self.data.resolve().parent / NOTES_FOLDER
+        self.notes_default = Path(os.path.abspath(self.data)).parent / NOTES_FOLDER
         self._vault: Vault | None = None
         self.filed: dict[str, tuple[int, int]] = {}  # book id -> what its file in the notes folder was made from
         self.lock = threading.RLock()
@@ -806,6 +806,13 @@ class Jobs:
             if to.get("kind") == "book" and to.get("block") and (to["id"], to["block"]) not in seen:
                 seen.add((to["id"], to["block"]))
                 detail["sources"].append({k: to.get(k) for k in ("id", "title", "block", "text", "found", "job", "go", "in_library")})
+        held = {p["key"]: p.get("value") for p in detail["props"]}
+        where = next((k["to"] for k in detail["links"] if not k["anchor"] and k["to"].get("kind") == "book"
+                      and held.get("book") == f"[[{k['target']}]]"), None)
+        if where is not None:  # a quick note written in the reader: the book, and the place it was written at
+            at = re.fullmatch(r"(\d+):(\d+)", str(held.get("place") or ""))
+            detail["written"] = {"title": where["title"], "job": where.get("job"), "in_library": where.get("in_library"),
+                                 "go": {"chapter": int(at.group(1)), "word": int(at.group(2))} if at and where.get("job") else None}
         if detail["kind"] == "book":
             detail["in_library"] = self._readable(bookfile.job_of(detail["id"]) or "")
             detail["job"] = bookfile.job_of(detail["id"]) if detail["in_library"] else None
@@ -849,8 +856,8 @@ class Jobs:
         vault = self.vault()
         vault.refresh()
         with vault.lock:
-            origin = vault.by_id.get(inside or "")
-            return self._cited(vault.peek(target, anchor, origin))
+            found = vault.peek(target, anchor, vault.by_id.get(inside or ""))
+        return self._cited(found)  # asks about the book, outside the folder's lock
 
     def vault_create(self, r: dict[str, Any]) -> dict[str, Any]:
         """A new note. ``source`` names a highlight or note of a book that it starts from; ``where`` the place in
@@ -1243,9 +1250,9 @@ class Jobs:
             self.get(job_id)
             if job_id in self.cancels:
                 raise ApiError(HTTPStatus.CONFLICT, "stop the run before deleting it")
-            self._book_left(job_id)
             del self.jobs[job_id]
             self.filed.pop(job_id, None)
+        self._book_left(job_id)
         shutil.rmtree(self.folder(job_id), ignore_errors=True)
 
     def _event(self, job: dict[str, Any], event: dict[str, Any]) -> None:

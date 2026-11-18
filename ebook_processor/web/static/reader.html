@@ -190,9 +190,17 @@ body.pane .sv { padding-top: 20px; }
 .text .pre small { display: block; margin-top: 0.7em; color: var(--mute); font-size: 0.92em; }
 .text .pre + p { text-indent: 0; }
 @keyframes aim { from { background: color-mix(in srgb, var(--blue) 22%, transparent); } to { background: transparent; } }
+/* an idea note being written beside the text (drawn by notes.js); over the text when the window is narrow */
+.np { position: fixed; top: 0; right: 0; bottom: 0; width: var(--np-w); background: var(--paper); border-left: 1px solid var(--ink); z-index: 18; display: none; overflow: auto; padding: 0 20px 40px; }
+body.noting { --np-w: clamp(360px, 44vw, 640px); }
+body.noting .np { display: block; }
+body.noting .shell { margin: 0 var(--np-w) 0 0; max-width: none; }
+.np a.btn { font: 12px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid var(--ink); padding: 10px 13px; text-decoration: none; }
+@media (max-width: 900px) { body.noting { --np-w: 100vw; } body.noting .shell { margin: 0 auto; } .np { border-left: 0; } }
 </style>
 <script src="/static/settings.js"></script>
 <script src="/static/forms.js"></script>
+<script src="/static/notes.js"></script>
 </head>
 <body>
 <div class="shell">
@@ -200,12 +208,13 @@ body.pane .sv { padding-top: 20px; }
     <div class="where"><a class="m" href="/" id="back">← Book page</a><b id="t-book"></b><span class="m mute" id="t-chap"></span></div>
     <div class="row">
       <span class="seg" role="group" aria-label="Reading mode" id="modes"></span>
-      <button id="b-toc">Contents</button><button id="b-find">Search</button><button id="b-rev">Practice</button><button id="b-notes">Notes</button><button id="b-set">Settings</button><button id="b-close" hidden>Close</button>
+      <button id="b-toc">Contents</button><button id="b-find">Search</button><button id="b-rev">Practice</button><button id="b-notes">Notes</button><button id="b-capture" title="Write a quick note (Ctrl or Cmd + .)">Quick note</button><button id="b-set">Settings</button><button id="b-close" hidden>Close</button>
     </div>
   </header>
   <main id="stage"><p class="empty">Loading</p></main>
   <footer class="foot" id="foot"></footer>
 </div>
+<aside class="np" id="np" aria-label="Idea note"><div id="np-in"></div></aside>
 <aside class="drawer" id="drawer" aria-label="Panel"><header><b id="d-title"></b><button id="d-close">Close</button></header><div class="body" id="d-body"></div></aside>
 <script>
 "use strict";
@@ -238,7 +247,7 @@ const stage = $("stage");
 // Beside the notebook the page is a place to look a passage up: nothing about your reading is changed or saved,
 // no checkpoint stops you, and the two views on offer are scroll and pages. It talks to the notebook around it.
 const PANE = new URLSearchParams(location.search).has("pane") && parent !== window;
-if (PANE) { document.body.classList.add("pane"); $("b-close").hidden = false; }
+if (PANE) { document.body.classList.add("pane"); $("b-close").hidden = false; $("b-capture").hidden = true; }
 const tell = (message) => { if (PANE) parent.postMessage(message, location.origin); };
 
 /* ---------- what is loaded ---------- */
@@ -929,10 +938,11 @@ function showTip(rect, range) {
   document.body.append(h("div", { class: "tip", style: `left:${rect.left + rect.width / 2}px;top:${Math.max(48, rect.top - 6)}px` },
     h("button", { onmousedown: (e) => e.preventDefault(), onclick: act(null) }, "Highlight", h("kbd", {}, "h")),
     h("button", { onmousedown: (e) => e.preventDefault(), onclick: act(editItem) }, "Note", h("kbd", {}, "n")),
-    PANE ? null : h("button", { onmousedown: (e) => e.preventDefault(), onclick: act(askQuestion) }, "Question", h("kbd", {}, "q"))));
+    PANE ? null : h("button", { onmousedown: (e) => e.preventDefault(), onclick: act(askQuestion) }, "Question", h("kbd", {}, "q")),
+    PANE ? null : h("button", { onmousedown: (e) => e.preventDefault(), onclick: act(ideaFrom) }, "Idea note", h("kbd", {}, "i"))));
 }
 document.addEventListener("mouseup", (e) => {
-  if (e.target.closest(".tip, .drawer, .cp, .rv")) return;
+  if (e.target.closest(".tip, .drawer, .cp, .rv, .np, .nt-capture")) return;
   setTimeout(() => { const range = selectionWords(); if (range) showTip(getSelection().getRangeAt(0).getBoundingClientRect(), range); else hideTip(); }, 0);
 });
 async function notesCall(path, options) {
@@ -965,8 +975,42 @@ function editItem(x) {                // a highlight and its note
   const mine = questionsOf(x.id).length;
   $("d-body").append(h("div", { class: "hq" }, h("div", { class: "more", style: "margin-top:18px" },
     h("button", { onclick: () => { closeDrawer(); askQuestion(x); } }, "Make a question"),
-    h("button", { class: "link", onclick: () => questionPanel(x.id) }, mine ? `Its questions (${mine})` : "Write my own"))));
+    h("button", { class: "link", onclick: () => questionPanel(x.id) }, mine ? `Its questions (${mine})` : "Write my own")),
+    h("div", { class: "more", style: "margin-top:12px" }, h("button", { onclick: () => ideaFrom(x) }, "Idea note"))));
 }
+
+/* ---------- an idea note, written beside the text ---------- */
+// An idea note says one thing in your own words and cites where it came from. Started here, it opens in a column
+// beside the book with its source filled in: a highlight, or a note you wrote in the book. Nothing is kept until
+// something is written. The note is a file in the notes folder (see notes.js and the Notes area of the main page).
+let notePane = null;
+function relayout() { dispatchEvent(new Event("resize")); }   // the page view lays its columns out again
+function closeIdea() {
+  if (!notePane) return;
+  notePane.destroy(); notePane = null;
+  put($("np-in")); document.body.classList.remove("noting"); relayout();
+}
+function showIdea(what) {
+  if (notePane) { notePane.destroy(); notePane = null; }
+  closeDrawer(); hideTip();
+  document.body.classList.add("noting");
+  notePane = Notes.mount($("np-in"), { ...what, compact: true, close: closeIdea, onGone: closeIdea,
+    onOpen: (id) => showIdea({ id }),
+    onTag: (tag) => { location.href = "/#/notes?" + new URLSearchParams({ tag }); },
+    onPlace: (source, event) => {       // a passage of this book is shown here; one of another book opens that book
+      if (source.job !== ID) { if (!event) location.href = `/read/${source.job}?go=${source.go.chapter}:${source.go.word}`; return; }
+      if (event) event.preventDefault();
+      jump(source.go.chapter, source.go.word).then(() => aim(source.go.word));
+    } });
+  relayout();
+}
+// `from` is a highlight, or a note written in the book; a note's own words are where the idea note starts.
+async function ideaFrom(from, words) {
+  let cited;
+  try { cited = await Notes.cite(ID, from.id); } catch (e) { return alert(e.message); }
+  showIdea({ draft: { kind: "idea", body: `${words ? words.trim() : ""}\n\nSource: ${cited.link}\n`, sources: [cited.link], cited: [cited] } });
+}
+addEventListener("pagehide", () => { if (notePane) notePane.destroy(true); });
 function removeHighlight(x) {         // its accepted questions may stay without it: asked each time
   const kept = questionsOf(x.id).filter((q) => q.status === "accepted").length;
   if ((x.note || kept) && !confirm(x.note ? "Remove this highlight and its note?" : "Remove this highlight?")) return null;
@@ -1101,6 +1145,8 @@ function editTarget(title, target, quote) {
   editor(title, quote, existing ? existing.text : "",
     (text) => notesCall("/target", { method: "PUT", json: { target, text } }),
     existing ? () => confirm("Delete this note?") ? notesCall("/target", { method: "PUT", json: { target, text: "" } }) : null : null, "Delete note");
+  if (existing && !PANE) $("d-body").append(h("div", { class: "hq" }, h("div", { class: "more", style: "margin-top:18px" },
+    h("button", { title: "Start an idea note from what you wrote here", onclick: () => ideaFrom(existing, existing.text) }, "Make it an idea note"))));
 }
 let hovered = null;
 document.addEventListener("mousemove", (e) => { hovered = e.target.closest ? e.target.closest(".text [data-w]") : null; }, { passive: true });
@@ -1113,9 +1159,10 @@ function editPlace() {                // a note on the paragraph under the point
 }
 function offerNote(section) {
   stage.querySelector(".offer")?.remove();
-  const has = NB.notes.some((n) => n.on === "section" && n.section === section.id);
+  const mine = NB.notes.find((n) => n.on === "section" && n.section === section.id), has = !!mine;
   stage.append(h("div", { class: "offer" }, h("span", { class: "m" }, section.label),
     h("span", { class: "row" }, h("button", { onclick: () => { stage.querySelector(".offer")?.remove(); editTarget("Note on " + section.label, { on: "section", section: section.id }); } }, has ? "Edit your note on this section" : "Add a note on this section"),
+      has ? h("button", { onclick: () => { stage.querySelector(".offer")?.remove(); ideaFrom(mine, mine.text); } }, "Make it an idea note") : null,
       h("button", { class: "link", onclick: () => stage.querySelector(".offer")?.remove() }, "Not now"))));
 }
 function marks() {                    // this chapter's highlights and notes, and the ways to add the larger ones
@@ -1126,7 +1173,7 @@ function marks() {                    // this chapter's highlights and notes, an
     h("div", { class: "row", style: "margin-bottom:14px" },
       here ? h("button", { onclick: () => editTarget("Note on " + here.label, { on: "section", section: here.id }) }, "This section") : null,
       h("button", { onclick: () => editTarget("Note on the book", { on: "book" }) }, "The book"),
-      h("a", { class: "m", href: "/#/notebook/" + ID, style: "margin-left:auto" }, "Open the notebook")),
+      h("a", { class: "m", href: "/#/notebook/" + ID, style: "margin-left:auto" }, "Open the notebook"), h("a", { class: "m", href: "/#/notes" }, "All notes")),
     h("p", { class: "mute", style: "margin:0 0 6px" }, "Select text and press h to highlight it, n to add a note. With nothing selected, n notes the paragraph under the pointer."),
     h("div", { class: "marks" }, rows.length ? rows.map(({ w, x, n }) => h("a", { onclick: () => { jump(pos.chapter, w).then(() => x ? editItem(x) : editTarget("Note on this paragraph", { on: "place", chapter: n.chapter, word: n.word })); } },
       x ? h("q", {}, x.text.length > 220 ? x.text.slice(0, 220) + " …" : x.text) : null, h("small", {}, x ? x.note : n.text))) : h("p", { class: "empty" }, "Nothing marked in this chapter yet."))]);
@@ -1239,6 +1286,9 @@ if (PANE) addEventListener("message", async (e) => {
 });
 $("b-close").onclick = () => tell({ ep: "close" });
 $("b-notes").onclick = marks;
+// A quick note from the reader remembers the place it was written at. Opened from here, a note shows beside the text.
+Notes.install({ where: () => (book ? { job: ID, chapter: pos.chapter, word: pos.word } : null), button: $("b-capture") });
+Notes.open = PANE ? (id) => { top.location.href = "/#/notes/" + encodeURIComponent(id); } : (id) => showIdea({ id });
 $("b-toc").onclick = contents; $("b-find").onclick = search; $("b-set").onclick = () => AppSettings.open("reader");
 $("b-rev").onclick = () => { save(true); setTimeout(() => { location.href = "/#/practice/" + ID; }, 150); };
 
@@ -1252,6 +1302,7 @@ addEventListener("click", (e) => {
 addEventListener("keydown", (e) => {
   const typing = /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName);
   if (AppSettings.isOpen || QForms.isOpen) return;      // the settings window, or the question editor, has the keys
+  if (e.target.closest && e.target.closest(".np, .nt-capture")) return;   // so has a note that is being written
   if (e.key === "Escape") { if ($("drawer").classList.contains("on")) return closeDrawer(); if (stage.querySelector(".notebox")) return closeNote(); }
   if (cp) {
     const asked = cp.review ? (cp.queue[cp.index] || {}).p : cp.section.prompts[cp.index];
@@ -1269,9 +1320,10 @@ addEventListener("keydown", (e) => {
   // A button that has the keyboard takes Space and Enter itself. The reader must not act on them as well:
   // Firefox presses the button when the key comes up, whatever was done with the key going down.
   if ((e.key === " " || e.key === "Enter") && e.target.closest && e.target.closest("button, a[href], summary")) return;
-  if (e.key === "h" || e.key === "n" || (e.key === "q" && !PANE)) {
+  if (e.key === "i" && !PANE && !tipFor) return;         // an idea note starts from words that are selected
+  if (e.key === "h" || e.key === "n" || ((e.key === "q" || e.key === "i") && !PANE)) {
     e.preventDefault();
-    if (tipFor) { const r = tipFor; hideTip(); getSelection().removeAllRanges(); addHighlight(r).then((made) => { if (made && e.key === "n") editItem(made); if (made && e.key === "q") askQuestion(made); }); }
+    if (tipFor) { const r = tipFor; hideTip(); getSelection().removeAllRanges(); addHighlight(r).then((made) => { if (made && e.key === "n") editItem(made); if (made && e.key === "q") askQuestion(made); if (made && e.key === "i") ideaFrom(made); }); }
     else if (view.mark) view.mark(e.key === "n", e.key === "q");
     else if (e.key === "n") editPlace();
     return;

@@ -275,6 +275,12 @@ function mount(root, options) {
           s.job && s.go ? el("a", { href: `/read/${s.job}?go=${s.go.chapter}:${s.go.word}`, onclick: (e) => { if (opts.onPlace) opts.onPlace(s, e); } }, "Open in the book")
             : s.in_library === false ? el("span", {}, "No longer in your library") : null)))));
     }
+    if (note && note.written) {
+      const w = note.written;
+      parts.push(el("section", { class: "nt-written" }, el("h3", {}, "Written while reading"), el("div", { class: "src" }, el("div", { class: "by", style: "margin-top:0" }, el("span", {}, w.title),
+        w.job && w.go ? el("a", { href: `/read/${w.job}?go=${w.go.chapter}:${w.go.word}`, onclick: (e) => { if (opts.onPlace) opts.onPlace(w, e); } }, "Open the place")
+          : w.in_library === false ? el("span", {}, "No longer in your library") : null))));
+    }
     if (note && (note.backlinks.length || !opts.compact)) {
       parts.push(el("section", { class: "nt-back" }, el("h3", {}, note.kind === "book" ? "Notes that cite this book" : "Linked from"),
         note.backlinks.length ? note.backlinks.map((b) => el("a", { class: "back", onclick: () => go(b.id) },

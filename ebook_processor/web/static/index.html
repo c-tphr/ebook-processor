@@ -720,6 +720,7 @@ async function showNotebook(id) {
       slot(i.note, (v) => call(`/item/${i.id}`, { method: "PUT", json: { text: v } }), "Add a note", () => [
         h("button", { class: "text", disabled: writing, onclick: () => (i.questions.length ? another(own, i.id) : ask("/propose", { method: "POST", json: { highlight: i.id } })) }, i.questions.length ? "Another question" : "Make a question"),
         h("button", { class: "text", onclick: () => put(own, wording(null, (written) => ask("", { method: "POST", json: { highlight: i.id, ...written } }), () => put(own))) }, "Write my own"),
+        h("button", { class: "text", title: "Start a note of your own from this highlight", onclick: () => { location.hash = "#/notes/new?" + new URLSearchParams({ job: id, block: i.id }); } }, "Idea note"),
         h("button", { class: "text", onclick: () => removeHighlight(i) }, "Remove highlight")]),
       i.questions.map((q) => asked(q, i.id)), own,
       writing ? h("p", { class: "m mute", style: "margin:10px 0 0" }, "Writing a question") : null,
@@ -918,6 +919,10 @@ async function showNotes(params) {
     const words = state.q.trim().split(/\s+/), book = home.books.find((b) => b.id === state.book);
     const none = !found.notes.length && !found.passages.length;
     put(body,
+      book ? h("div", { class: "row", id: "nz-book", style: "padding-top:22px" }, h("b", {}, book.title),
+        book.in_library ? [h("a", { class: "btn", href: "#/notebook/" + book.job }, "Notebook"), h("a", { class: "btn", href: "/read/" + book.job }, "Read")]
+          : h("span", { class: "mute" }, "No longer in your library"),
+        h("a", { class: "m", href: "#/notes/" + encodeURIComponent(book.id) }, "Its file")) : null,
       found.titles.length ? h("section", { class: "nz-part" }, h("div", { class: "nz-go", id: "nz-go" }, h("span", { class: "m mute", style: "align-self:center" }, "Go to"),
         found.titles.map((n) => h("a", { class: "btn", href: "#/notes/" + encodeURIComponent(n.id) }, n.title)))) : null,
       found.notes.length ? h("section", { class: "nz-part" }, h("h2", {}, book ? "Notes that cite this book" : "Notes", h("small", {}, String(found.notes.length))),

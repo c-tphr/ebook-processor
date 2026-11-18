@@ -762,7 +762,10 @@ class Jobs:
                 made_from = (self.prepared(job_id).stat().st_mtime_ns, marks.stat().st_mtime_ns if marks.is_file() else 0)
             except OSError:
                 continue
-            if self.filed.get(job_id) != made_from or self.vault().book(bookfile.book_id(job_id)) is None:
+            note = self.vault().book(bookfile.book_id(job_id))
+            if note is not None and self.filed.get(job_id) is None and note.stamp[0] >= max(made_from):
+                self.filed[job_id] = made_from  # written after the book and its marks last changed: it is current
+            if self.filed.get(job_id) != made_from or note is None:
                 self.file_book(job_id, quiet=True)
 
     def _book_left(self, job_id: str) -> None:
@@ -852,7 +855,9 @@ class Jobs:
         books = []
         for job_id in [j for j in list(self.jobs) if self._readable(j) and only in (None, j)]:
             folder = self.folder(job_id)
-            rows = process.items(self.book(job_id), notes.load(folder))
+            marked = notes.load(folder)
+            # a book with nothing marked has nothing to process, and need not be opened to know it
+            rows = process.items(self.book(job_id), marked) if marked["highlights"] or marked["notes"] else []
             with self.lock:
                 state = process.load(folder)
                 if process.tidy(state, {r["id"] for r in rows}):
@@ -880,6 +885,22 @@ class Jobs:
         every = quick + [r for b in books for r in b["items"]]
         return {"quick": quick, "books": books,
                 "counts": {k: sum(1 for r in every if r["state"] == k) for k in ("waiting", "done", "aside")}}
+
+    def process_waiting(self, job_id: str) -> int:
+        """How many items of a book wait to be processed. Looking does not make the notes folder."""
+        marked = notes.load(self.folder(job_id))
+        if not marked["highlights"] and not marked["notes"]:
+            return 0
+        try:
+            rows = process.items(self.book(job_id), marked)
+        except ApiError:
+            return 0
+        aside = process.load(self.folder(job_id))["aside"]
+        vault = self.vault()
+        with vault.lock:
+            note = vault.book(bookfile.book_id(job_id)) if vault.exists else None
+            cited = vault.citing(note) if note is not None else {}
+        return sum(1 for r in rows if r["id"] not in cited and r["id"] not in aside)
 
     def process_aside(self, r: dict[str, Any]) -> dict[str, Any]:
         """Set items aside, or bring them back: ``{job, ids, aside}`` for a book's items, ``{quick, aside}``
@@ -1140,6 +1161,7 @@ class Jobs:
         job.update({k: v for k, v in self.summary(self.jobs[job_id]).items() if k in ("can_read", "reading", "practice", "notes")})
         if job["can_read"]:
             job["results"] = reading.results(reading.load_state(self.folder(job_id)))
+            job["waiting"] = self.process_waiting(job_id)
         # what the reader wants from the book: their words for it, and the reading of them that is waiting or was used
         mine = job.pop("steer", None) or {}
         job.pop("spent", None), job.pop("again", None)

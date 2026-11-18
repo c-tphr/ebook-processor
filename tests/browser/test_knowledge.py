@@ -366,3 +366,76 @@ def test_a_quick_note_over_practice_leaves_the_card_alone(page: Page, book: App,
     expect(page.locator(".nt-toast")).to_contain_text("Quick note saved")
     expect(page.get_by_role("button", name="Reveal answer")).to_be_visible()   # the card was not turned over
     assert len(list((vault / "Inbox").iterdir())) == 1
+
+
+def test_processing_a_highlight_into_a_note_a_source_or_aside(page: Page, book: App, vault: Path):
+    first = book.call("POST", f"/jobs/{book.id}/notes/highlight", json_body={"chapter": 2, "start": 3, "end": 14, "note": "Supply is not on a timetable."})["made"]
+    second = book.call("POST", f"/jobs/{book.id}/notes/highlight", json_body={"chapter": 2, "start": 61, "end": 80})["made"]
+    third = book.call("POST", f"/jobs/{book.id}/notes/highlight", json_body={"chapter": 3, "start": 5, "end": 20})["made"]
+    have = make(book, title="Supply sets the pace", body="What the supply boat brings decides what can be done.\n")
+    quick = make(book, body="compare with pilots' checklists", kind="quick")
+    page.goto(book.url + "/#/notes")
+    expect(page.locator("#nz-process")).to_be_visible()
+    expect(page.locator(".nz-part h2").first).to_have_text("To process4")
+    page.locator("#nz-process a").click()
+    expect(page.locator(".pz-item")).to_have_count(4)                          # the quick note first, then the book in reading order
+    assert page.locator(".pz-item").evaluate_all("(rows) => rows.map((r) => r.id)") == [f"pz-{quick['id']}", f"pz-{first}", f"pz-{second}", f"pz-{third}"]
+    # an idea note: it starts with the words written on the highlight, cites it, and the item is processed
+    page.locator(f"#pz-{first}").click()
+    expect(page.locator(".pz-pane blockquote")).to_contain_text("The supply boat reached Gannet Rock")
+    expect(page.locator(".pz-pane .mine")).to_have_text("Supply is not on a timetable.")
+    expect(page.locator("#pz-targets .pz-to b")).to_have_text(["Supply sets the pace"])   # a related note is offered to add it to
+    page.locator("#pz-idea").click()
+    page.wait_for_selector(".pz-pane .cm-focused")
+    expect(page.locator(".pz-pane .cm-content")).to_contain_text("Supply is not on a timetable.")
+    page.keyboard.type("In my words: ")
+    saved(page, ".pz-pane")
+    expect(page.locator(".title .kv").first).to_contain_text("3")
+    expect(page.locator(f"#pz-{first}")).to_have_count(0)
+    related = page.locator(".pz-pane .nt-related")
+    expect(related.locator(".rel .back b").first).to_have_text("Supply sets the pace")
+    related.get_by_role("button", name="Link").first.click()                   # a link to the related note, where the cursor is
+    saved(page, ".pz-pane")
+    made = next(p for p in (vault / "Inbox").iterdir() if "In my words" in p.name).read_text(encoding="utf-8")
+    assert "In my words: [[Supply sets the pace]]Supply is not on a timetable." in made and made.rstrip().endswith(f"Source: [[{BOOK}#^{first}]]")
+    page.locator(".pz-pane").get_by_role("button", name="Close").click()
+    # added to a note that exists, as a source
+    page.locator(f"#pz-{second}").click()
+    page.get_by_label("Find a note to add this to").fill("supply")
+    row = page.locator("#pz-targets .pz-to", has_text="Supply sets the pace")
+    row.get_by_role("button", name="Add as a source").click()
+    expect(page.locator(".nt-toast")).to_contain_text("Added to “Supply sets the pace” as a source")
+    expect(page.locator(f"#pz-{second}")).to_have_count(0)
+    assert (vault / "Supply sets the pace.md").read_text(encoding="utf-8").endswith(f"\n\nSource: [[{BOOK}#^{second}]]\n")
+    # set aside, seen under its tab, and brought back
+    page.locator(f"#pz-{third}").get_by_role("button", name="Set aside").click()
+    expect(page.locator(".pz-item")).to_have_count(1)
+    page.get_by_role("button", name="Set aside 1").click()
+    page.locator(f"#pz-{third}").get_by_role("button", name="Bring back").click()
+    expect(page.locator(".pz-list")).to_contain_text("Nothing is set aside")
+    page.get_by_role("button", name="Processed 2").click()
+    expect(page.locator(f"#pz-{first} .meta a")).to_have_text("a note without a title")
+    expect(page.locator(f"#pz-{second} .meta a")).to_have_text("Supply sets the pace")
+    # oldest first is one list across books; the choice is kept
+    page.get_by_role("button", name="Waiting 2").click()
+    page.get_by_label("Order").select_option("oldest")
+    expect(page.locator(".pz-item")).to_have_count(2)
+    expect(page.locator(".pz-list h3")).to_have_count(0)
+    assert "order=oldest" in page.evaluate("location.hash") and book.call("GET", "/settings")["process_order"] == "oldest"
+    # a quick note: its words go to a note, which opens to write on
+    page.locator(f"#pz-{quick['id']}").click()
+    page.get_by_label("Find a note to add this to").fill("supply sets")
+    page.locator("#pz-targets .pz-to").get_by_role("button", name="Open and write").click()
+    page.wait_for_selector(".pz-pane .cm-content")
+    expect(page.locator(".pz-pane").get_by_label("Title")).to_have_value("Supply sets the pace")
+    expect(page.locator(".pz-pane .cm-content")).to_contain_text("compare with pilots' checklists")
+    expect(page.locator(f"#pz-{quick['id']}")).to_have_count(0)
+    assert not list((vault / "Inbox").glob("*compare*")) and list((vault / ".trash" / "Inbox").glob("*compare*"))
+    # from the book's own page, for that book alone
+    page.goto(f"{book.url}/#/run/{book.id}")
+    expect(page.locator("#b-process")).to_have_text("Process 1")
+    page.locator("#b-process").click()
+    expect(page.locator(".pz-item")).to_have_count(1)
+    assert page.evaluate("location.hash").startswith("#/notes/process?book=" + book.id)
+    have_now = book.call("GET", f"/vault/notes/{have['id']}")
+    assert len(have_now["sources"]) == 1 and "compare with pilots' checklists" in have_now["body"]

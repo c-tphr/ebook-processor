@@ -315,9 +315,19 @@ Beside the text are the note's **sources** (the passages it cites, with a way to
 
 **The front page** shows the inbox, the notes you worked on last, your tags and your books. The **search** box looks through notes of every kind and through the highlights and notes of every book: notes first, then passages, with titles you can jump to, and filters by kind, tag and book. Choosing a book shows its passages and the notes that cite it. A passage that is found can be opened in the book or made the start of an idea note.
 
+**Processing.** A highlight is raw material. **Process**, on the Notes front page (and on a book's page for that book alone), lists everything nothing has been made of yet: your quick notes, then each book's highlights and the notes you wrote in it, by section in reading order, or oldest first if you switch the order. A highlight and the note on it are one item. Choose an item and it opens beside the list, with three ways to finish it:
+
+- **Idea note** starts a note that cites it. If you wrote a note on the highlight, your words are where the idea note begins.
+- **Add it to a note you have.** The app offers related notes, or you find one by its title. **Add as a source** adds the citation to that note and moves on; **Open and write** does the same and opens the note so you can say what the passage adds. A quick note is added by its words, and then goes to the trash.
+- **Set aside**, for one item, a section or a whole book. What is set aside is kept under its own tab and can be brought back.
+
+Nothing has to be marked as done. An item counts as **processed** as soon as one of your notes cites it, however the citation was made: in the reader, here, typed by hand, or in Obsidian. It then shows under **Processed** with the notes that cite it, and **Another idea note** starts a second one from it. If the citing note is deleted, the item waits again.
+
+**Related.** Beside a note, under what links to it, the app lists other notes and passages of your books that seem to be about the same thing, and says which words they share. It is found on this computer, by the uncommon words and the tags two texts have in common; no model is asked and nothing is sent anywhere. **Link** puts a link to a related note where the cursor is, **Cite** a citation of a related passage.
+
 **Edits made in another program** are seen: the app looks at the files again whenever Notes asks for something. A note that is open reloads when its file changes. If you have also changed it in the app, the app does not write over the file: it asks which version to keep.
 
-This is the first part of a larger plan (`docs/KNOWLEDGE-PLAN.md`). Working through highlights one by one, index notes and projects, a graph, and help from the model in finding connections are still to come.
+These are the first two parts of a larger plan (`docs/KNOWLEDGE-PLAN.md`). Index notes and projects, a graph, and help from the model in finding connections are still to come.
 
 ### Practice (spaced repetition)
 
@@ -447,8 +457,9 @@ After every push GitHub runs both (`.github/workflows/tests.yml`): the test suit
 | `ebook_processor/notes.py` | Highlights and notes, the notebook made from them, and its Markdown export |
 | `ebook_processor/highlight_questions.py`, `instructions/highlight.md` | Questions made from highlights: their store, what the model is sent, the check, and where an accepted question is asked |
 | `ebook_processor/srs.py` | The spaced-repetition scheduler and a book's cards |
-| `ebook_processor/vault.py` | The notes folder: files and their names, the properties at the top of a file (read and written without a YAML library), links, tags and block ids, the index kept in memory, saving that does not write over a change made on disk, renaming with links rewritten, the trash, search |
+| `ebook_processor/vault.py` | The notes folder: files and their names, the properties at the top of a file (read and written without a YAML library), links, tags and block ids, the index kept in memory, saving that does not write over a change made on disk, renaming with links rewritten, the trash, search, which notes cite which passage, and related notes |
 | `ebook_processor/bookfile.py` | A book's file in the notes folder, made from its highlights and notes |
+| `ebook_processor/process.py` | A book's highlights and notes as items to process, and which were set aside |
 | `editor/` | The source of the note editor: CodeMirror 6 with the additions a notes folder needs (see below) |
 | `ebook_processor/reading.py` | A prepared EPUB as the reader needs it (clean chapter HTML with word positions, sections, search) and the saved reading state |
 | `ebook_processor/update.py` | `ebook-processor update`: find and stop the running app, fast-forward the checkout, install, start again |

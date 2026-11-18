@@ -2,7 +2,7 @@
 
 This is the working plan for the knowledge system, agreed with the project owner in a six-round interview on 2026-11-18. It is written for whoever builds it, so that the work can start from this file alone. It holds what was decided, the phases, a design for each phase, and the questions that are still open. Keep it up to date as phases are finished: mark what is done, and move what was passed over to `DEFERRED.md`.
 
-**Status: Phase 1 is on `main`. Phase 2 (the Process view) is being built in the order of section 6c.**
+**Status: Phase 1 is on `main`. Phase 2 (the Process view) is built and on the development branch (section 6c); it goes to `main` when the owner says. Phase 3 starts with its interview.**
 
 ## 1. What it is for
 
@@ -260,8 +260,8 @@ Order of work:
 
 1. [x] `vault.py`: which notes cite which block of a book; related notes and passages; a property set by the app. `process.py`: a book's items in reading order, set aside. Tests.
 2. [x] Server: `/api/process` (the view), set aside and bring back, add to an existing note, `/api/vault/related`. Tests over HTTP.
-3. [ ] The Process view in `index.html` (`#/notes/process`), its entry on the Notes front page and on a book's page; related notes in `notes.js`.
-4. [ ] Browser tests, README, `DEFERRED.md`.
+3. [x] The Process view in `index.html` (`#/notes/process`), its entry on the Notes front page and on a book's page; related notes in `notes.js`.
+4. [x] Browser tests, README, `DEFERRED.md`.
 
 ## 7. Record of progress
 
@@ -271,3 +271,4 @@ Order of work:
 | 2026-11-18 | Phase 1 interview done (three rounds). Building starts at step 1 of section 6b |
 | 2026-11-18 | Phase 1 built in the order of section 6b and pushed to the development branch: `vault.py`, `bookfile.py`, the server routes, the editor, `notes.js`, the Notes area, capture, and the reader's Idea note |
 | 2026-11-18 | Phase 1 pushed to `main` at `6cb78e6` on the owner's word. Phase 2 interview done (three rounds); building starts |
+| 2026-11-18 | Phase 2 built: `process.py`, citing and related notes in `vault.py`, `/api/process`, the Process view (`showProcess` in `index.html`), related notes in `notes.js`. The Process status is per book in `process.json` (set aside only); for a quick note it is the property `aside` |

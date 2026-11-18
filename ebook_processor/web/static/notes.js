@@ -85,7 +85,11 @@ dialog.nt-capture::backdrop { background: color-mix(in srgb, var(--ink) 45%, tra
 .nt .nt-props .add { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; padding-top: 10px; }
 .nt .nt-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 320px); gap: 28px var(--gut, 28px); margin-top: 22px; align-items: start; }
 .nt.compact .nt-cols, .nt.book .nt-cols { grid-template-columns: minmax(0, 1fr); }
-.nt.compact .nt-aside { order: -1; }
+.nt .nt-more:not(:empty) { margin-top: 26px; } .nt.compact .nt-top:not(:empty) { margin-bottom: 4px; }
+.nt .nt-aside .rel { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; align-items: start; border-bottom: 1px solid var(--ghost); }
+.nt .nt-aside .rel .back { border-bottom: 0; } .nt .nt-aside .rel button { padding: 10px 0; }
+.nt .nt-aside .rel.passage { padding: 10px 0; } .nt .nt-aside .rel.passage blockquote { font-size: 15px; border-left-color: var(--ghost); }
+.nt .nt-aside .rel.passage .by { grid-column: 1 / -1; } .nt .nt-aside .rel.passage .by button { padding: 0; }
 .nt .nt-editor { min-width: 0; --editor-min: 16em; }
 .nt.compact .nt-editor { --editor-min: 9em; }
 .nt .nt-aside h3 { font: 12px/1.5 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; font-weight: 400; margin: 0 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--ink); }
@@ -93,7 +97,7 @@ dialog.nt-capture::backdrop { background: color-mix(in srgb, var(--ink) 45%, tra
 .nt .nt-aside blockquote { margin: 0; padding: 2px 0 2px 12px; border-left: 6px solid color-mix(in srgb, var(--blue) 40%, transparent); font: 16px/1.5 Georgia, "Iowan Old Style", serif; white-space: pre-wrap; }
 .nt .nt-aside .src { margin: 0 0 16px; }
 .nt .nt-aside .src .by { display: flex; gap: 6px 12px; flex-wrap: wrap; align-items: baseline; margin-top: 6px; font-size: 13px; color: var(--mute); }
-.nt .nt-aside .back { display: block; padding: 9px 0; border-bottom: 1px solid var(--ghost); text-decoration: none; color: inherit; cursor: pointer; }
+.nt .nt-aside .back { display: block; margin: 0; padding: 9px 0; border-bottom: 1px solid var(--ghost); text-decoration: none; color: inherit; cursor: pointer; }
 .nt .nt-aside .back:hover b { color: var(--blue); }
 .nt .nt-aside .back b { display: block; font: 500 16px/1.3 var(--grot); letter-spacing: -0.01em; }
 .nt .nt-aside .back span { display: block; font-size: 13px; line-height: 1.4; color: var(--mute); margin-top: 2px; }
@@ -170,7 +174,8 @@ function install({ where, button } = {}) {
 
 /* ---------- one note ---------- */
 // options: id, or draft { kind, body, sources: [link], cited: [source] } for a note that is made on its first save;
-// compact (a narrow column: one column, sources first); close() adds a Close button;
+// compact (a narrow column: one column, sources above the text); close() adds a Close button; related: false leaves
+// out the list of related notes;
 // onOpen(id) another note is asked for; onPlace(source, event) a place in a book; onTag(tag); onGone(); onState(note).
 function mount(root, options) {
   const opts = options || {};
@@ -183,10 +188,15 @@ function mount(root, options) {
   const status = el("span", { class: "nt-status", role: "status" });
   const title = el("input", { type: "text", class: "nt-title", "aria-label": "Title", maxlength: "120", autocomplete: "off", spellcheck: "true" });
   const meta = el("div", { class: "nt-meta" }), notice = el("div", {}), propsBox = el("div", { class: "nt-props", hidden: true });
-  const edBox = el("div", { class: "nt-editor" }), aside = el("div", { class: "nt-aside" });
+  // Beside the text: what the note cites, then what links to it and what is related. In a narrow column the
+  // sources stand above the text and the rest below it.
+  const edBox = el("div", { class: "nt-editor" });
+  const top = el("div", { class: "nt-top" + (opts.compact ? " nt-aside" : "") }), more = el("div", { class: "nt-more" + (opts.compact ? " nt-aside" : "") });
+  let related = null, relatedTurn = 0;
   const buttons = el("span", { class: "row" });
   const shell = el("div", { class: "nt" + (opts.compact ? " compact" : "") },
-    el("div", { class: "nt-head" }, status, buttons), title, meta, notice, propsBox, el("div", { class: "nt-cols" }, edBox, aside));
+    el("div", { class: "nt-head" }, status, buttons), title, meta, notice, propsBox,
+    el("div", { class: "nt-cols" }, opts.compact ? [top, edBox, more] : [edBox, el("div", { class: "nt-aside" }, top, more)]));
   root.replaceChildren(shell);
 
   const say = (text) => { status.textContent = text; };
@@ -282,13 +292,37 @@ function mount(root, options) {
         w.job && w.go ? el("a", { href: `/read/${w.job}?go=${w.go.chapter}:${w.go.word}`, onclick: (e) => { if (opts.onPlace) opts.onPlace(w, e); } }, "Open the place")
           : w.in_library === false ? el("span", {}, "No longer in your library") : null))));
     }
+    top.replaceChildren(...parts);
+    parts.length = 0;
     if (note && (note.backlinks.length || !opts.compact)) {
       parts.push(el("section", { class: "nt-back" }, el("h3", {}, note.kind === "book" ? "Notes that cite this book" : "Linked from"),
         note.backlinks.length ? note.backlinks.map((b) => el("a", { class: "back", onclick: () => go(b.id) },
           el("b", {}, b.untitled ? "A note without a title" : b.title), el("span", {}, b.context)))
           : el("p", { class: "none" }, note.kind === "book" ? "No note cites this book yet." : "No other note links here yet.")));
     }
-    aside.replaceChildren(...parts);
+    if (related && related.notes.length + related.passages.length && !readOnly()) {
+      const shares = (r) => (r.shares.length ? "shares: " + r.shares.join(", ") : "shares a tag");
+      parts.push(el("section", { class: "nt-related" }, el("h3", { title: "Found on this computer, by the uncommon words and the tags they share with this note. Nothing is sent anywhere." }, "Related"),
+        related.notes.map((r) => el("div", { class: "rel" },
+          el("a", { class: "back", onclick: () => go(r.id) }, el("b", {}, r.untitled ? r.excerpt.split(/\s+/).slice(0, 10).join(" ") : r.title), el("span", {}, shares(r))),
+          el("button", { type: "button", class: "quiet", title: "Put a link to this note where the cursor is", onclick: () => editor && editor.insert(`[[${r.link}]]`) }, "Link"))),
+        related.passages.map((r) => el("div", { class: "rel passage" }, el("blockquote", {}, r.text),
+          el("div", { class: "by" }, el("span", {}, r.book + (r.heading ? " / " + r.heading : "")),
+            el("button", { type: "button", class: "quiet", title: "Cite this passage where the cursor is", onclick: () => editor && editor.insert(`[[${r.book}#^${r.block}]]`) }, "Cite"),
+            r.job && r.go ? el("a", { href: `/read/${r.job}?go=${r.go.chapter}:${r.go.word}`, onclick: (e) => { if (opts.onPlace) opts.onPlace(r, e); } }, "Open in the book") : null)))));
+    }
+    more.replaceChildren(...parts);
+  }
+  // What else in the folder is about the same thing: asked when the note opens and after each save.
+  async function findRelated() {
+    if (closed || !editor || readOnly() || opts.related === false) return;
+    const mine = ++relatedTurn, sources = note ? note.sources : (draft && draft.cited) || [];
+    const text = [title.value, editor.getText(), ...sources.map((x) => x.text || "")].join("\n");
+    try {
+      const got = await call("/vault/related", { method: "POST", json: { text, tags: note ? note.tags : [],
+        but: [note ? note.id : "", ...sources.map((x) => `${x.id}#${x.block}`)].filter(Boolean) } });
+      if (mine === relatedTurn && !closed) { related = got; drawAside(); }
+    } catch (e) { /* the list is a help, not a need */ }
   }
   function drawAll() { drawHead(); drawNotice(); drawProps(); drawAside(); }
 
@@ -328,6 +362,7 @@ function mount(root, options) {
       peek: ({ target, anchor }) => call("/vault/peek?" + query({ target, anchor, from: note ? note.id : "" })),
     });
     say(note ? "Saved" : "");
+    findRelated();
     watching = setInterval(look, 4000);
     addEventListener("focus", look);
     if (opts.focus !== false && !readOnly()) editor.focus(draft ? "start" : undefined);
@@ -366,7 +401,7 @@ function mount(root, options) {
         notice.replaceChildren();
         take(got, editor.getText() === sent.body ? got.body : undefined);
         say(dirty.body || dirty.props ? "Not saved yet" : "Saved");
-        if (dirty.body || dirty.props) schedule();
+        if (dirty.body || dirty.props) schedule(); else findRelated();
         return got;
       } catch (e) {
         if (dead || closed) return null;

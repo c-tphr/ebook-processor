@@ -609,7 +609,7 @@ function rsvpView() {
       h("span", { class: "seg", role: "group", "aria-label": "Words at a time" }, [1, 2, 3].map((n) => h("button", { "aria-pressed": String(o.words_per_update === n), onclick: () => { o.words_per_update = n; settle(); } }, n))),
       !playing && delivered ? h("span", { class: "m mute" }, `delivered ${delivered} wpm`) : null);
   }
-  function settle() { i = Math.min(i, N); draw(); context(); controls(); setPos(pos.chapter, i, false); }
+  function settle() { lead = null; i = Math.min(i, N); draw(); context(); controls(); setPos(pos.chapter, i, false); }
   function speed(d) { S.overrides.wpm = Math.max(100, Math.min(900, S.overrides.wpm + d)); controls(); drawFoot(); save(); }
   function sentence(dir) {
     pause();
@@ -633,7 +633,9 @@ function rsvpView() {
     if (el) { fill(box, el.outerHTML); } put(ctx, box); controls();
   }
   const primed = new Set();           // sections whose questions were shown on this pass
+  let lead = null;                    // the section whose questions are on show now, until play or a move
   function showPreview(s) {
+    lead = s;
     put(wordEl, h("span", { class: "m" }, "Before this section: read the questions, then press play"));
     wordEl.className = "word group";
     put(ctx, h("div", { class: "text" }, previewBox(s))); controls();
@@ -655,8 +657,11 @@ function rsvpView() {
     if (n0 % 40 < group.length) setPos(pos.chapter, i, true);
     timer = setTimeout(tick, ms);
   }
-  function toggle() { if (playing) return pause(); playing = true; t0 = performance.now(); n0 = 0; put(ctx); controls(); tick(); }
+  function toggle() { if (playing) return pause(); lead = null; playing = true; t0 = performance.now(); n0 = 0; put(ctx); controls(); tick(); }
   draw(); context(); controls();
+  // Opened at the start of a section with questions to preview: show them now, so that play then plays.
+  const opening = previewing() ? sectionsIn(pos.chapter).find((s) => s.start === i && unanswered(s)) : null;
+  if (opening) { primed.add(opening.id); showPreview(opening); }
   async function mark(withNote) {     // highlight the sentence being shown; with a note, pause and open it
     let k = Math.min(Math.max(0, i - (playing ? 1 : 0)), N - 1), a = k, b = k;
     while (a > 0 && !sentenceEnd(a - 1)) a--;
@@ -666,7 +671,7 @@ function rsvpView() {
     if (!playing) { draw(); context(); }
     if (withNote && made) editItem(made);
   }
-  return { next: () => sentence(1), prev: () => sentence(-1), toggle, mark, where: () => i, relayout() { if (!playing) { draw(); context(); } }, toEnd() {},
+  return { next: () => sentence(1), prev: () => sentence(-1), toggle, mark, where: () => i, relayout() { if (playing) return; if (lead) showPreview(lead); else { draw(); context(); } }, toEnd() {},
     get playing() { return playing; }, stop() { pause(); }, label: () => `${S.overrides.wpm} wpm` };
 }
 
@@ -1036,6 +1041,12 @@ $("b-toc").onclick = contents; $("b-find").onclick = search; $("b-set").onclick 
 $("b-rev").onclick = () => { save(true); setTimeout(() => { location.href = "/#/practice/" + ID; }, 150); };
 
 /* ---------- keys ---------- */
+// A button pressed with the mouse does not keep the keyboard. Left on it, Space would press it again in place of
+// playing, and the settings window would hand the keyboard back to the Settings button when it closes.
+addEventListener("click", (e) => {
+  const pressed = e.detail > 0 && e.target.closest ? e.target.closest("button, a") : null;
+  if (pressed && document.activeElement === pressed && !pressed.closest(".stg")) pressed.blur();
+}, true);
 addEventListener("keydown", (e) => {
   const typing = /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName);
   if (AppSettings.isOpen) return;      // the settings window has the keys
@@ -1046,6 +1057,9 @@ addEventListener("keydown", (e) => {
     return;
   }
   if (typing || e.ctrlKey || e.metaKey || e.altKey || !view) return;
+  // A button that has the keyboard takes Space and Enter itself. The reader must not act on them as well:
+  // Firefox presses the button when the key comes up, whatever was done with the key going down.
+  if ((e.key === " " || e.key === "Enter") && e.target.closest && e.target.closest("button, a[href], summary")) return;
   if (e.key === "h" || e.key === "n") {
     e.preventDefault();
     if (tipFor) { const r = tipFor; hideTip(); getSelection().removeAllRanges(); addHighlight(r).then((made) => { if (e.key === "n" && made) editItem(made); }); }

@@ -278,7 +278,7 @@ async function openEditor({ job, id, onChange }) {
       shown = saved; told({ edited: true });
       if (!andCheck) return w.close();
       const checked = await w.run(button, () => api(base + "/check", { method: "POST", json: {} }));
-      if (checked) shown = checked;
+      if (checked) { shown = checked; told({ edited: true }); }   // the page behind shows the verdict too
       draw(null, checked ? "" : undefined);
     };
     const rewrite = async (button) => {

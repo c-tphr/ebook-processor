@@ -1169,15 +1169,21 @@ async function showRun(id) {
   // A question was edited, added, deleted or started over: the page takes the book as it now is, and keeps the
   // ticks that are not yet in the files.
   async function changed() {
+    const mine = ++changes;
     const out = [...view.removed].filter((x) => !view.saved.has(x)), back = [...view.saved].filter((x) => !view.removed.has(x));
-    try { job = await api("/jobs/" + id); } catch (e) { return; }
+    let now, list;
+    try { now = await api("/jobs/" + id); list = await api(`/jobs/${id}/review`); } catch (e) { return; }
+    if (mine !== changes) return;       // a later change is on its way, and draws what is newest
+    job = now; review = list;
     drawHead();
-    await loadReview();
+    view.saved = new Set(review.sections.flatMap((s) => s.questions.filter((q) => q.removed).map((q) => q.id)));
+    view.removed = new Set(view.saved);
     const known = new Set(review.sections.flatMap((s) => s.questions.map((q) => q.id)));
     for (const x of out) if (known.has(x)) view.removed.add(x);
     for (const x of back) view.removed.delete(x);
     drawDone();
   }
+  let changes = 0;
   function drawSticky() {
     const changed = [...view.removed].filter((x) => !view.saved.has(x)).length + [...view.saved].filter((x) => !view.removed.has(x)).length;
     $("sticky").classList.toggle("on", changed > 0);

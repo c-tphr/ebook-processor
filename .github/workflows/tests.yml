@@ -1,5 +1,6 @@
-# Runs the test suite on Linux, Windows and macOS after every push.
-# The tests call no model and need no login: stand-in programs answer in place of Claude Code and Codex.
+# Runs the tests after every push: the test suite on Linux, Windows and macOS, and the app itself in Chromium,
+# Firefox and WebKit (the engine of Safari). The tests call no model and need no login: stand-ins answer in place
+# of Claude Code and Codex.
 name: Tests
 
 on:
@@ -39,3 +40,30 @@ jobs:
         run: python -m pip install -e ".[test]"
       - name: Test
         run: python -m pytest -q
+
+  browser:
+    name: ${{ matrix.browser }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, browser: chromium }
+          - { os: ubuntu-latest, browser: firefox }
+          - { os: windows-latest, browser: chromium }
+          - { os: windows-latest, browser: firefox }
+          - { os: macos-latest, browser: webkit }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install
+        run: python -m pip install -e ".[browser]"
+      - name: Install the browser
+        run: python -m playwright install --with-deps ${{ matrix.browser }}
+      - name: Test
+        run: python -m pytest tests/browser -q --browser ${{ matrix.browser }}

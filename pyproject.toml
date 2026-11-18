@@ -13,6 +13,7 @@ dependencies = ["jsonschema>=4.18,<5", "genanki>=0.13"]
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
+browser = ["pytest>=7", "pytest-playwright>=0.5", "playwright>=1.49"]  # the app in Chromium, Firefox and WebKit
 
 [project.scripts]
 ebook-processor = "ebook_processor.cli:main"
@@ -25,3 +26,4 @@ ebook_processor = ["instructions/*.md", "prep/schema/*.json", "schema/*.json", "
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = ["ignore:Session-scoped fixtures defined as instance methods:pytest.PytestRemovedIn10Warning"]  # from pytest-playwright

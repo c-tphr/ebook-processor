@@ -343,14 +343,19 @@ const DRAW = {
   },
 };
 
+// Closed with the mouse, the window can be left holding the keyboard on its own Close button, where no key
+// reaches the page. (Opened from the keyboard, the browser hands the keyboard back to the button that opened it.)
+function release() { if (dialog.contains(document.activeElement)) document.activeElement.blur(); }
+function shut() { dialog.close(); release(); }
 function build() {
   if (dialog) return;
   nav = el("nav", { role: "tablist", "aria-label": "Settings", "aria-orientation": "vertical" });
   tab = el("div", { class: "tab", role: "tabpanel", tabindex: "-1" });
   dialog = el("dialog", { class: "stg", "aria-label": "Settings" },
-    el("header", {}, el("b", {}, "Settings"), el("button", { type: "button", onclick: () => dialog.close() }, "Close")),
+    el("header", {}, el("b", {}, "Settings"), el("button", { type: "button", onclick: shut }, "Close")),
     el("div", { class: "cols" }, nav, tab));
-  dialog.addEventListener("click", (e) => { if (e.target === dialog) dialog.close(); });   // a click on the dimmed page
+  dialog.addEventListener("click", (e) => { if (e.target === dialog) shut(); });   // a click on the dimmed page
+  dialog.addEventListener("close", release);   // closed with Escape
   nav.addEventListener("keydown", (e) => {
     const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[e.key];
     if (!step) return;

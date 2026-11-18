@@ -29,6 +29,13 @@ def saved(page: Page, inside: str = "") -> None:
     expect(page.locator(f"{inside} .nt-status")).to_have_text("Saved")
 
 
+def accept(page: Page) -> None:
+    """Take the first thing the editor offers. For a moment after the list appears the editor does not take
+    Enter for it, so that a line break typed just then is not swallowed; a person is slower than that."""
+    page.wait_for_timeout(250)
+    page.keyboard.press("Enter")
+
+
 def write(page: Page, text: str, inside: str = "") -> None:
     """Type into the note's text, as a person would."""
     page.locator(f"{inside} .cm-content").click()
@@ -53,10 +60,10 @@ def test_the_front_page_a_new_note_and_a_link_that_completes(page: Page, book: A
     options = page.locator(".cm-tooltip-autocomplete li")
     expect(options).to_have_count(1)
     expect(options).to_contain_text("Prices carry information")
-    page.keyboard.press("Enter")
+    accept(page)
     page.keyboard.type(" and its [[prices#")
     expect(options.first).to_contain_text("Why it matters")
-    page.keyboard.press("Enter")
+    accept(page)
     page.keyboard.type(" #markets")
     saved(page)
     text = (vault / "Markets are conversations.md").read_text(encoding="utf-8")

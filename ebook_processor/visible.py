@@ -17,6 +17,7 @@ from __future__ import annotations
 from html import escape
 from typing import Any
 
+from . import forms as qforms
 from .prep.build import splice
 from .prep.draft import PlannedSection
 from .prep.epub import DC_NS, Block, Book, EpubError, load_book_bytes
@@ -37,6 +38,9 @@ HINT = "font-size: 0.9em; font-style: italic; margin: 0; text-indent: 0;"
 RECAP = "font-size: 0.9em; font-style: italic; margin: 0 0 1.2em 0; text-indent: 0;"
 ANSWER = "line-height: 1.5; margin: 0 0 0.8em 0; text-indent: 0;"
 PREVIEW = "font-weight: bold; line-height: 1.4; margin: 0 0 1.2em 0; text-indent: 0;"
+CHOICE = "line-height: 1.4; margin: 0 0 0.7em 1.2em; text-indent: 0;"
+KEY = "font-weight: bold; line-height: 1.4; margin: 0 0 0.8em 0; text-indent: 0;"
+LETTERS = "ABCD"
 
 
 def insertion_point(block: Block) -> tuple[int, Element, bool] | None:
@@ -77,22 +81,36 @@ def _paragraphs(text: str, style: str, tag: str, cls: str) -> str:
 
 def checkpoint_html(host: Element, checkpoint: dict[str, Any], label: str, number: int, break_after: bool) -> bytes:
     div, p, br = host.qname("div"), host.qname("p"), host.qname("br")
-    prompts = checkpoint["prompts"]
+    prompts = [qforms.from_x(q) for q in checkpoint["prompts"]]
     pages = []
     for n, q in enumerate(prompts, start=1):
+        form = qforms.form_of(q)
         count = f"Question {n} of {len(prompts)}" if len(prompts) > 1 else "Question"
         kicker = f"Checkpoint {number} · {label}" if label else f"Checkpoint {number}"
+        # the question as this form shows it, and what the reader is to do before turning the page
+        shown, hint = _paragraphs(q["prompt"], QUESTION, p, "ebp-prompt"), "Recall your answer, then turn the page."
+        key = ""
+        if form == "choice":
+            shown += "".join(f'<{p} class="ebp-choice" style="{CHOICE}">{LETTERS[k]}.  {escape(c, quote=False)}</{p}>'
+                             for k, c in enumerate(q["choices"]))
+            hint, key = "Choose one, then turn the page.", f"{LETTERS[q['correct']]}.  {q['choices'][q['correct']]}"
+        elif form == "truefalse":
+            count += " · True or false?"
+            hint, key = "Decide whether this is true, then turn the page.", qforms.key(q) + "."
+        elif form == "cloze":
+            hint, key = "Recall the missing words, then turn the page.", qforms.key(q)
         pages.append(
             f'<{div} class="ebp-question" style="{PAGE}">'
             f'<{p} class="ebp-kicker" style="{KICKER}">{escape(kicker, quote=False)}<{br}/>{count}</{p}>'
-            + _paragraphs(q["prompt"], QUESTION, p, "ebp-prompt")
-            + f'<{p} class="ebp-hint" style="{HINT}">Recall your answer, then turn the page.</{p}>'
+            + shown
+            + f'<{p} class="ebp-hint" style="{HINT}">{hint}</{p}>'
             f"</{div}>")
         last = n == len(prompts)
         pages.append(
             f'<{div} class="ebp-answer" style="{PAGE}{PAGE_END if last and break_after else ""}">'
             f'<{p} class="ebp-kicker" style="{KICKER}">Answer · {count}</{p}>'
             + _paragraphs(q["prompt"], RECAP, p, "ebp-recap")
+            + (_paragraphs(key, KEY, p, "ebp-key") if key else "")
             + _paragraphs(q["answer"], ANSWER, p, "ebp-text")
             + f"</{div}>")
     html = f'<{div} class="ebp-checkpoint" id="ebp-{checkpoint["id"]}">' + "".join(pages) + f"</{div}>"
@@ -107,7 +125,7 @@ def preview_html(host: Element, checkpoint: dict[str, Any], label: str) -> bytes
     kicker = f"Coming up · {label}" if label else "Coming up"
     html = (f'<{div} class="ebp-preview" id="ebp-preview-{checkpoint["id"]}" style="{PAGE}{PAGE_END}">'
             f'<{p} class="ebp-kicker" style="{KICKER}">{escape(kicker, quote=False)}<{br}/>{count}</{p}>'
-            + "".join(_paragraphs(q["prompt"], PREVIEW, p, "ebp-prompt") for q in prompts)
+            + "".join(_paragraphs(q["prompt"], PREVIEW, p, "ebp-prompt") for q in prompts)  # as plain questions
             + f'<{p} class="ebp-hint" style="{HINT}">Keep these in mind as you read. They are asked at the end of '
               f"the section.</{p}></{div}>")
     return html.encode("utf-8")

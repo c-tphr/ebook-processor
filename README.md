@@ -95,6 +95,7 @@ That processes the book with the default options and prints where the files are.
 | `--density short\|medium\|long` | Target section length: 300 to 1,000, 600 to 2,000 or 1,500 to 4,000 words. A checkpoint follows each section | `medium` |
 | `--section-words MIN-MAX` | The same, in your own numbers | |
 | `--max-questions N` | Most questions per checkpoint, 1 to 8. The model chooses how many, up to this, by the section's length and density and by what you want from the book | 3 |
+| `--forms LIST` | The kinds of question a run may write, separated by commas: `open`, `choice` (multiple choice), `truefalse`, `cloze` (fill in the blank), or `all`. See "Kinds of question" | `open` |
 | `--kind auto\|expository\|narrative\|technical` | The kind of book. `auto` decides section by section | `auto` |
 | `--content prose\|text\|figures` | What Claude sees of tables, code, formulas and pictures (below) | `text` |
 | `--rounds N` | How often a question may be checked. 0 switches checking off | 3 |
@@ -151,6 +152,29 @@ Every page has a **Settings** button at the top right. It opens one window with 
 
 A change applies at once, also in other open tabs of the app. Settings are kept in `reader-settings.json` and `srs-settings.json` in the data folder.
 
+### Kinds of question
+
+A question can take one of four forms. On the Add a book page you tick the ones a run may write, under **Kinds of question**; the ticks are also in Settings, on the Add a book tab, as what the form starts with.
+
+| Kind | What you do | Graded by |
+| --- | --- | --- |
+| **Open** | Recall the answer in your head (or type it), reveal the reference answer, mark yourself Correct or Incorrect | You |
+| **Multiple choice** | Pick one of four choices, with the mouse or with A to D (or 1 to 4) | The app |
+| **True or false** | Say whether a statement is true, with the mouse or with T and F | The app |
+| **Fill in the blank** | Type the words missing from a statement | The app |
+
+A new book starts with open questions only, as before: recalling an answer from nothing is the strongest practice. The other kinds are quicker, and good for terms, names and misunderstandings.
+
+- **Which kind a question gets.** For each idea the model picks the kind that suits it among those you ticked: a why or a how stays open, a key term suits a blank, a tempting misreading suits true or false. With several kinds ticked you meet each of them over a book, but you do not set how many of each. What you write under "How I like questions" can shift the balance among the ticked kinds; it cannot add a kind.
+- **One try.** A question the app grades is answered once. Then you see whether you were right, the right answer, and a sentence or two from the section that says why. A wrong answer counts as a miss, like an open question marked Incorrect, and offers to reread the section.
+- **Typed answers are matched with some forgiveness.** Capital letters, accents, punctuation, a leading "the", and a slip of the keys in a longer word are forgiven; an answer with a number in it must be exact. The model also lists other wordings that count. When the app judges a typed answer wrong and you know it was right, **I was right** counts it as right.
+- **Multiple choice** always has four choices, of which one is right, shown in a new order each time. A blank is one gap per statement, and the statement is the model's own sentence, written to stand alone, not a sentence of the book.
+- **The check** judges these questions on a sixth point besides the usual five: that the marked answer is the one right answer for a reader of the section. A wrong choice that is also defensible, a statement that is arguable, or a blank that a second answer would fill, fails it.
+- **Practice** asks a question in the form it has, and what the app decides (or you, for a typed answer you overrule) is what the schedule uses.
+- **Questions on highlights** take the kinds ticked in Settings, on the Add a book tab. With **Another** you can ask for a kind in words ("as true or false"). **Reword** on a proposal lets you change its choices and which one is right, whether a statement is true, or the missing words and the wordings that count. A question you write yourself is an open one.
+- **In the files.** The book with visible checkpoints shows the choices on the question page and the right one on the answer page. The Anki deck and the cards text put the choices on the front; Anki does not grade them. `questions.json` has each question's `form` and its members.
+- **On the Picco.** The firmware today knows open questions only. In the firmware-format book every question is therefore also there as plain text that it can show: "True or false: ...", the statement with its gap, the multiple-choice question without its choices, each with the right answer at the start of its answer, to grade yourself. The form itself travels beside that text, ready for a firmware that supports it: `docs/question-forms.md` says exactly how.
+
 ### What you want from a book
 
 Left to itself, the model asks about each section's own main ideas. You can tell it what matters to you, in three places:
@@ -163,7 +187,7 @@ Left to itself, the model asks about each section's own main ideas. You can tell
 
 **What it changes.** Which of a section's ideas are asked about, and from which side. How many questions a section gets: the model chooses the number up to your limit (1 to 8) by the section's length, its density and how strongly it bears on what you want. And the manner of the questions, where your wishes win over the tool's own taste (a reader preparing for an exam can have the dates the tool otherwise calls trivia).
 
-**What it never changes.** Every answer comes from the section it belongs to, so there are no questions about how something applies to your own work. Questions are recalled from memory: no multiple choice, true-or-false or fill-in-the-blank. Every section is still asked about: your wishes move the emphasis, they do not skip the parts you care less about. The independent check judges the same five points as before; it is told your manner only so that it does not remark on, say, a date you asked for.
+**What it never changes.** Every answer comes from the section it belongs to, so there are no questions about how something applies to your own work. Which kinds of question are written is set by the ticks under "Kinds of question", not by a wish. Every section is still asked about: your wishes move the emphasis, they do not skip the parts you care less about. The independent check judges the same points as before; it is told your manner only so that it does not remark on, say, a date you asked for.
 
 **How your wishes were read.** Before anything is written, the model states in its own words what it will favour and how it will write, after a look at how each chapter opens. It lists the chapters your purpose bears on most (they may get more questions), says which wishes cannot be followed and what the book does not seem to hold, and may ask you up to three questions. You correct the reading in place, or tell the model what to change and have it read again, as often as you like. What you confirm is handed to the question writers word for word; they do not see your own words. **Go on without them** processes the book with no wishes at all. This step is one short call. It can be switched off in Settings; your words then go to the writers as they are.
 

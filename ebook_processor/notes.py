@@ -26,6 +26,7 @@ import secrets
 from pathlib import Path
 from typing import Any
 
+from . import forms as qforms
 from .pipeline import now
 from .reading import ReadingBook
 
@@ -185,6 +186,7 @@ def notebook(book: ReadingBook, store: dict[str, Any], reading_state: dict[str, 
     def asked(q: dict[str, Any]) -> dict[str, Any]:
         """A question made from a highlight, with what the reader has answered to it so far."""
         return {**{k: q[k] for k in ("id", "question", "answer", "status", "by", "problem", "ask", "text", "chapter")},
+                **qforms.members(q),
                 "word": q["start"], "first": grades.get(q["id"], {}).get("first"), "attempts": attempts.get(q["id"], [])}
 
     made = store.get("questions") or []
@@ -210,7 +212,7 @@ def notebook(book: ReadingBook, store: dict[str, Any], reading_state: dict[str, 
         for s in sections:
             mine = [i for i in items if s["start"] <= i["word"] < s["end"]]
             used.update(i["id"] for i in mine)
-            answers = [{"id": p["id"], "question": p["prompt"], "answer": p["answer"],
+            answers = [{"id": p["id"], "question": p["prompt"], "answer": p["answer"], **qforms.members(p),
                         "first": grades.get(p["id"], {}).get("first"), "attempts": attempts.get(p["id"], []),
                         "previewed": previewed(p["id"]),
                         "go": sources.get(p["id"]) or {"chapter": c["index"], "word": s["start"]}}
@@ -245,7 +247,8 @@ def markdown(data: dict[str, Any], answers: bool = True) -> str:
             if q["status"] != "accepted":
                 continue
             state = {"correct": "recalled", "incorrect": "missed"}.get(q["first"] or "", "not asked yet")
-            out += [f"- **{q['question']}** ({state})", "  - Reference: " + q["answer"].replace("\n", " ")]
+            asked, reference = qforms.as_text(q, q["question"], q["answer"])
+            out += [f"- **{asked}** ({state})", "  - Reference: " + reference.replace("\n", " ")]
         return out + [""] if out else out
 
     def items(rows: list[dict[str, Any]]) -> list[str]:
@@ -277,11 +280,12 @@ def markdown(data: dict[str, Any], answers: bool = True) -> str:
                 part += ["**Checkpoint**", ""]
                 for a in s["answers"]:
                     grade = {"correct": "recalled", "incorrect": "missed"}.get(a["first"] or "", "not graded")
-                    part += [f"- **{a['question']}** ({grade}{', previewed' if a.get('previewed') else ''})"]
+                    asked, reference = qforms.as_text(a, a["question"], a["answer"])
+                    part += [f"- **{asked}** ({grade}{', previewed' if a.get('previewed') else ''})"]
                     typed = next((t["text"] for t in a["attempts"] if t["text"]), "")
                     if typed:
                         part += ["  - Answered: " + typed.replace("\n", " ")]
-                    part += ["  - Reference: " + a["answer"].replace("\n", " ")]
+                    part += ["  - Reference: " + reference.replace("\n", " ")]
                 part += [""]
             if part:
                 single = len(c["sections"]) == 1 and s["label"] == c["title"]

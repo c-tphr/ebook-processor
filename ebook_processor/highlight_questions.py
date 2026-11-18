@@ -26,16 +26,18 @@ from __future__ import annotations
 
 import copy
 import secrets
+from dataclasses import replace
 from pathlib import Path
 from string import Template
 from typing import Any
 
+from . import forms as qforms
 from . import prompts
 from .content import render_blocks
 from .llm import Backend, BackendError
 from .pipeline import now
 from .prep.epub import Block, SpineDoc
-from .prep.checkpoints import ANSWER_MAX_CHARS, PROMPT_MAX_CHARS
+from .prep.checkpoints import ANSWER_MAX_CHARS, PROMPT_MAX_CHARS, plain_text_problem
 from .reading import ReadingBook
 from .settings import INSTRUCTIONS_VERSION, Settings
 from .steer import Steer, highlight_rules
@@ -90,14 +92,31 @@ def section_at(manifest: dict[str, Any], chapter: int, word: int) -> dict[str, A
     return next((s for s in manifest["sections"] if s["chapter"] == chapter and s["start"] <= word < s["end"]), None)
 
 
+def formed(question: Any, answer: Any, form: Any = None) -> dict[str, Any]:
+    """The wording of a question as it is kept: ``question``, ``answer`` and, for a question that is not open, the
+    members of its form (``forms.members``). Raises ``QuestionError`` when something about it cannot be used."""
+    out = {"question": _clean(question, "a question", PROMPT_MAX_CHARS), "answer": _clean(answer, "an answer", ANSWER_MAX_CHARS)}
+    extra = form if isinstance(form, dict) else {}
+    if isinstance(extra.get("choices"), list):
+        extra = {**extra, "choices": [" ".join(str(c).split()) for c in extra["choices"]]}
+    if isinstance(extra.get("accept"), list):
+        extra = {**extra, "accept": [" ".join(str(a).split()) for a in extra["accept"] if str(a).strip()]}
+    out.update(qforms.members(extra))
+    wrong = qforms.problems({"prompt": out["question"], "answer": out["answer"], **out}, None, plain_text_problem)
+    if wrong:
+        raise QuestionError(wrong[0][0].upper() + wrong[0][1:] + ".")
+    return out
+
+
 def add(store: dict[str, Any], manifest: dict[str, Any], highlight: dict[str, Any], question: Any, answer: Any,
-        by: str, model: str | None = None) -> dict[str, Any]:
-    """A new question for a highlight, waiting for the reader (``proposed``)."""
+        by: str, model: str | None = None, form: Any = None) -> dict[str, Any]:
+    """A new question for a highlight, waiting for the reader (``proposed``). ``form`` holds the members of a
+    question that is not open."""
     section = section_at(manifest, highlight["chapter"], highlight["start"])
     q = {"id": "hq" + secrets.token_hex(4), "highlight": highlight["id"], "chapter": highlight["chapter"],
          "start": highlight["start"], "end": highlight["end"], "text": highlight["text"],
          "section": section["id"] if section else None,
-         "question": _clean(question, "a question", PROMPT_MAX_CHARS), "answer": _clean(answer, "an answer", ANSWER_MAX_CHARS),
+         **formed(question, answer, form),
          "status": "proposed", "by": by, "model": model, "ask": None, "checked": None, "problem": "",
          "created": now(), "accepted": None}
     questions(store).append(q)
@@ -125,13 +144,17 @@ def accept(store: dict[str, Any], manifest: dict[str, Any], reading_state: dict[
     return q
 
 
-def reword(store: dict[str, Any], qid: str, question: Any = None, answer: Any = None) -> dict[str, Any]:
+def reword(store: dict[str, Any], qid: str, question: Any = None, answer: Any = None, form: Any = None) -> dict[str, Any]:
+    """Change a question's wording, and with ``form`` the members of its form (its choices and which is right,
+    whether its statement is true, the answers that count). The form itself stays what it is."""
     q = find(store, qid)
-    if question is not None:
-        q["question"] = _clean(question, "a question", PROMPT_MAX_CHARS)
-    if answer is not None:
-        q["answer"] = _clean(answer, "an answer", ANSWER_MAX_CHARS)
-    if question is not None or answer is not None:
+    if form is not None and (not isinstance(form, dict) or form.get("form", qforms.form_of(q)) != qforms.form_of(q)):
+        raise QuestionError("a question keeps its form; discard it and ask for another to change that")
+    made = formed(q["question"] if question is None else question, q["answer"] if answer is None else answer,
+                  {**qforms.members(q), **(form or {})})
+    changed = any(q.get(k) != v for k, v in made.items())
+    q.update(made)
+    if changed:
         q["by"] = "you"  # the wording is the reader's now, and what a check said about the old one no longer holds
         q["checked"] = None
     return q
@@ -166,7 +189,8 @@ def with_questions(manifest: dict[str, Any], store: dict[str, Any]) -> dict[str,
     extra: dict[str, list[dict[str, Any]]] = {}
     for q in accepted(store):
         if q["ask"] == "checkpoint" and q["section"]:
-            extra.setdefault(q["section"], []).append({"id": q["id"], "prompt": q["question"], "answer": q["answer"], "hq": True})
+            extra.setdefault(q["section"], []).append({"id": q["id"], "prompt": q["question"], "answer": q["answer"],
+                                                       **qforms.members(q), "hq": True})
     if not extra:
         return manifest
     out = copy.copy(manifest)
@@ -179,7 +203,7 @@ def practice_prompts(manifest: dict[str, Any], store: dict[str, Any]) -> dict[st
     titles = {c["index"]: c["title"] for c in manifest["chapters"]}
     labels = {s["id"]: s["label"] for s in manifest["sections"]}
     return {q["id"]: ({"chapter": q["chapter"], "start": q["start"], "label": labels.get(q["section"]) or titles.get(q["chapter"], "")},
-                      {"id": q["id"], "prompt": q["question"], "answer": q["answer"], "hq": True})
+                      {"id": q["id"], "prompt": q["question"], "answer": q["answer"], **qforms.members(q), "hq": True})
             for q in accepted(store) if q["ask"] == "practice"}
 
 
@@ -224,8 +248,18 @@ def passage_refs(book: ReadingBook, q: dict[str, Any]) -> list[tuple[SpineDoc, B
 
 def system(settings: Settings, steer: Steer | None = None) -> str:
     text = (Path(__file__).resolve().parent / "instructions" / "highlight.md").read_text(encoding="utf-8")
+    form_rules, form_reply = prompts.highlight_forms(settings)
     return Template(text).substitute(version=INSTRUCTIONS_VERSION, prompt_chars=PROMPT_MAX_CHARS, answer_chars=ANSWER_MAX_CHARS,
-                                     reader_rules=highlight_rules(steer))
+                                     reader_rules=highlight_rules(steer), form_rules=form_rules, form_reply=form_reply)
+
+
+def propose_schema(settings: Settings) -> dict[str, Any]:
+    if settings.open_only:
+        return PROPOSE_SCHEMA
+    draft = prompts.draft_schema(settings)["properties"]["ranges"]["items"]["properties"]["prompts"]["items"]["properties"]
+    members = {k: v for k, v in draft.items() if k not in ("prompt", "supporting_paragraphs")}
+    return {"type": "object", "additionalProperties": False, "required": ["question", *members],
+            "properties": {"question": {"type": "string"}, **members}}
 
 
 def propose_message(book: ReadingBook, place: dict[str, Any], highlight: dict[str, Any], asked: list[str],
@@ -257,11 +291,16 @@ def propose(backend: Backend, book: ReadingBook, manifest: dict[str, Any], store
     message = propose_message(book, place, highlight, asked, settings, instruction)
     feedback = ""
     for _ in range(2):  # a reply that breaks a plain rule is sent back once, with what was wrong
-        done = backend.complete(role="draft", system=system(settings, steer), prompt=message + feedback, schema=PROPOSE_SCHEMA,
-                                model=settings.model)
+        done = backend.complete(role="draft", system=system(settings, steer), prompt=message + feedback,
+                                schema=propose_schema(settings), model=settings.model)
+        data = done.data if isinstance(done.data, dict) else {}
         try:
-            return {"question": _clean(done.data.get("question"), "a question", PROMPT_MAX_CHARS),
-                    "answer": _clean(done.data.get("answer"), "an answer", ANSWER_MAX_CHARS), "model": done.model}
+            question = _clean(data.get("question"), "a question", PROMPT_MAX_CHARS)
+            form = {} if settings.open_only else qforms.from_model(data, question, lambda t: " ".join(str(t or "").split()))
+            if qforms.form_of(form) not in settings.forms:
+                raise QuestionError(f"the form {qforms.NAMES[qforms.form_of(form)]} is not allowed; the allowed forms are "
+                                    + ", ".join(qforms.NAMES[f] for f in settings.forms))
+            return {**formed(question, data.get("answer"), form), "form": form, "model": done.model}
         except QuestionError as exc:
             feedback = f"\n\nPROBLEM WITH YOUR EARLIER REPLY (fix it and reply with the complete object again)\n{exc}"
     raise BackendError(f"the model's question could not be used: {feedback.splitlines()[-1]}")
@@ -274,13 +313,15 @@ def check(backend: Backend, book: ReadingBook, manifest: dict[str, Any], q: dict
     place = around(book, manifest, q["chapter"], q["start"], q["end"])
     item = {"doc": place["doc"], "section": place["section"], "blocks": place["blocks"], "first": place["first"],
             "last": place["last"], "judge_break": False,
-            "questions": [{"id": q["id"], "prompt": q["question"], "answer": q["answer"]}]}
+            "questions": [{"id": q["id"], "prompt": q["question"], "answer": q["answer"], **qforms.members(q)}]}
+    if qforms.form_of(q) not in settings.forms:  # a form allowed when it was written: the check must know the forms
+        settings = replace(settings, forms=qforms.clean_forms([*settings.forms, qforms.form_of(q)]))
     done = backend.complete(role="check", system=prompts.checker_system(settings, steer),
-                            prompt=prompts.check_message(book.book, [item], settings, None), schema=prompts.CHECK_SCHEMA,
+                            prompt=prompts.check_message(book.book, [item], settings, None), schema=prompts.check_schema(settings),
                             model=settings.checker_model or settings.model)
     verdict = next((p for p in done.data.get("prompts") or [] if isinstance(p, dict) and p.get("id") == q["id"]), None)
     if verdict is None:
         return {"passed": False, "criteria": {}, "problem": "The check gave no verdict for this question."}
-    criteria = {c: verdict.get(c) is True for c in prompts.CRITERIA}
+    criteria = {c: verdict.get(c) is True for c in prompts.criteria(settings)}
     return {"passed": all(criteria.values()), "criteria": criteria,
             "problem": "" if all(criteria.values()) else str(verdict.get("problem") or "It failed the check.")[:600]}

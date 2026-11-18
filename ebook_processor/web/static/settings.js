@@ -21,7 +21,10 @@ const DEFAULTS = {
   nb_beside: true, nb_side: "left", nb_view: "scroll", nb_split: 0.5,            // notebook and its side reader
   steer_about: "", steer_style: "", steer_confirm: true,                         // what the question writers are told about you
 };
-const RUN_KEYS = ["density", "max_questions", "kind", "content", "rounds", "model", "checker_model", "effort", "jobs", "epubcheck", "preview"];
+const RUN_KEYS = ["density", "max_questions", "kind", "content", "rounds", "model", "checker_model", "effort", "jobs", "epubcheck", "preview", "forms"];
+const FORMS = [["open", "Open", "You recall the answer and grade yourself"], ["choice", "Multiple choice", "One of four"],
+  ["truefalse", "True or false", "A statement to judge"], ["cloze", "Fill in the blank", "You type the missing words"]];
+const formList = (value) => { const given = Array.isArray(value) ? value : String(value || "").split(","); const kept = FORMS.map(([k]) => k).filter((k) => given.includes(k)); return kept.length ? kept : ["open"]; };
 const TABS = [["general", "General"], ["add", "Add a book"], ["questions", "Your questions"], ["reader", "Reader"], ["notebook", "Notebook"], ["practice", "Practice"]];
 const values = { ...DEFAULTS };
 const listeners = new Set();
@@ -87,7 +90,7 @@ let serial = 0;
 function processing(inf, initial, onchange) {
   const d = inf.defaults || {}, dens = inf.densities || {}, models = inf.models || [];
   const v = { density: "medium", max_questions: d.max_questions, kind: d.kind, content: d.content, rounds: d.rounds, jobs: d.jobs,
-    model: "", checker_model: "", effort: "", epubcheck: false, preview: false };
+    model: "", checker_model: "", effort: "", epubcheck: false, preview: false, forms: "open" };
   for (const [k, x] of Object.entries(initial || {})) if (x != null && k in v) v[k] = x;
   const name = "st-density-" + (++serial);
   const fire = (key) => { if (onchange) onchange(key, read()[key]); };
@@ -134,6 +137,11 @@ function processing(inf, initial, onchange) {
     last = s.value;
     return s;
   };
+  // The kinds of question a run may write. At least one stays ticked.
+  const formBoxes = FORMS.map(([k, t, what]) => [k, el("input", { type: "checkbox", value: k, ...(formList(v.forms).includes(k) ? { checked: true } : {}),
+    onchange: (e) => { if (!formBoxes.some(([, b]) => b.checked)) e.target.checked = true; fire("forms"); } }), t, what]);
+  const forms = el("div", { class: "st-ticks", role: "group", "aria-label": "Kinds of question" },
+    formBoxes.map(([, box, t, what]) => el("label", {}, box, el("span", {}, t, el("small", {}, what)))));
   const checkerHint = el("span", {}), effortHint = el("span", {});
   const text = (key, placeholder, value) => el("input", { type: "text", placeholder, value: value || "", onchange: () => fire(key) });
   const c = {
@@ -174,11 +182,13 @@ function processing(inf, initial, onchange) {
   function read() {
     return { density: density.querySelector("input:checked").value, max_questions: +c.max_questions.value, kind: c.kind.value,
       content: c.content.value, rounds: +c.rounds.value, model: c.model.value.trim(), checker_model: c.checker_model.value.trim(),
-      effort: c.effort.value, jobs: +c.jobs.value, epubcheck: c.epubcheck.value === "1", preview: c.preview.value === "1" };
+      effort: c.effort.value, jobs: +c.jobs.value, epubcheck: c.epubcheck.value === "1", preview: c.preview.value === "1",
+      forms: formBoxes.filter(([, b]) => b.checked).map(([k]) => k) };
   }
   function setOne(key, value) {
     if (value == null) value = { density: "medium", model: "", checker_model: "", effort: "", epubcheck: false, preview: false }[key] ?? d[key];
     if (key === "density") { const box = density.querySelector(`input[value="${value}"]`); if (box) box.checked = true; return; }
+    if (key === "forms") { const on = formList(value); for (const [k, box] of formBoxes) box.checked = on.includes(k); return; }
     if (!c[key]) return;
     if (c[key].have) c[key].have(String(value));
     c[key].value = key === "epubcheck" || key === "preview" ? (value ? "1" : "") : String(value);
@@ -190,6 +200,8 @@ function processing(inf, initial, onchange) {
       el("small", {}, "A checkpoint follows each section. Breaks fall at natural boundaries, so lengths vary.")),
     field("Maximum questions per checkpoint", c.max_questions, "The model chooses how many, up to this: more for a long or dense section, and for one that bears on what you want from the book."),
     field("Kind of book", c.kind),
+    el("div", { class: "st-field wide" }, el("span", { class: "m" }, "Kinds of question"), forms,
+      el("small", {}, "For each idea the model picks the kind that suits it, among those you tick. The app grades the last three itself. Recalling an answer from nothing is the strongest practice; the others are quicker.")),
     field("Tables, code, formulas, figures", c.content, "What the model may see and ask about beyond the running text."),
     field("Independent check", c.rounds, "A question that fails its last check is left out and listed in the report."));
   const advanced = el("div", { class: "st-grid" },
@@ -211,6 +223,15 @@ const CSS = `
 .st-field input[type=number] { width: 11ch; font-family: var(--mono); }
 .st-field textarea, .stg textarea { display: block; width: 100%; min-height: 108px; resize: vertical; font: 15px/1.45 var(--grot); color: var(--ink);
   background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 10px 11px; }
+.st-ticks { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--ink); }
+.st-ticks label { display: flex; gap: 10px; align-items: flex-start; padding: 11px 12px 10px; cursor: pointer; border-right: 1px solid var(--ink); }
+.st-ticks label:last-child { border-right: 0; }
+.st-ticks input { appearance: none; -webkit-appearance: none; flex: none; width: 15px; height: 15px; margin: 2px 0 0; border: 1.5px solid var(--ink); background: transparent; cursor: pointer; }
+.st-ticks input:checked { background: var(--blue); border-color: var(--blue); }
+.st-ticks input:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.st-ticks span { font: 12px/1.3 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
+.st-ticks small { display: block; font: 12.5px/1.3 var(--grot); letter-spacing: 0; text-transform: none; color: var(--mute); margin-top: 3px; }
+@media (max-width: 760px) { .st-ticks { grid-template-columns: repeat(2, minmax(0, 1fr)); } .st-ticks label:nth-child(2) { border-right: 0; } .st-ticks label:nth-child(-n+2) { border-bottom: 1px solid var(--ink); } }
 .st-count { font: 11px/1.5 var(--mono); letter-spacing: 0.04em; color: var(--mute); float: right; }
 .st-seg { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--ink); }
 .st-seg label { text-align: center; padding: 11px 4px 10px; cursor: pointer; border-right: 1px solid var(--ink); font: 12px/1.3 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
@@ -287,7 +308,7 @@ const DRAW = {
   },
   async add() {
     const inf = await info();
-    const form = processing(inf, runDefaults(), (key, value) => set("add_" + key, value));
+    const form = processing(inf, runDefaults(), (key, value) => set("add_" + key, Array.isArray(value) ? value.join(",") : value));
     return [el("h3", {}, "Add a book"),
       el("p", { class: "lede" }, "What the Add a book form starts with. Each can still be changed there for one book. Books already processed are not affected."),
       form.main, el("h4", {}, "Advanced"), form.advanced,
@@ -318,7 +339,7 @@ const DRAW = {
         "Used to choose which ideas of a section are asked about, and which sections deserve more questions. It can be left out for one book on the Add a book page. It is sent to the model with each request that writes questions."),
       box("steer_style", "How I like questions",
         "Ask why and when to use something rather than what it is called. Keep answers to one or two sentences. I do want the names of people and the years.",
-        "Applies to every book. Questions stay recall questions with an answer from the text: multiple choice, true-or-false and fill-in-the-blank cannot be written."),
+        "Applies to every book. It can shift the balance among the kinds of question you have ticked on the Add a book tab; it cannot add a kind."),
       el("h4", {}, "Before a run"),
       row("Show me how my wishes were read", choice("steer_confirm", [[true, "On"], [false, "Off"]]),
         "On: before a book or a trial chapter is processed, the model states in its own words what it will favour and how it will write, with a look at the book's chapters. You correct it, answer its questions if it has any, and confirm. One short call. Off: your words go to the question writers as they are.")];

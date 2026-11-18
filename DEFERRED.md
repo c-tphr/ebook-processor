@@ -65,12 +65,28 @@ Options that came up in the interviews and were passed over. They are not planne
 
 | Item | What it means |
 | --- | --- |
-| Fill-in-the-blank cards | The highlighted sentence with a key phrase left out. Question and answer was chosen; a second kind of card would need its own form in Practice and in the Anki deck |
 | Automatic questions for every highlight | A proposal for each new highlight without asking. Passed over because it uses the plan for highlights that may not be wanted for practice |
 | In the book's own checkpoints | Adding these questions to the checkpoints of the exported books and the firmware edition. They are asked in the app's reader only |
 | Accepting a whole batch without review | "Propose for all" always leaves the proposals to be decided. The accept-without-asking setting covers single requests made in the reader |
 | Its own model setting | These questions use the Add a book defaults |
 | A question without a highlight | A card written from scratch, tied to no passage |
+
+### Kinds of question
+
+| Item | What it means |
+| --- | --- |
+| A balance or exact shares of the kinds | "Mostly open", or 50% open and 30% multiple choice. The model picks the kind for each idea among those ticked; a wish in "How I like questions" can lean it |
+| Several right choices | Multiple choice where you tick all that apply. Always four choices with one right |
+| More or fewer choices | Three or five choices |
+| More than one blank | A statement with two or three gaps. One gap per statement |
+| Blanks answered by picking | Words to choose from in place of typing. Typing with a forgiving match was chosen |
+| The book's own sentence as a blank | A sentence of the book with words removed. The statement is the model's own, so that it stands alone |
+| Trying again after a wrong answer | A second pick after a wrong one. One try, then the answer |
+| Overruling any verdict | "I was right" exists for typed answers only; a lucky guess at multiple choice cannot be marked as a miss |
+| Open recall in Practice | Asking a multiple-choice or true-or-false card without its choices when it comes back. Practice asks in the same form |
+| Writing your own in the new kinds | "Write my own" on a highlight makes an open question. A proposal of any kind can be edited |
+| Choosing the kind when asking for a highlight's question | The model picks among the kinds ticked in Settings; "Another" takes a wish in words |
+| Native Anki cloze and graded Anki cards | The deck has ordinary cards for every kind: choices on the front, the right answer on the back |
 
 ### What you want from a book
 
@@ -109,6 +125,8 @@ Things that work in tests but have not been confirmed in real use, and facts tha
 | Recovery from a lost connection | Tested with stand-in programs that hang and a stand-in network, for both tools, and one real call through the new code path. A real loss of connection during a real run was not produced: what Claude Code and Codex themselves do then (hang, or fail with which message) was not observed |
 | Questions from highlights with a real model | Built and tested against a stand-in that writes a fixed kind of question. What a real model writes from the instructions, how long a request takes, and how often the check holds a question back have not been seen |
 | What you want from a book, with a real model | One real reading and one steered trial chapter (2,563 words, limit 8) were made: the reading was sensible, said that multiple choice cannot be written, and the 17 questions followed the purpose and manner and all passed the check. Two unsteered trials of the same chapter gave 10 questions at a limit of 8 and 7 at a limit of 3. Not seen: a whole steered book, the reading being corrected over several rounds by a real model, Codex as the reader, and how well the estimate holds for fiction and technical books (it was fitted to two expository books) |
+| Kinds of question with a real model | One real run of the short test book with all four kinds (8 questions: one multiple choice, two true or false, one blank, four open, all passing the check on six points) and three real questions on a highlight, one of each new kind. Not seen: a whole real book, how often the check fails a key, how the model spreads the kinds over many sections, and Codex with the longer reply shape |
+| Kinds of question on the Picco | The firmware-format book carries the forms in `x_form` (`docs/question-forms.md`) and passes its structure checks. No firmware reads `x_form` yet: today's firmware shows these questions as open ones, which was checked only by reading its rule that unknown members are ignored |
 | Usage-limit handling | A run recognises the plan's usage limit by the wording of Claude Code's error. No real limit message has been seen |
 | Codex with a real login | The Codex side was built against the real program (codex-cli 0.169.0): it accepts every option the tool passes, its model list is read, and the instructions it would show the model were inspected. No call reached a model, because the machine it was built on had no ChatGPT login and no route to OpenAI. Unconfirmed: that the reply schema is accepted as it is, the wording of a real usage-limit message, the token counts, and that Codex opens pictures in figures mode |
 | macOS, WSL and Windows itself | The tests run on Linux, Windows and macOS after every push, with stand-ins for Claude Code and Codex, and the app's pages run in Chromium, Firefox and WebKit. Still unknown: the real tools on each system beyond what the owner has seen work on Windows, the Safari app itself (WebKit is its engine, not the app), and whether Codex's read-only sandbox needs any setup on Windows |
@@ -117,5 +135,5 @@ Things that work in tests but have not been confirmed in real use, and facts tha
 | The Anki deck in Anki | The deck was checked by reading its database, not by importing it |
 | Fiction and technical books | The rules are written; no such book has been processed |
 | Long RSVP sessions | RSVP was played for seconds at a time. Checkpoints firing during playback and stops at pictures and tables are untested in the browser |
-| Browser tests not yet written | Changing what you want after a trial and trying the chapter again; the reader's search, footnotes and pictures; rereading a section after a missed question; taking questions out and rebuilding on a book's page; the practice schedule over several answers; Markdown export of the notebook |
+| Browser tests not yet written | The new kinds of question in RSVP and in the side reader; a question from a highlight edited in the reader's own panel; Changing what you want after a trial and trying the chapter again; the reader's search, footnotes and pictures; rereading a section after a missed question; taking questions out and rebuilding on a book's page; the practice schedule over several answers; Markdown export of the notebook |
 | The schedule over real days | Practice was tested with a controlled calendar, not across days of real use |

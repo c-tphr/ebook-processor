@@ -42,6 +42,10 @@ def add_run_options(p: argparse.ArgumentParser) -> None:
     g.add_argument("--max-questions", type=int, metavar="N",
                    help=f"most questions per checkpoint, 1 to {MAX_QUESTIONS}; the model chooses how many by the "
                         f"section's length and density and by what you want from the book (default: {d.max_questions})")
+    g.add_argument("--forms", metavar="LIST",
+                   help="the kinds of question a run may write, separated by commas: open (you recall the answer and "
+                        "grade yourself), choice (multiple choice), truefalse, cloze (fill in the blank), or all. The "
+                        "model picks among them for each idea (default: open)")
     g = p.add_argument_group("what the model reads and how strictly it is checked")
     g.add_argument("--content", choices=CONTENT_MODES,
                    help="tables, code and formulas: 'prose' hides them, 'text' shows their text, 'figures' also "
@@ -85,7 +89,7 @@ def add_steer_options(p: argparse.ArgumentParser) -> None:
 
 def settings_from(args: argparse.Namespace) -> Settings:
     return from_options(
-        density=args.density, section_words=args.section_words, max_questions=args.max_questions,
+        density=args.density, section_words=args.section_words, max_questions=args.max_questions, forms=args.forms,
         content=args.content, kind=args.kind, rounds=args.rounds, model=args.model,
         checker_model=args.checker_model, effort=args.effort, jobs=args.jobs, part_words=args.part_words,
         epubcheck=args.epubcheck, title_suffix=args.title_suffix, preview=args.preview_questions)

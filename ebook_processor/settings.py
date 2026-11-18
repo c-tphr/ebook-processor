@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, fields
 from typing import Any
 
-INSTRUCTIONS_VERSION = "2.1"
+from .forms import FORMS, FormError, clean_forms
+
+INSTRUCTIONS_VERSION = "2.2"
 
 # Target section length in words, by name. At 240 words per minute "medium" is 3 to 8 minutes of reading.
 DENSITIES = {
@@ -39,6 +41,7 @@ class Settings:
     epubcheck: bool = False  # run EPUBCheck on both output books (needs Java and a one-time download)
     title_suffix: str = " (checkpoints)"  # added to the title of the book with visible checkpoint pages
     preview: bool = False  # the book with visible checkpoints also shows a section's questions before the section
+    forms: tuple[str, ...] = ("open",)  # the forms a question may take (see ``forms``); the model picks among them
 
     def validate(self) -> None:
         if not 50 <= self.min_words < self.max_words <= 20000:
@@ -53,6 +56,11 @@ class Settings:
             raise SettingsError("rounds must be 0 to 5")
         if self.effort is not None and self.effort not in EFFORTS:
             raise SettingsError(f"effort must be one of {', '.join(EFFORTS)}")
+        try:
+            if clean_forms(self.forms) != tuple(self.forms):
+                raise FormError(f"the forms of question are given in this order, each once: {', '.join(FORMS)}")
+        except FormError as exc:
+            raise SettingsError(str(exc)) from exc
         if not 1 <= self.jobs <= 8:
             raise SettingsError("jobs must be 1 to 8")
         if not 2000 <= self.part_words <= 60000:
@@ -61,16 +69,24 @@ class Settings:
             raise SettingsError("part size must be at least twice the longest section")
 
     def as_json(self) -> dict[str, Any]:
-        return asdict(self)
+        return {**asdict(self), "forms": list(self.forms)}
+
+    @property
+    def open_only(self) -> bool:
+        return tuple(self.forms) == ("open",)
 
     def drafting_key(self) -> dict[str, Any]:
         """The options that decide what the drafter writes. A run can be resumed only while these are unchanged."""
-        return {k: getattr(self, k) for k in ("min_words", "max_words", "max_questions", "content", "kind", "part_words")}
+        return {**{k: getattr(self, k) for k in ("min_words", "max_words", "max_questions", "content", "kind", "part_words")},
+                "forms": list(self.forms)}
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> Settings:
         known = {f.name for f in fields(cls)}
-        settings = cls(**{k: v for k, v in data.items() if k in known})
+        values = {k: v for k, v in data.items() if k in known}
+        if isinstance(values.get("forms"), list):
+            values["forms"] = tuple(values["forms"])
+        settings = cls(**values)
         settings.validate()
         return settings
 
@@ -78,6 +94,11 @@ class Settings:
 def from_options(density: str | None = None, section_words: str | None = None, **rest: Any) -> Settings:
     """Settings from the user's options. ``section_words`` ("400-1200") wins over ``density``."""
     values = {k: v for k, v in rest.items() if v is not None}
+    if "forms" in values:
+        try:
+            values["forms"] = clean_forms(values["forms"])
+        except FormError as exc:
+            raise SettingsError(str(exc)) from exc
     if section_words:
         low, sep, high = section_words.partition("-")
         if not sep or not low.strip().isdigit() or not high.strip().isdigit():

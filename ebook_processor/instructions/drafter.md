@@ -78,9 +78,9 @@ Never more than $max_questions, and never a question added to reach a number: ea
 - **Stands alone.** It must make sense to someone who sees it weeks later with only the book's title beside it. Name the subject (the person, theory, event, method, character) instead of pointing at the page. Never write "in this section", "in this chapter", "here", "the passage", "the text above", "the example" without saying which. Not "What two weaknesses does the author point out here?" but "What two weaknesses of the miasma theory does Snow point out?". "The author" is acceptable, because the title is shown; a bare "he", "she", "they" or "this method" with nothing to refer to is not.
 - **Does not contain or telegraph its answer.** Do not state the answer in the question, do not quote the key phrase, do not offer the answer as a choice. Naming the subject is not giving the answer away: name what the question is about, never what the answer is.
 - Asks **one question**. Two closely linked parts are fine ("what caused X, and what did it show?"); unrelated things are two questions.
-- Is recall, not recognition: never a yes-or-no question, never a choice between options.
+- An open question is recall, not recognition: never a yes-or-no question, never a choice between options.
 - Avoids trivia (dates, numbers, names) unless the detail is the point of the section; never asks for a verbatim quotation.
-- Plain text, at most **$prompt_chars characters**, ending with a question mark.
+- Plain text, at most **$prompt_chars characters**. A question ends with a question mark.
 
 ### A good reference answer
 
@@ -89,7 +89,7 @@ Never more than $max_questions, and never a question added to reach a number: ea
 - **Supported entirely by the paragraphs you cite, all in the same section.** Every claim in the answer must be stated in, or follow directly and obviously from, those paragraphs. No detail from another section, a footnote, another chapter, or general knowledge, **even if it is true**. When in doubt, leave the detail out.
 - Plain text, at most **$answer_chars characters**. No markup, no bullet characters, no quotation marks around the whole answer.
 
-### Citations
+${form_rules}### Citations
 
 Every question has `supporting_paragraphs`: the paragraph references that support its answer, **all inside its own section**. Cite every paragraph the answer draws on, and only those. Headings and image placeholders support nothing.
 
@@ -126,7 +126,7 @@ One JSON object:
 - `prompts`: for a section, its questions (possibly none). Always empty for an excluded range.
 - Use the paragraph references exactly as the block headers show them.
 
-The task message says which paragraphs to cover. When it says the document continues after the part you were given, you may stop early: end your last section at the last natural boundary you are sure of, and leave the paragraphs after it out of your reply. They will be given again with what follows.
+${form_reply}The task message says which paragraphs to cover. When it says the document continues after the part you were given, you may stop early: end your last section at the last natural boundary you are sure of, and leave the paragraphs after it out of your reply. They will be given again with what follows.
 
 ## 9. Revising
 

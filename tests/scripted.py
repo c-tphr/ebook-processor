@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from ebook_processor.llm import ScriptedBackend
-from ebook_processor.prompts import CRITERIA
+from ebook_processor.prompts import CRITERIA, ONE_RIGHT
 
 GROUP_RE = re.compile(r"^=== (d\d+) (\S+) ===$", re.M)
 BLOCK_RE = re.compile(r"^\[(d\d+-p\d+)\] ([a-z-]+)[^\n]*, (\d+) words?$", re.M)
@@ -21,6 +21,35 @@ QUESTION_RE = re.compile(r"^QUESTION \[([^\]]+)\]$", re.M)
 FIX_RE = re.compile(r"^QUESTION TO FIX \[([^\]]+)\]$", re.M)
 JUDGE_RE = re.compile(r"^JUDGE THE BREAK of (s\d+): (yes|no)$", re.M)
 EXCLUDED_RE = re.compile(r"^\[(\d+)\] (d\d+-p\d+) to (d\d+-p\d+) ", re.M)
+
+
+EMPTY_FORM = {"correct_choice": "", "wrong_choices": [], "truth": False, "blank": "", "also_accept": []}
+
+
+def formed(form: str, cite: str, href: str, n: int = 0) -> dict[str, Any]:
+    """A question of a form about the block ``cite``, with every member a reply of that shape needs."""
+    if form == "choice":
+        return {**EMPTY_FORM, "form": form, "prompt": f"What does the passage starting at {cite} of {href} say?",
+                "answer": f"It says what {cite} says.", "correct_choice": f"What {cite} says",
+                "wrong_choices": ["What another paragraph says", "Nothing at all", "The opposite of it"]}
+    if form == "truefalse":
+        truth = n % 2 == 0
+        return {**EMPTY_FORM, "form": form, "truth": truth, "answer": f"The passage at {cite} is in {href}.",
+                "prompt": f"The passage starting at {cite} is {'part' if truth else 'no part'} of {href}."}
+    if form == "cloze":
+        return {**EMPTY_FORM, "form": form, "prompt": f"The passage quoted from {href} starts at the paragraph ____ of it.",
+                "answer": f"It starts at {cite}.", "blank": cite, "also_accept": [cite.replace("-", " ")]}
+    return {**EMPTY_FORM, "form": "open", "prompt": f"What does the passage starting at {cite} of {href} say?",
+            "answer": f"What {cite} says."}
+
+
+def forms_in(schema: dict[str, Any], *path: str) -> list[str]:
+    """The forms a reply schema allows, or none when its questions have no form (open questions only)."""
+    node: Any = schema
+    for key in path:
+        node = node.get("properties", {}).get(key, {}) if "properties" in node else node
+        node = node.get("items", node)
+    return list(node.get("properties", {}).get("form", {}).get("enum", []))
 
 
 def text_groups(prompt: str) -> list[tuple[str, str, list[tuple[str, str, int]]]]:
@@ -47,12 +76,15 @@ class Script:
     drafts: int = 0
     questions: int = 0
     readings: int = 0
+    sections_drafted: int = 0
+    schema: dict[str, Any] = field(default_factory=dict)
 
     def backend(self) -> ScriptedBackend:
         return ScriptedBackend(self.reply)
 
     def reply(self, role: str, system: str, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
-        if schema.get("required") == ["question", "answer"]:
+        self.schema = schema
+        if "question" in schema.get("required", []):
             return self.question(prompt)
         return getattr(self, role)(prompt)
 
@@ -64,6 +96,13 @@ class Script:
         if "\nTHE READER ASKS OF THIS QUESTION\n" in prompt:
             note += f" (as asked: {prompt.split(chr(10) + 'THE READER ASKS OF THIS QUESTION' + chr(10), 1)[1].splitlines()[0]})"
         self.questions += 1
+        allowed = self.schema.get("properties", {}).get("form", {}).get("enum", [])
+        if allowed:  # the forms in turn, the one after open first; a wish that names a form gets it
+            form = next((f for f in allowed if f in prompt.split("THE READER ASKS OF THIS QUESTION")[-1].split("ALREADY ASKED")[0]),
+                        allowed[(self.questions) % len(allowed)]) if "THE READER ASKS OF THIS QUESTION" in prompt \
+                else allowed[self.questions % len(allowed)]
+            made = formed(form, " ".join(marked.split()[:2]), "the book", again)
+            return {**{k: v for k, v in made.items() if k != "prompt"}, "question": made["prompt"] + (f" Take {again + 1}." if form == "open" else "")}
         return {"question": f"What does the book say about \"{' '.join(marked.split()[:4])}\"{note}, take {again + 1}?",
                 "answer": f"That {' '.join(marked.split()[:12])}."}
 
@@ -102,11 +141,16 @@ class Script:
                 if len(blocks) - (start + len(span)) == 1:  # do not leave a one-block tail (it may have no words)
                     span = blocks[start:]
                 support = next((ref for ref, kind, words in span if kind == "paragraph" and words), span[0][0])
+                allowed = forms_in(self.schema, "ranges", "prompts")
+                question = {"prompt": f"What does the passage starting at {support} of {href} say?",
+                            "answer": f"What {support} says."}
+                if allowed:  # one form after another, section by section
+                    question = formed(allowed[self.sections_drafted % len(allowed)], support, href, self.sections_drafted)
+                self.sections_drafted += 1
                 ranges.append({
                     "kind": "section", "first_paragraph": span[0][0], "last_paragraph": span[-1][0],
                     "label": f"Section at {span[0][0]}", "reason": "",
-                    "prompts": [{"prompt": f"What does the passage starting at {support} of {href} say?",
-                                 "answer": f"What {support} says.", "supporting_paragraphs": [support]}]})
+                    "prompts": [{**question, "supporting_paragraphs": [support]}]})
                 if len(span) > self.blocks_per_section:
                     break
         reply = {"ranges": ranges}
@@ -123,8 +167,9 @@ class Script:
                 qid = q.group(1)
                 seen = self.checks_seen[qid] = self.checks_seen.get(qid, 0) + 1
                 ok = seen > self.fail.get(qid, 0)
+                sixth = {ONE_RIGHT: True} if ONE_RIGHT in self.schema["properties"]["prompts"]["items"]["properties"] else {}
                 out["prompts"].append({
-                    "id": qid, **{c: True for c in CRITERIA}, "supported_by_section": ok, "citations": [cite],
+                    "id": qid, **{c: True for c in CRITERIA}, **sixth, "supported_by_section": ok, "citations": [cite],
                     "evidence": f"{cite} states it.", "problem": "" if ok else "The answer adds a detail.",
                     "suggested_fix": "" if ok else "Remove the detail.", "minor_note": ""})
             judge = JUDGE_RE.search(body)
@@ -145,7 +190,13 @@ class Script:
                                       "supporting_paragraphs": []})
                 else:
                     n_checks = self.checks_seen.get(qid, 0)
-                    revisions.append({"id": qid, "action": "revise", "prompt": f"What does {cite} say (try {n_checks})?",
+                    allowed = forms_in(self.schema, "revisions")
+                    if allowed and "open" not in allowed:  # revised in the first form that is allowed
+                        made = formed(allowed[0], cite, f"the book (try {n_checks})")
+                        revisions.append({**made, "id": qid, "action": "revise", "supporting_paragraphs": [cite]})
+                        continue
+                    revisions.append({**({**EMPTY_FORM, "form": "open"} if allowed else {}),
+                                      "id": qid, "action": "revise", "prompt": f"What does {cite} say (try {n_checks})?",
                                       "answer": f"What {cite} says, revised after check {n_checks}.",
                                       "supporting_paragraphs": [cite]})
         return {"revisions": revisions}

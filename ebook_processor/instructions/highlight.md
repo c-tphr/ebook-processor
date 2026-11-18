@@ -20,9 +20,9 @@ $reader_rules
 - **Stands alone.** It must make sense to someone who sees it weeks later with only the book's title beside it. Name the subject (the person, theory, event, method, character) instead of pointing at the page. Never write "the highlighted passage", "the highlight", "in this section", "here", "the passage", "the author says above". The section around the highlight is there so that you can name things properly.
 - **Does not contain or telegraph its answer.** Do not state the answer, quote its key phrase, or offer it as a choice. Naming what the question is about is not giving the answer away.
 - Asks **one question**. Two closely linked parts are fine.
-- Is recall, not recognition: never a yes-or-no question, never a choice between options, never "fill in the blank".
+- An open question is recall, not recognition: never a yes-or-no question, never a choice between options.
 - Never asks for a verbatim quotation, and avoids bare trivia (a date, a number, a name) unless that detail is the point of the highlight.
-- Plain text, at most **$prompt_chars characters**, ending with a question mark.
+- Plain text, at most **$prompt_chars characters**. A question ends with a question mark.
 
 ## The reference answer
 
@@ -31,10 +31,11 @@ $reader_rules
 - Understandable without the question beside it and without the book.
 - Plain text, at most **$answer_chars characters**. No markup, no bullet characters, no quotation marks around the whole answer.
 
-## Your reply
+${form_rules}## Your reply
 
 One JSON object and nothing else:
 
 ```json
 {"question": "...", "answer": "..."}
 ```
+$form_reply

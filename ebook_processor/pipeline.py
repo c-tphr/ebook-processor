@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import __version__, prompts
+from . import forms as qforms
 from .content import export_images
 from .llm import Backend, BackendCancelled, Completion
 from .prep import checkpoints as cp
@@ -170,9 +171,10 @@ def plan_units(book: Book, settings: Settings, only: set[int] | None = None,
 # Mechanical checks of what Claude returns
 
 
-def question_problems(q: dict[str, Any], inside: set[str]) -> list[str]:
-    """What is wrong with one question, in words the drafter can act on (empty when nothing is)."""
-    out = []
+def question_problems(q: dict[str, Any], inside: set[str], allowed: tuple[str, ...] | None = None) -> list[str]:
+    """What is wrong with one question, in words the drafter can act on (empty when nothing is). ``allowed`` are
+    the forms a question may take."""
+    out = qforms.problems(q, allowed, cp.plain_text_problem)
     for name, limit in (("prompt", cp.PROMPT_MAX_CHARS), ("answer", cp.ANSWER_MAX_CHARS)):
         label = "question" if name == "prompt" else "answer"
         text = q[name]
@@ -195,14 +197,16 @@ def question_problems(q: dict[str, Any], inside: set[str]) -> list[str]:
 
 
 def normal_question(raw: Any) -> dict[str, Any]:
+    """A question as a model gave it, as it is kept: its texts tidied, and the members of its form."""
     raw = raw if isinstance(raw, dict) else {}
     refs = raw.get("supporting_paragraphs")
     seen: list[str] = []
     for r in refs if isinstance(refs, list) else []:
         if isinstance(r, str) and r.strip() not in seen:
             seen.append(r.strip())
-    return {"prompt": clean_text(raw.get("prompt")), "answer": clean_text(raw.get("answer")),
-            "supporting_paragraphs": seen}
+    prompt = clean_text(raw.get("prompt"))
+    return {"prompt": prompt, "answer": clean_text(raw.get("answer")), "supporting_paragraphs": seen,
+            **qforms.from_model(raw, prompt, lambda text: clean_text(text).replace("\n", " "))}
 
 
 def auto_label(blocks: list[Block]) -> str:
@@ -276,7 +280,7 @@ def check_part(data: Any, groups: list[tuple[SpineDoc, list[Block]]], may_stop_e
                 if k >= settings.max_questions:
                     flaws.append((len(out), k, f"{name} has {len(questions)} questions; at most "
                                                f"{settings.max_questions} are allowed"))
-                for problem in question_problems(q, inside):
+                for problem in question_problems(q, inside, settings.forms):
                     flaws.append((len(out), k, f"{name}, question {k + 1}: {problem}"))
             entry.update(kind="section", label=label[:MAX_LABEL_CHARS], prompts=questions)
         out.append(entry)
@@ -632,7 +636,7 @@ class Run:
         for _ in range(DRAFT_ATTEMPTS):
             message = prompts.draft_message(self.book, groups, self.settings, self.images, continues, previous,
                                             feedback, self.steer)
-            reply = self.call("draft", system, message, prompts.DRAFT_SCHEMA).data
+            reply = self.call("draft", system, message, prompts.draft_schema(self.settings)).data
             ranges, structural, flaws = check_part(reply, groups, continues is not None, self.settings)
             if not structural and not flaws:
                 return ranges
@@ -767,8 +771,8 @@ class Run:
         sections: dict[str, dict[str, Any]] = {}
         for _ in range(2):
             reply = self.call("check", system, prompts.check_message(self.book, items, self.settings, self.images,
-                                                                     feedback), prompts.CHECK_SCHEMA).data
-            usable, sections, problems = read_check(reply, wanted, judge)
+                                                                     feedback), prompts.check_schema(self.settings)).data
+            usable, sections, problems = read_check(reply, wanted, judge, prompts.criteria(self.settings))
             if not problems:
                 break
             feedback = "\n".join(f"- {p}" for p in problems)
@@ -780,7 +784,7 @@ class Run:
                     q["status"] = "unverified"
                     q["problem"] = "The checker's result for this question could not be used, so it is unchecked."
                     continue
-                q["criteria"] = {c: entry[c] for c in prompts.CRITERIA}
+                q["criteria"] = {c: entry[c] for c in prompts.criteria(self.settings)}
                 q.update(citations=entry["citations"], evidence=entry["evidence"], problem=entry["problem"],
                          suggested_fix=entry["suggested_fix"], minor_note=entry["minor_note"])
                 q["status"] = "passed" if all(q["criteria"].values()) else "failed"
@@ -802,8 +806,8 @@ class Run:
         good: dict[str, dict[str, Any]] = {}
         for _ in range(2):
             reply = self.call("revise", system, prompts.revise_message(self.book, items, self.settings, self.images,
-                                                                       feedback), prompts.REVISE_SCHEMA).data
-            good, problems = read_revisions(reply, wanted)
+                                                                       feedback), prompts.revise_schema(self.settings)).data
+            good, problems = read_revisions(reply, wanted, self.settings.forms)
             if not problems:
                 break
             feedback = "\n".join(f"- {p}" for p in problems)
@@ -814,13 +818,15 @@ class Run:
                     q["checks"] = self.settings.rounds
                     continue
                 q["history"].append({"check": q["checks"], "prompt": q["prompt"], "answer": q["answer"],
+                                     **qforms.members(q),
                                      "failed": [c for c, ok in q["criteria"].items() if not ok],
                                      "problem": q["problem"]})
                 if entry["action"] == "withdraw":
                     q["status"] = "withdrawn"
                     continue
-                q.update(prompt=entry["prompt"], answer=entry["answer"],
-                         supporting_paragraphs=entry["supporting_paragraphs"], status="unchecked", criteria={},
+                for member in qforms.MEMBERS:  # the revision may be of another form
+                    q.pop(member, None)
+                q.update({k: v for k, v in entry.items() if k != "action"}, status="unchecked", criteria={},
                          citations=[], evidence="", problem="", suggested_fix="", minor_note="")
         self.save()
 
@@ -886,8 +892,8 @@ def _differences(old: Settings, new: Settings) -> str:
     return ", ".join(f"{k}: {a[k]} then, {b[k]} now" for k in a if a[k] != b[k])
 
 
-def read_check(reply: Any, wanted: dict[str, tuple[dict[str, Any], set[str]]],
-               judge: dict[str, dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], list[str]]:
+def read_check(reply: Any, wanted: dict[str, tuple[dict[str, Any], set[str]]], judge: dict[str, dict[str, Any]],
+               criteria: tuple[str, ...] = prompts.CRITERIA) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]], list[str]]:
     """(usable question verdicts, section verdicts, problems to send back)."""
     problems: list[str] = []
     usable: dict[str, dict[str, Any]] = {}
@@ -899,8 +905,8 @@ def read_check(reply: Any, wanted: dict[str, tuple[dict[str, Any], set[str]]],
         if qid in usable:
             problems.append(f"{qid} has more than one entry")
             continue
-        if not all(isinstance(entry.get(c), bool) for c in prompts.CRITERIA):
-            problems.append(f"{qid}: each of the five criteria must be true or false")
+        if not all(isinstance(entry.get(c), bool) for c in criteria):
+            problems.append(f"{qid}: each of the {'five' if len(criteria) == 5 else len(criteria)} criteria must be true or false")
             continue
         inside = wanted[qid][1]
         citations = [c.strip() for c in entry.get("citations") or [] if isinstance(c, str)]
@@ -909,11 +915,11 @@ def read_check(reply: Any, wanted: dict[str, tuple[dict[str, Any], set[str]]],
             problems.append(f"{qid}: citation {', '.join(outside)} is not a paragraph of the question's own section; "
                             "cite only paragraphs of that section (name others in the evidence)")
             continue
-        passed = all(entry[c] for c in prompts.CRITERIA)
+        passed = all(entry[c] for c in criteria)
         if passed and not citations:
             problems.append(f"{qid} passes all criteria but cites no paragraph; a passing question needs a citation")
             continue
-        usable[qid] = {**{c: entry[c] for c in prompts.CRITERIA}, "citations": citations,
+        usable[qid] = {**{c: entry[c] for c in criteria}, "citations": citations,
                        "evidence": clean_text(entry.get("evidence")),
                        "problem": "" if passed else clean_text(entry.get("problem")) or "The checker gave no reason.",
                        "suggested_fix": "" if passed else clean_text(entry.get("suggested_fix")),
@@ -933,7 +939,8 @@ def read_check(reply: Any, wanted: dict[str, tuple[dict[str, Any], set[str]]],
     return usable, sections, problems
 
 
-def read_revisions(reply: Any, wanted: dict[str, tuple[dict[str, Any], set[str]]]) -> tuple[dict[str, dict[str, Any]], list[str]]:
+def read_revisions(reply: Any, wanted: dict[str, tuple[dict[str, Any], set[str]]],
+                   allowed: tuple[str, ...] | None = None) -> tuple[dict[str, dict[str, Any]], list[str]]:
     problems: list[str] = []
     good: dict[str, dict[str, Any]] = {}
     entries = reply.get("revisions") if isinstance(reply, dict) else None
@@ -945,12 +952,12 @@ def read_revisions(reply: Any, wanted: dict[str, tuple[dict[str, Any], set[str]]
             good[qid] = {"action": "withdraw"}
             continue
         q = normal_question(entry)
-        flaws = question_problems(q, wanted[qid][1])
+        flaws = question_problems(q, wanted[qid][1], allowed)
         if flaws:
             problems += [f"{qid}: {f}" for f in flaws]
             continue
         old = wanted[qid][0]
-        if q["prompt"] == old["prompt"] and q["answer"] == old["answer"]:
+        if q["prompt"] == old["prompt"] and q["answer"] == old["answer"] and qforms.members(q) == qforms.members(old):
             problems.append(f"{qid}: the revision is identical to the question that failed; change what the "
                             "finding flags, or withdraw the question")
             continue
@@ -965,6 +972,17 @@ def read_revisions(reply: Any, wanted: dict[str, tuple[dict[str, Any], set[str]]
 # From the state to a draft the engine can build
 
 
+def draft_prompt(q: dict[str, Any]) -> dict[str, Any]:
+    """A question as the engine that builds the firmware-format book takes it: as a plain question and answer,
+    which is all that a firmware that knows only open questions shows, with its form beside them in ``x_form``."""
+    prompt, answer = qforms.as_text(q)
+    out = {"id": q["id"], "prompt": prompt, "answer": answer, "supporting_paragraphs": q["supporting_paragraphs"]}
+    x = qforms.to_x(q)
+    if x is not None:
+        out["x_form"] = x
+    return out
+
+
 def draft_document(state: dict[str, Any]) -> dict[str, Any]:
     """The draft (``prep/schema/draft.schema.json``) holding the kept questions."""
     by_section: dict[str, list[dict[str, Any]]] = {}
@@ -976,8 +994,7 @@ def draft_document(state: dict[str, Any]) -> dict[str, Any]:
         questions = by_section.get(section["id"])
         if questions:
             checkpoints.append({"id": section["checkpoint"], "section": section["id"], "prompts": [
-                {"id": q["id"], "prompt": q["prompt"], "answer": q["answer"],
-                 "supporting_paragraphs": q["supporting_paragraphs"]} for q in questions]})
+                draft_prompt(q) for q in questions]})
     source = state["source"]
     return {
         "format": "rsvp-draft",

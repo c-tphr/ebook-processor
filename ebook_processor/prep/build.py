@@ -155,7 +155,10 @@ def checkpoint_document(draft: dict[str, Any], plan: list[PlannedSection]) -> di
             {
                 "id": c["id"],
                 "section": c["section"],
-                "prompts": [{"id": p["id"], "prompt": p["prompt"], "answer": p["answer"]} for p in c["prompts"]],
+                # ``x_form`` says what form a question has besides its text (ebook_processor.forms); a firmware
+                # that does not know it ignores it, as every member whose name starts with ``x_``
+                "prompts": [{"id": p["id"], "prompt": p["prompt"], "answer": p["answer"],
+                             **({"x_form": p["x_form"]} if "x_form" in p else {})} for p in c["prompts"]],
             }
             for c in draft["checkpoints"]
         ],

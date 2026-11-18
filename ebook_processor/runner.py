@@ -7,6 +7,7 @@ import threading
 from pathlib import Path
 from typing import Any, Iterable
 
+from . import forms as qforms
 from .llm import PROVIDERS, Backend, Backends, ClaudeCodeBackend, CodexBackend, Completion, Connection, service_urls
 from .outputs import build_outputs
 from .pipeline import SOURCE_COPY, STATE_FILE, Cancelled, PipelineError, Progress, kept, load_state, now, process, write_json
@@ -172,7 +173,7 @@ def review_data(out_dir: Path) -> dict[str, Any]:
     by_section: dict[str, list[dict[str, Any]]] = {}
     for q in state["questions"]:
         by_section.setdefault(q["section"], []).append({
-            "id": q["id"], "question": q["prompt"], "answer": q["answer"], "status": q["status"],
+            "id": q["id"], "question": q["prompt"], "answer": q["answer"], **qforms.members(q), "status": q["status"],
             "kept": kept(q), "removed": bool(q.get("removed")), "can_keep": q["status"] in ("passed", "unchecked", "unverified"),
             "failed_criteria": [c for c, ok in q["criteria"].items() if not ok], "problem": q["problem"],
             "minor_note": q["minor_note"], "evidence": q["evidence"], "revisions": len(q["history"]),

@@ -10,6 +10,7 @@ from html import escape
 from pathlib import Path
 from typing import Any
 
+from . import forms as qforms
 from . import __version__
 from .content import passage_text
 from .pipeline import KEPT as KEPT_STATUSES, BookIndex, kept, now
@@ -60,6 +61,13 @@ def left_out_reason(q: dict[str, Any]) -> str:
 CARD_CHOICES = ("all", "missed", "reached")
 
 
+def card_text(q: dict[str, Any]) -> tuple[str, str, list[str]]:
+    """A question of the questions document as a card for a program that knows only a front and a back: the
+    front, the back, and the choices that belong on the front of a multiple-choice card."""
+    front, back = qforms.as_text(q, q["question"], q["answer"])
+    return front, back, list(q["choices"]) if qforms.form_of(q) == "choice" else []
+
+
 def selected_cards(doc: dict[str, Any], cards: str = "all") -> list[dict[str, Any]]:
     """The questions that go into the deck and the text file: all, those missed on the first try, or those met."""
     if cards == "missed":
@@ -92,7 +100,8 @@ def questions_document(book: Book, state: dict[str, Any], results: dict[str, str
     for q in state["questions"]:
         s, sd = sections[q["section"]]
         base = {"id": q["id"], "checkpoint": s["checkpoint"], "section": s["id"], "section_label": s["label"],
-                "chapter_href": sd.href, "chapter": titles[sd.href], "question": q["prompt"], "answer": q["answer"]}
+                "chapter_href": sd.href, "chapter": titles[sd.href], "question": q["prompt"], "answer": q["answer"],
+                "form": qforms.form_of(q), **{k: v for k, v in qforms.members(q).items() if k != "form"}}
         if not kept(q):
             left_out.append({**base, "status": "removed" if q.get("removed") and q["status"] in KEPT_STATUSES
                              else q["status"], "reason": left_out_reason(q), "problem": q["problem"],
@@ -153,6 +162,7 @@ def add_from_highlights(doc: dict[str, Any], book: Book, asked: list[dict[str, A
             "checkpoint": section["checkpoint"] if section and q["ask"] == "checkpoint" else None,
             "section": section["id"] if section else None, "section_label": section["label"] if section else "",
             "chapter_href": sd.href, "chapter": titles[sd.href], "question": q["question"], "answer": q["answer"],
+            "form": qforms.form_of(q), **{k: v for k, v in qforms.members(q).items() if k != "form"},
             "supporting_paragraphs": [b.ref for b in blocks],
             "passage": [{"ref": b.ref, "text": passage_text(sd, b)} for b in blocks],
             "status": "passed" if checked.get("passed") else "unchecked",
@@ -177,7 +187,9 @@ def tsv_text(doc: dict[str, Any], cards: str = "all") -> str:
     writer = csv.writer(out, delimiter="\t", lineterminator="\n", quoting=csv.QUOTE_MINIMAL)
     writer.writerow(TSV_COLUMNS)
     for q in selected_cards(doc, cards):
-        writer.writerow([q["id"], q["question"], q["answer"], doc["book"]["title"], q["chapter"], q["section_label"],
+        front, back, choices = card_text(q)
+        front += "".join(f"\n{'ABCD'[n]}. {c}" for n, c in enumerate(choices))
+        writer.writerow([q["id"], front, back, doc["book"]["title"], q["chapter"], q["section_label"],
                          _passage_plain(q), " ".join(q["tags"])])
     return out.getvalue()
 
@@ -220,9 +232,11 @@ def write_anki(doc: dict[str, Any], path: Path, cards: str = "all") -> int:
                                     "ebook-processor.")
     for q in selected_cards(doc, cards):
         passage = "<br><br>".join(_html(p["text"]) for p in q["passage"])
+        front, back, choices = card_text(q)
+        front = _html(front) + ("<ol type=\"A\">" + "".join(f"<li>{_html(c)}</li>" for c in choices) + "</ol>" if choices else "")
         deck.add_note(genanki.Note(
             model=model,
-            fields=[_html(q["question"]), _html(q["answer"]), _html(doc["book"]["title"]), _html(q["chapter"]),
+            fields=[front, _html(back), _html(doc["book"]["title"]), _html(q["chapter"]),
                     _html(q["section_label"]), passage, q["id"]],
             # The same question of the same run keeps its identity, so importing a rebuilt deck updates cards
             # and keeps their review history. A new run of the book makes new cards.

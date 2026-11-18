@@ -25,6 +25,7 @@ from html import escape
 from pathlib import Path
 from typing import Any
 
+from . import forms as qforms
 from .exports import authors, chapter_titles
 from .prep import checkpoints as cp
 from .prep import words as W
@@ -80,8 +81,7 @@ class ReadingBook:
             c = with_checkpoint.get(s["id"])
             sections.append({"id": s["id"], "label": s["label"], "chapter": sd.index, "start": start.index,
                              "end": end.index, "checkpoint": c["id"] if c else None,
-                             "prompts": [{"id": p["id"], "prompt": p["prompt"], "answer": p["answer"]}
-                                         for p in c["prompts"]] if c else []})
+                             "prompts": [qforms.from_x(p) for p in c["prompts"]] if c else []})
         toc = []
         where = {b.ref: (sd, b) for sd in book.spine for b in sd.blocks}
         for entry in book.toc:
@@ -287,7 +287,9 @@ def clean_state(raw: Any, sha256: str, known: set[str]) -> dict[str, Any]:
                 and isinstance(a.get("at"), str):
             state["x_attempts"].append({"id": a["id"], "at": a["at"][:32], "grade": a["grade"],
                                         "text": str(a.get("text") or "")[:4000],
-                                        "where": a.get("where") if a.get("where") in ("read", "review") else "read"})
+                                        "where": a.get("where") if a.get("where") in ("read", "review") else "read",
+                                        # a typed answer the app judged wrong and the reader counted as right
+                                        **({"overruled": True} if a.get("overruled") is True else {})})
     for pid, at in (raw.get("x_cleared") if isinstance(raw.get("x_cleared"), dict) else {}).items():
         if pid in known and isinstance(at, str):
             state["x_cleared"][pid] = at[:32]

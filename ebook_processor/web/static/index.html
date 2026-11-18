@@ -136,6 +136,7 @@ mark { background: color-mix(in srgb, var(--blue) 24%, transparent); color: inhe
 .md h4, .md h5, .md h6 { font: 600 1em/1.3 var(--grot); margin: 0.8em 0 0.4em; }
 .nb .slot { margin: 10px 0 14px; } .nb .slot > .row { margin-top: 8px; gap: 20px; }
 .nb button.text { padding-left: 0; padding-right: 0; }   /* the links start at the column's edge, like the text */
+.nb .slot.short textarea { min-height: 64px; }
 .nb textarea { width: 100%; min-height: 120px; font: 16px/1.5 Georgia, "Iowan Old Style", serif; color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 10px 12px; resize: vertical; }
 .nb .quote { margin: 16px 0 6px; padding: 2px 0 2px 14px; border-left: 8px solid color-mix(in srgb, var(--blue) 40%, transparent); font: 17px/1.55 Georgia, "Iowan Old Style", serif; max-width: 72ch; }
 .nb .quote a { text-decoration: none; } .nb .quote a:hover { color: var(--blue); }
@@ -239,6 +240,7 @@ body.dragging { cursor: col-resize; user-select: none; } body.dragging .side ifr
 }
 </style>
 <script src="/static/settings.js"></script>
+<script src="/static/forms.js"></script>
 </head>
 <body>
 <div class="frame">
@@ -626,8 +628,10 @@ async function showNotebook(id) {
       : q.first === "correct" ? ["lab blue", "Recalled"] : q.first ? ["lab inv", "Missed"] : ["lab", "Not asked yet"];
     const box = h("div", { class: "ans", id: "nb-" + q.id, "data-status": q.status });
     const show = () => put(box,
-      h("p", { class: "asked" }, h("span", { class: "hang" }, h("span", { class: cls }, label)), q.question),
-      typed.map((t) => h("p", {}, h("span", { class: "hang m mute" }, "Answered"), t)), h("p", {}, h("span", { class: "hang m mute" }, "Reference"), q.answer),
+      h("p", { class: "asked" }, h("span", { class: "hang" }, h("span", { class: cls }, label)), QForms.plain(q).question,
+        QForms.label(q) ? h("span", { class: "m mute", style: "margin-left:10px" }, QForms.label(q)) : null),
+      QForms.form(q) === "choice" ? QForms.choices(q) : null,
+      typed.map((t) => h("p", {}, h("span", { class: "hang m mute" }, "Answered"), t)), h("p", {}, h("span", { class: "hang m mute" }, "Reference"), QForms.plain(q).answer),
       q.status === "held" ? h("p", { class: "note" }, "It was to be accepted without asking you, but did not pass its check: " + q.problem) : null,
       h("div", { class: "row" },
         q.status !== "accepted" ? h("button", { class: "text", onclick: () => ask("/" + q.id, { method: "PUT", json: { accept: true } }) }, "Accept") : null,
@@ -635,7 +639,7 @@ async function showNotebook(id) {
         hid && q.status !== "accepted" ? h("button", { class: "text", disabled: asks.pending.includes(hid), onclick: () => another(box, hid) }, "Another") : null,
         h("button", { class: "text", onclick: () => { if (q.status !== "accepted" || confirm("Remove this question, and its place in practice?")) ask("/" + q.id, { method: "DELETE" }); } }, q.status === "accepted" ? "Remove" : "Discard"),
         q.status === "accepted" ? h("span", { class: "m mute" }, q.ask === "checkpoint" && !q.first ? "Asked at the end of its section" : "In practice") : null));
-    function edit() { put(box, wording(q, (question, answer) => ask("/" + q.id, { method: "PUT", json: { question, answer } }), show)); }
+    function edit() { put(box, wording(q, (changed) => ask("/" + q.id, { method: "PUT", json: changed }), show)); }
     show();
     return box;
   }
@@ -650,12 +654,10 @@ async function showNotebook(id) {
     const form = h("div", { class: "row", id: "nb-wish", style: "margin:8px 0 4px" }, wish, h("button", { type: "button", onclick: send }, "Write it"), h("button", { class: "text", type: "button", onclick: () => form.remove() }, "Cancel"));
     under.append(form); wish.focus();
   }
-  function wording(q, save, cancel) {   // the two fields of a question, to reword one or to write your own
-    const question = h("textarea", { "aria-label": "Question", placeholder: "The question", style: "min-height:64px" });
-    const answer = h("textarea", { "aria-label": "Answer", placeholder: "Its answer", style: "min-height:64px;margin-top:8px" });
-    question.value = q ? q.question : ""; answer.value = q ? q.answer : "";
-    return h("div", { class: "slot" }, question, answer, h("div", { class: "row" },
-      h("button", { class: "primary", onclick: () => save(question.value, answer.value) }, "Save"), h("button", { class: "text", onclick: cancel }, "Cancel")));
+  function wording(q, save, cancel) {   // the fields of a question, to reword one of any form or to write your own (an open one)
+    const fields = QForms.edit(q || { question: "", answer: "" });
+    return h("div", { class: "slot short" }, fields.el, h("div", { class: "row" },
+      h("button", { class: "primary", onclick: () => save(fields.read()) }, "Save"), h("button", { class: "text", onclick: cancel }, "Cancel")));
   }
   function removeHighlight(i) {         // its accepted questions may stay without it: asked each time
     const kept = i.questions.filter((q) => q.status === "accepted").length;
@@ -671,7 +673,7 @@ async function showNotebook(id) {
     return h("div", { id: "nb-" + i.id }, h("div", { class: "quote" }, h("a", { ...openAt(i.chapter, i.word), title: "Open in the reader" }, i.text)),
       slot(i.note, (v) => call(`/item/${i.id}`, { method: "PUT", json: { text: v } }), "Add a note", () => [
         h("button", { class: "text", disabled: writing, onclick: () => (i.questions.length ? another(own, i.id) : ask("/propose", { method: "POST", json: { highlight: i.id } })) }, i.questions.length ? "Another question" : "Make a question"),
-        h("button", { class: "text", onclick: () => put(own, wording(null, (question, answer) => ask("", { method: "POST", json: { highlight: i.id, question, answer } }), () => put(own))) }, "Write my own"),
+        h("button", { class: "text", onclick: () => put(own, wording(null, (written) => ask("", { method: "POST", json: { highlight: i.id, ...written } }), () => put(own))) }, "Write my own"),
         h("button", { class: "text", onclick: () => removeHighlight(i) }, "Remove highlight")]),
       i.questions.map((q) => asked(q, i.id)), own,
       writing ? h("p", { class: "m mute", style: "margin:10px 0 0" }, "Writing a question") : null,
@@ -680,8 +682,8 @@ async function showNotebook(id) {
   function answer(a) {
     const typed = a.attempts.filter((t) => t.text).map((t) => t.text);
     return h("div", { class: "ans" },
-      h("p", { class: "asked" }, h("span", { class: "hang" }, h("span", { class: a.first === "correct" ? "lab blue" : a.first ? "lab inv" : "lab" }, a.first === "correct" ? "Recalled" : a.first ? "Missed" : "Not graded")), a.question),
-      typed.map((t) => h("p", {}, h("span", { class: "hang m mute" }, "Answered"), t)), h("p", {}, h("span", { class: "hang m mute" }, "Reference"), a.answer),
+      h("p", { class: "asked" }, h("span", { class: "hang" }, h("span", { class: a.first === "correct" ? "lab blue" : a.first ? "lab inv" : "lab" }, a.first === "correct" ? "Recalled" : a.first ? "Missed" : "Not graded")), QForms.plain(a).question),
+      typed.map((t) => h("p", {}, h("span", { class: "hang m mute" }, "Answered"), t)), h("p", {}, h("span", { class: "hang m mute" }, "Reference"), QForms.plain(a).answer),
       h("div", { class: "row" }, h("a", { class: "m", ...openAt(a.go.chapter, a.go.word) }, "Open the passage"),
         a.previewed ? h("span", { class: "m mute", title: "The question was shown at the start of its section, before you read it" }, "Previewed before reading") : null));
   }
@@ -798,6 +800,7 @@ async function showPractice(only) {
   const box = h("div", { class: "pr" }), tail = h("div");
   put(app, h("a", { class: "back m", href: only ? "#/run/" + only : "#/" }, only ? "← Book page" : "← Library"), box, tail);
   let data, revealed = false, text = "", busy = false;
+  let given = null, order = null, asking = null;   // a question the app grades: what was answered, and where to answer
   const q = only ? "?job=" + encodeURIComponent(only) : "";
   const when = (iso) => { const d = Math.round((new Date(iso) - new Date(data.today)) / 864e5); return d === 1 ? "tomorrow" : `in ${d} days`; };
   async function load() {
@@ -810,7 +813,7 @@ async function showPractice(only) {
     if (busy) return; busy = true;
     try { data = await api("/practice/answer", { method: "POST", json: { job: data.card.job, id: data.card.id, remembered, text, only } }); }
     catch (e) { busy = false; return alert(e.message); }
-    busy = false; revealed = false; text = ""; draw();
+    busy = false; revealed = false; text = ""; given = null; order = null; draw();
   }
   function draw() {
     const c = data.card, n = data.counts;
@@ -825,8 +828,31 @@ async function showPractice(only) {
     }
     const area = h("textarea", { placeholder: "Type what you recall, if you like.", "aria-label": "Your recall", oninput: () => { text = area.value; } });
     area.value = text;
+    const head = h("div", { class: "head" }, h("span", { class: "m" }, [c.book, c.chapter, c.section !== c.chapter ? c.section : null].filter(Boolean).join(" / ")), h("span", { class: "m" }, tally));
+    const standing = h("span", { class: "m mute" }, c.state === "new" ? "New card" : c.again ? "Forgotten earlier today" : c.first ? "Learned today" : `Interval ${c.interval} days`);
+    const passage = c.passage.length ? h("details", {}, h("summary", { class: "m", style: "margin-top:16px;cursor:pointer" }, "From the book"), h("div", { class: "passage" }, c.passage.map((runs) => h("p", {}, runs.flatMap((r, n) => [n ? " " : null, r.h ? h("mark", {}, r.t) : r.t]))))) : null;
+    asking = null;
+    if (QForms.form(c) !== "open") {    // graded by the app: answered once, then the verdict and what it does to the card
+      const kind = h("span", { class: "m", style: "display:block;color:var(--blue);margin:0 0 10px" }, QForms.label(c) + (QForms.form(c) === "truefalse" ? "?" : ""));
+      if (!given) {
+        asking = QForms.ask(c, (g) => { given = g; text = g.text; draw(); }, order);
+        order = asking.order;
+        put(box, head, kind, h("h1", {}, QForms.heading(c, false)), asking.el, h("div", { class: "acts" }, h("span", {}), standing));
+        if (QForms.form(c) === "cloze") asking.focus();
+        return;
+      }
+      put(box, head, kind, h("h1", {}, QForms.heading(c, true)), QForms.verdict(c, given),
+        given.overruled ? h("p", { class: "note" }, "Counted as right on your word.") : null, passage,
+        h("div", { class: "acts" },
+          h("div", { class: "row" },
+            h("button", { class: "primary", id: "pr-next", onclick: () => answer(given.correct) }, "Continue", h("kbd", {}, "↵"), h("small", { style: "display:block;margin-top:4px;opacity:0.75" }, given.correct ? c.preview.remembered : c.preview.forgot)),
+            !given.correct && QForms.form(c) === "cloze" ? h("button", { class: "text", id: "pr-right", onclick: () => { given = { ...given, correct: true, overruled: true }; draw(); } }, "I was right") : null),
+          h("a", { class: "btn", href: `/read/${c.job}?go=${encodeURIComponent(c.go)}` }, "Reread the section")));
+      box.querySelector("#pr-next").focus();
+      return;
+    }
     put(box,
-      h("div", { class: "head" }, h("span", { class: "m" }, [c.book, c.chapter, c.section !== c.chapter ? c.section : null].filter(Boolean).join(" / ")), h("span", { class: "m" }, tally)),
+      head,
       h("h1", {}, c.question),
       !revealed ? [area, h("div", { class: "acts" }, h("button", { class: "primary", onclick: () => { revealed = true; draw(); } }, "Reveal answer", h("kbd", {}, "ctrl ↵")),
           h("span", { class: "m mute" }, c.state === "new" ? "New card" : c.again ? "Forgotten earlier today" : c.first ? "Learned today" : `Interval ${c.interval} days`))]
@@ -842,6 +868,12 @@ async function showPractice(only) {
   practiceKeys = (e) => {
     if (!data || !data.card) return;
     const typing = /^(TEXTAREA|INPUT|SELECT)$/.test(e.target.tagName);
+    if (QForms.form(data.card) !== "open") {
+      if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (!given) { if (asking && asking.key(e)) e.preventDefault(); return; }
+      if (e.key === "Enter" && !(e.target.closest && e.target.closest("button, a"))) { e.preventDefault(); answer(given.correct); }
+      return;
+    }
     if (!revealed && e.key === "Enter" && (e.ctrlKey || e.metaKey || !typing)) { e.preventDefault(); revealed = true; draw(); }
     else if (revealed && !typing && (e.key === "1" || e.key === "2")) { e.preventDefault(); answer(e.key === "2"); }
   };
@@ -980,7 +1012,7 @@ async function showRun(id) {
         h("div", { id: "tried" }, t.sections.map((s) => h("section", { class: "section" },
           h("header", {}, h("b", {}, s.label), h("span", { class: "m mute raw" }, `${fmt(s.words || 0)} words`)),
           s.questions.length ? s.questions.map((q) => h("div", { class: "q plain" + (q.kept ? "" : " off") }, h("div", {},
-            h("div", { class: "qt", style: "cursor:auto" }, q.question), h("div", { class: "at" }, q.answer),
+            h("div", { class: "qt", style: "cursor:auto" }, QForms.plain(q).question), QForms.choices(q), h("div", { class: "at" }, q.answer),
             !q.kept ? h("p", { class: "note" }, "Left out: it failed its check. " + (q.problem || "")) : q.minor_note ? h("p", { class: "note" }, "Checker's remark: " + q.minor_note) : null)))
             : h("p", { class: "note" }, "No questions for this section."))))),
       band("What next",
@@ -1101,12 +1133,13 @@ async function showRun(id) {
         box.checked ? view.removed.delete(q.id) : view.removed.add(q.id); row.classList.toggle("off", !box.checked);
         document.querySelector(`.map i[data-q="${q.id}"]`)?.classList.toggle("out", !box.checked); drawSticky(); } });
     const tags = [h("span", { class: "lab quiet" }, q.id)];
+    if (QForms.label(q)) tags.push(h("span", { class: "lab quiet" }, QForms.label(q)));
     if (q.status === "failed") tags.push(h("span", { class: "lab inv" }, "Left out / failed the check"));
     else if (q.status === "withdrawn") tags.push(h("span", { class: "lab inv" }, "Left out / withdrawn"));
     else if (q.status !== "passed") tags.push(h("span", { class: "lab" }, "Not checked"));
     else if (q.revisions) tags.push(h("span", { class: "lab" }, "Passed after revision"));
     row.append(box, h("div", {},
-      h("label", { class: "qt", for: "q-" + q.id }, q.question), h("div", { class: "at" }, q.answer),
+      h("label", { class: "qt", for: "q-" + q.id }, QForms.plain(q).question), QForms.choices(q), h("div", { class: "at" }, q.answer),
       h("div", { class: "meta" }, tags),
       q.failed_criteria.length ? h("p", { class: "note" }, "Why: " + q.failed_criteria.map((k) => CRITERIA[k] || k).join("; ") + ". " + (q.problem || "")) : null,
       q.minor_note ? h("p", { class: "note" }, "Checker's remark: " + q.minor_note) : null));

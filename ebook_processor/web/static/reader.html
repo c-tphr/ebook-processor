@@ -139,6 +139,8 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .cp .two p { margin: 8px 0 0; font: 18px/1.5 var(--serif); white-space: pre-wrap; }
 .cp .acts { margin-top: 22px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: center; }
 .cp .note { margin: 14px 0 0; color: var(--mute); }
+.cp .kind { display: block; margin: -12px 0 12px; color: var(--blue); }
+.cp .qf-verdict p { font: 18px/1.5 var(--serif); } .cp .qf-verdict p .m { font: 11.5px/1.5 var(--mono); }
 .lab { display: inline-block; font: 11px/1 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; padding: 4px 6px; border: 1px solid var(--ink); white-space: nowrap; }
 .lab.inv { background: var(--ink); color: var(--paper); } .lab.blue { background: var(--blue); border-color: var(--blue); color: var(--on-blue); }
 kbd { font: 11px/1 var(--mono); border: 1px solid currentColor; padding: 2px 4px; margin-left: 6px; opacity: 0.7; }
@@ -190,6 +192,7 @@ body.pane .sv { padding-top: 20px; }
 @keyframes aim { from { background: color-mix(in srgb, var(--blue) 22%, transparent); } to { background: transparent; } }
 </style>
 <script src="/static/settings.js"></script>
+<script src="/static/forms.js"></script>
 </head>
 <body>
 <div class="shell">
@@ -392,7 +395,7 @@ function previewBox(s) {
   const open = toPreview(s);
   return h("aside", { class: "pre", "data-ids": open.map((p) => p.id).join(" "), "aria-label": "Questions for this section" },
     h("span", { class: "m" }, open.length === 1 ? "A question for this section" : `${open.length} questions for this section`),
-    h("ul", {}, open.map((p) => h("li", {}, p.prompt))),
+    h("ul", {}, open.map((p) => h("li", {}, QForms.plain(p).question))),
     h("small", {}, "Read with " + (open.length === 1 ? "it" : "these") + " in mind. You are asked at the end of the section."));
 }
 function addPreviews(root) {          // put the boxes into a chapter's text; a box counts as shown once it is on screen
@@ -716,6 +719,7 @@ function openCheckpoint(section, { index, resume = null, all = false } = {}) {
   cp = { section, index, all, revealed: false, missed: false, text: "", resume: resume || { chapter: pos.chapter, word: mode === "rsvp" ? section.end : pos.word, mode } };
   persistCp(); drawCp();
 }
+let cpAsk = null;                       // the place to answer a question the app grades, while one is open
 function drawCp() {
   stage.querySelector(".cp")?.remove();
   if (!cp) return;
@@ -729,7 +733,38 @@ function drawCp() {
     cp.review ? h("button", { class: "link", onclick: closeCp }, "Stop reviewing") : h("button", { class: "link", onclick: closeCp }, "Skip checkpoint"));
   let body;
   const others = !cp.review && !cp.all && s.prompts.some((q) => q !== p && S.grades[q.id]);
-  if (!cp.revealed) body = [box, h("div", { class: "acts" }, h("button", { class: "primary", onclick: () => { cp.revealed = true; drawCp(); } }, "Reveal answer", h("kbd", {}, "ctrl ↵")), skips),
+  const graded = QForms.form(p) !== "open";
+  cpAsk = null;
+  if (graded && !cp.given) {            // a form the app grades: one try, graded at once
+    cpAsk = QForms.ask(p, (given) => {
+      cp.given = given;
+      const at = cp.givenAt = stamp(), grade = given.correct ? "correct" : "incorrect";
+      S.x_attempts.push({ id: p.id, at, grade, text: given.text, where: cp.review ? "review" : "read" });
+      if (!S.grades[p.id]) S.grades[p.id] = { first: grade, at };
+      if (cp.review && given.correct) S.x_cleared[p.id] = at;
+      save(); drawCp();
+    }, cp.order);
+    cp.order = cpAsk.order;
+    body = [cpAsk.el, h("div", { class: "acts" }, h("span", {}), skips),
+      others ? h("p", { class: "note" }, "The questions of this checkpoint that you have already answered are not asked again.") : null];
+  } else if (graded) {
+    const overrule = () => {            // a typed answer the app judged wrong and the reader knows to be right
+      const mine = S.x_attempts.find((a) => a.id === p.id && a.at === cp.givenAt);
+      if (mine) { mine.grade = "correct"; mine.overruled = true; }
+      if (S.grades[p.id] && S.grades[p.id].at === cp.givenAt) S.grades[p.id].first = "correct";
+      if (cp.review) S.x_cleared[p.id] = cp.givenAt;
+      cp.given = { ...cp.given, correct: true, overruled: true }; save(); drawCp();
+    };
+    body = [QForms.verdict(p, cp.given),
+      cp.given.overruled ? h("p", { class: "note" }, "Counted as right on your word.") : null,
+      first && first.at !== cp.givenAt ? h("p", { class: "note" }, `Your first grade for this question stays as it is: ${first.first}.`) : null,
+      h("div", { class: "acts" },
+        !cp.given.correct ? h("span", { class: "row" }, h("span", { class: "m" }, "Reread the section in"),
+          h("span", { class: "seg" }, MODES.map(([k, t]) => h("button", { class: k === (cp.review ? mode : cp.resume.mode) ? "primary" : "", onclick: () => startReread(s, k) }, t)))) : h("span", {}),
+        h("span", { class: "row" },
+          !cp.given.correct && QForms.form(p) === "cloze" ? h("button", { class: "link", id: "cp-right", onclick: overrule }, "I was right") : null,
+          h("button", { class: "primary", id: "cp-next", onclick: () => next() }, "Continue", h("kbd", {}, "↵"))))];
+  } else if (!cp.revealed) body = [box, h("div", { class: "acts" }, h("button", { class: "primary", onclick: () => { cp.revealed = true; drawCp(); } }, "Reveal answer", h("kbd", {}, "ctrl ↵")), skips),
     others ? h("p", { class: "note" }, "The questions of this checkpoint that you have already answered are not asked again.") : null];
   else if (cp.missed) body = [
     h("div", { class: "two" }, h("div", {}, h("span", { class: "m" }, "Your recall"), h("p", {}, cp.text || "Nothing typed.")), h("div", {}, h("span", { class: "m" }, "Reference answer"), h("p", {}, p.answer))),
@@ -745,8 +780,11 @@ function drawCp() {
       h("button", { class: "primary", onclick: () => advance("incorrect") }, "Incorrect", h("kbd", {}, "x"))), skips)];
   stage.append(h("div", { class: "cp", role: "dialog", "aria-label": "Checkpoint" }, h("div", { class: "in" },
     h("div", { class: "head" }, h("span", { class: "m" }, cp.review ? "Review / " + s.label : `Checkpoint ${number} / ${s.label}`), h("span", { class: "m" }, `Question ${cp.index + 1} of ${total}` + (p.hq ? " / from your highlight" : ""))),
-    h("h1", {}, p.prompt), body)));
-  (stage.querySelector(".cp textarea") || stage.querySelector(".cp button.primary"))?.focus();
+    graded ? h("span", { class: "m kind" }, QForms.label(p) + (QForms.form(p) === "truefalse" ? "?" : "")) : null,
+    h("h1", {}, QForms.heading(p, graded && !!cp.given)), body)));
+  if (cpAsk && QForms.form(p) === "cloze") cpAsk.focus();
+  else if (graded) (stage.querySelector("#cp-next") || stage.querySelector(".cp"))?.focus?.();
+  else (stage.querySelector(".cp textarea") || stage.querySelector(".cp button.primary"))?.focus();
   function advance(grade) {
     const at = stamp();
     S.x_attempts.push({ id: p.id, at, grade, text: cp.text, where: cp.review ? "review" : "read" });
@@ -758,7 +796,7 @@ function drawCp() {
   function next() {
     cp.index++;
     if (!cp.review && !cp.all) while (cp.index < total && S.grades[s.prompts[cp.index].id]) cp.index++;   // only what is not answered yet
-    cp.revealed = false; cp.missed = false; cp.text = "";
+    cp.revealed = false; cp.missed = false; cp.text = ""; cp.given = null; cp.order = null;
     if (cp.index >= total) return closeCp();
     persistCp(); drawCp();
   }
@@ -789,7 +827,7 @@ async function endReread() {
   const { section, held } = reread; reread = null;
   if (view && view.stop) view.stop();
   if (S.active_checkpoint) delete S.active_checkpoint.reread;
-  if (held.review) { await render(); cp = { ...held, revealed: false, missed: false, text: "" }; return drawCp(); }
+  if (held.review) { await render(); cp = { ...held, revealed: false, missed: false, text: "", given: null, order: null }; return drawCp(); }
   mode = held.resume.mode; pos = { chapter: held.resume.chapter, word: held.resume.word };
   await render();
   cp = { section, index: held.index, all: !!held.all, revealed: false, missed: false, text: "", resume: held.resume };   // the same question, answer hidden
@@ -947,7 +985,8 @@ function syncPrompts() {
   for (const s of book.sections) {
     s.own = s.own || s.prompts.filter((p) => !p.hq);
     s.prompts = s.own.concat((NB.questions || []).filter((q) => q.status === "accepted" && q.ask === "checkpoint" && q.section === s.id)
-      .map((q) => ({ id: q.id, prompt: q.question, answer: q.answer, hq: true })));
+      .map((q) => ({ id: q.id, prompt: q.question, answer: q.answer, hq: true,
+        ...Object.fromEntries(["form", "choices", "correct", "truth", "accept"].filter((k) => k in q).map((k) => [k, q[k]])) })));
   }
 }
 function say(text, label, action) {   // a quiet notice at the edge; with an action, it can be pressed
@@ -991,17 +1030,18 @@ async function askQuestion(x) {
 function questionPanel(hid) {         // a highlight's questions: to accept, reword, discard, ask for another, or write
   const x = NB.highlights.find((it) => it.id === hid);
   if (!x) return closeDrawer();
-  const form = (q, onSave) => {
-    const ask = h("textarea", { "aria-label": "Question", placeholder: "The question" }), ans = h("textarea", { "aria-label": "Answer", placeholder: "Its answer" });
-    ask.value = q ? q.question : ""; ans.value = q ? q.answer : "";
-    return h("div", { class: "one" }, ask, ans, h("div", { class: "acts" },
-      h("button", { class: "primary", onclick: () => onSave(ask.value, ans.value) }, "Save"), h("button", { class: "link", onclick: () => questionPanel(hid) }, "Cancel")));
+  const form = (q, onSave) => {       // the fields of a question of any form; a new one of the reader's own is open
+    const fields = QForms.edit(q || { question: "", answer: "" });
+    fields.el.addEventListener("keydown", (e) => e.stopPropagation());   // typing here is not a key of the reader
+    return h("div", { class: "one" }, fields.el, h("div", { class: "acts" },
+      h("button", { class: "primary", onclick: () => onSave(fields.read()) }, "Save"), h("button", { class: "link", onclick: () => questionPanel(hid) }, "Cancel")));
   };
   const one = (q) => {
     const box = h("div", { class: "one", "data-q": q.id });
-    const edit = () => box.replaceWith(form(q, (question, answer) => questionCall("/" + q.id, { method: "PUT", json: { question, answer } })));
+    const edit = () => box.replaceWith(form(q, (changed) => questionCall("/" + q.id, { method: "PUT", json: changed })));
     put(box, h("span", { class: "lab" + (q.status === "accepted" ? " inv" : "") }, q.status === "accepted" ? "Accepted" : q.status === "held" ? "Held back" : "Proposed"),
-      h("b", { style: "margin-top:8px" }, q.question), h("p", {}, q.answer),
+      QForms.label(q) ? h("span", { class: "m", style: "margin-left:8px" }, QForms.label(q)) : null,
+      h("b", { style: "margin-top:8px" }, QForms.heading(q, false)), QForms.form(q) === "open" ? null : QForms.choices(q), h("p", {}, q.answer),
       q.status === "held" ? h("p", { class: "why" }, "The check: " + q.problem) : null,
       h("div", { class: "acts" },
         q.status !== "accepted" ? h("button", { class: "primary", onclick: () => questionCall("/" + q.id, { method: "PUT", json: { accept: true } }) }, "Accept") : null,
@@ -1024,7 +1064,7 @@ function questionPanel(hid) {         // a highlight's questions: to accept, rew
         put(own, h("div", { class: "one" }, wish, h("div", { class: "acts" }, h("button", { class: "primary", onclick: () => send(wish.value) }, "Write it"), h("button", { class: "link", onclick: () => put(own) }, "Cancel"))));
         wish.focus();
       } }, mine.length ? "Another" : "Make a question"),
-      h("button", { class: "link", onclick: () => put(own, form(null, (question, answer) => questionCall("", { method: "POST", json: { highlight: hid, question, answer } }))) }, "Write my own"),
+      h("button", { class: "link", onclick: () => put(own, form(null, (written) => questionCall("", { method: "POST", json: { highlight: hid, ...written } }))) }, "Write my own"),
       h("a", { class: "m", href: "/#/notebook/" + ID, style: "margin-left:auto" }, "Notebook"))));
   panelFor = hid;                     // kept up to date while it is open
 }
@@ -1188,6 +1228,13 @@ addEventListener("keydown", (e) => {
   if (AppSettings.isOpen) return;      // the settings window has the keys
   if (e.key === "Escape") { if ($("drawer").classList.contains("on")) return closeDrawer(); if (stage.querySelector(".notebox")) return closeNote(); }
   if (cp) {
+    const asked = cp.review ? (cp.queue[cp.index] || {}).p : cp.section.prompts[cp.index];
+    if (asked && QForms.form(asked) !== "open") {   // a question the app grades has keys of its own
+      if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (cpAsk && !cp.given) { if (cpAsk.key(e)) e.preventDefault(); return; }
+      if (cp.given && (e.key === "Enter" || e.key === " ") && !(e.target.closest && e.target.closest("button"))) { e.preventDefault(); stage.querySelector("#cp-next")?.click(); }
+      return;
+    }
     if (!cp.revealed && e.key === "Enter" && (e.ctrlKey || e.metaKey || !typing)) { e.preventDefault(); cp.revealed = true; return drawCp(); }
     if (cp.revealed && !cp.missed && !typing) { const b = [...stage.querySelectorAll(".cp button.primary")]; if (e.key === "c" || e.key === "x") { e.preventDefault(); b[e.key === "c" ? 0 : 1]?.click(); } }
     return;

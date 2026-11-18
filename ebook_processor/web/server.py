@@ -31,6 +31,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from .. import __version__, notes, reading, srs
+from .. import forms as qforms
 from .. import highlight_questions as hq
 from .. import steer as steering
 from ..llm import BackendCancelled, BackendError, ClaudeCodeBackend, CodexBackend, Completion, UsageLimitError, available_models
@@ -48,7 +49,7 @@ JOB_ID_RE = re.compile(r"^[0-9]{8}-[0-9]{6}-[a-z0-9-]{1,40}$")
 ACTIVE = ("queued", "running")
 EVENTS_KEPT = 300
 PAGES = {"index.html": "text/html; charset=utf-8", "reader.html": "text/html; charset=utf-8",
-         "settings.js": "text/javascript; charset=utf-8"}   # the app's own files, by content type
+         "settings.js": "text/javascript; charset=utf-8", "forms.js": "text/javascript; charset=utf-8"}   # the app's own files, by content type
 SETTINGS_FILE = "reader-settings.json"  # what the settings window keeps, for every page of the app
 LONG_SETTINGS = ("steer_about", "steer_style")  # the reader's own texts: longer than any other setting
 WAITING = ("asking", "tried")  # a run that waits for its reader: to confirm a reading, or after a trial chapter
@@ -222,7 +223,8 @@ class Jobs:
             state = store["cards"][pid]
             chapter = next((c["title"] for c in manifest["chapters"] if c["index"] == section["chapter"]), "")
             card = {"job": job_id, "id": pid, "book": manifest["title"], "chapter": chapter, "section": section["label"],
-                    "question": prompt["prompt"], "answer": prompt["answer"], "passage": self.passage(job_id, pid),
+                    "question": prompt["prompt"], "answer": prompt["answer"], **qforms.members(prompt),
+                    "passage": self.passage(job_id, pid),
                     "state": state["state"], "again": state["again"], "interval": round(state["interval"], 1),
                     "first": srs.kind_of(state, today) == "first",
                     "times": len(state["reviews"]), "go": f"{section['chapter']}:{section['start']}",
@@ -289,7 +291,7 @@ class Jobs:
     def question_settings(self) -> Settings:
         """The models that write and check these questions: the Add a book defaults of the settings window."""
         ui = self.ui_settings()
-        options = {k: ui.get("add_" + k) or None for k in ("model", "checker_model", "effort")}
+        options = {k: ui.get("add_" + k) or None for k in ("model", "checker_model", "effort", "forms")}
         try:
             return from_options(**options)
         except SettingsError:
@@ -375,7 +377,7 @@ class Jobs:
                     (h for h in store["highlights"] if h["chapter"] == highlight["chapter"] and h["start"] <= highlight["start"] < h["end"]), None)
                 if now_h is None or cancel.is_set():
                     return
-                q = hq.add(store, manifest, now_h, made["question"], made["answer"], "model", made["model"])
+                q = hq.add(store, manifest, now_h, made["question"], made["answer"], "model", made["model"], made["form"])
                 write_json(folder / notes.FILE, store)
                 asked = copy.deepcopy(q)
             if auto:  # accepted without the reader seeing it: checked first, and held back when it fails
@@ -456,8 +458,8 @@ class Jobs:
 
     def change_question(self, job_id: str, qid: str, request: dict[str, Any]) -> dict[str, Any]:
         def change(store: dict[str, Any]) -> None:
-            if "question" in request or "answer" in request:
-                hq.reword(store, qid, request.get("question"), request.get("answer"))
+            if "question" in request or "answer" in request or "form" in request:
+                hq.reword(store, qid, request.get("question"), request.get("answer"), request.get("form"))
                 if hq.find(store, qid)["status"] == "accepted":
                     self._exports_stale(job_id)
             if request.get("accept") is True:
@@ -1034,7 +1036,7 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(raw, dict):
             raise ApiError(HTTPStatus.BAD_REQUEST, "settings must be an object")
         allowed = {"density", "section_words", "max_questions", "content", "kind", "rounds", "model", "checker_model",
-                   "effort", "jobs", "epubcheck", "preview"}
+                   "effort", "jobs", "epubcheck", "preview", "forms"}
         options = {k: (v if v != "" else None) for k, v in raw.items() if k in allowed}
         try:
             return from_options(**options)

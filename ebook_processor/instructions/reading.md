@@ -26,7 +26,7 @@ The writers can follow a wish about:
 No wish changes these, and you say so under `cannot` when the reader asks for it:
 
 - Every answer comes from the section it belongs to. So there are no questions about how something applies to the reader's own work, no answers drawn from outside the book, and no questions that need another chapter.
-- Questions are recalled from memory: no multiple choice, no true-or-false, no fill-in-the-blank, no quoting from memory word for word.
+- $forms_rule No quoting from memory word for word.
 - Every section is still asked about. A wish moves emphasis; it does not skip the parts of the book the reader cares less about.
 - At most $max_questions questions for a section; a question has at most a few lines, an answer a few sentences.
 - Where the sections are cut, and which parts of the book (title page, index) are left out.

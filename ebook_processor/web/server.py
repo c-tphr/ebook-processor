@@ -850,7 +850,11 @@ class Jobs:
 
     def vault_note(self, note_id: str) -> dict[str, Any]:
         vault = self.vault()
-        return self._note(self._vaulted(lambda: vault.detail(vault.get(note_id))))
+
+        def read() -> dict[str, Any]:
+            with vault.lock:
+                return vault.detail(vault.get(note_id))
+        return self._note(self._vaulted(read))
 
     def vault_peek(self, target: str, anchor: str, inside: str | None) -> dict[str, Any]:
         vault = self.vault()

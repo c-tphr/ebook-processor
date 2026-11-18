@@ -343,3 +343,19 @@ def test_a_quick_note_in_the_reader_remembers_its_place_and_a_section_note_becom
     saved(page, ".np")
     made = [p for p in (vault / "Inbox").iterdir() if "The keeper depends" in p.name]
     assert len(made) == 1 and made[0].read_text(encoding="utf-8").rstrip().endswith(f"Source: [[{BOOK}#^{nid}]]")
+
+
+def test_a_quick_note_over_practice_leaves_the_card_alone(page: Page, book: App, vault: Path):
+    """The keys of the box are not keys of the page behind it."""
+    reader = Reader(page, book).open("2:0", "page")
+    reader.read_to_checkpoint()
+    reader.answer("Incorrect")                                                 # a card to practise
+    page.goto(book.url + "/#/practice")
+    expect(page.locator(".pr h1")).to_be_visible()
+    page.keyboard.press("Control+.")
+    box = page.get_by_role("textbox", name="Quick note")
+    box.fill("a thought during practice")
+    box.press("ControlOrMeta+Enter")
+    expect(page.locator(".nt-toast")).to_contain_text("Quick note saved")
+    expect(page.get_by_role("button", name="Reveal answer")).to_be_visible()   # the card was not turned over
+    assert len(list((vault / "Inbox").iterdir())) == 1

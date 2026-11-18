@@ -1089,7 +1089,10 @@ async function showPractice(only) {
   load();
 }
 let practiceKeys = null;
-addEventListener("keydown", (e) => { if (practiceKeys && location.hash.startsWith("#/practice") && !AppSettings.isOpen) practiceKeys(e); });
+addEventListener("keydown", (e) => {
+  if (e.target.closest && e.target.closest(".nt-capture")) return;   // a quick note is being written over the page
+  if (practiceKeys && location.hash.startsWith("#/practice") && !AppSettings.isOpen) practiceKeys(e);
+});
 
 /* ---------- one run ---------- */
 async function showRun(id) {

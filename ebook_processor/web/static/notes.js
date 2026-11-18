@@ -68,6 +68,7 @@ dialog.nt-capture::backdrop { background: color-mix(in srgb, var(--ink) 45%, tra
 .nt .nt-status { font: 12px/1.5 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; color: var(--mute); }
 .nt input.nt-title { display: block; width: 100%; font: 500 clamp(26px, 3.6vw, 40px)/1.15 var(--grot); letter-spacing: -0.035em; color: var(--ink); background: transparent; border: 0; border-bottom: 1px solid var(--ghost); border-radius: 0; padding: 4px 0 8px; }
 .nt input.nt-title:focus { outline: 0; border-bottom-color: var(--ink); }
+.nt.compact input.nt-title { font-size: 24px; letter-spacing: -0.025em; }   /* a narrow column: the whole title in view */
 .nt input.nt-title::placeholder { color: var(--mute); }
 .nt .nt-meta { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; margin: 12px 0 0; font: 12px/1.5 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; }
 .nt .nt-meta .lab { display: inline-block; font: 11px/1 var(--mono); letter-spacing: 0.05em; padding: 4px 6px; border: 1px solid var(--ink); white-space: nowrap; }
@@ -151,7 +152,7 @@ function capture(where) {
       toast("Quick note saved to the inbox.", "Open", () => openNote(made.id));
     } catch (e) { error.hidden = false; error.textContent = e.message; button.disabled = false; }
   }
-  area.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); save(); } });
+  area.addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); e.stopPropagation(); save(); } });
   box.addEventListener("click", (e) => { if (e.target === box) box.close(); });
   box.addEventListener("close", () => { captureDraft = area.value; box.remove(); captureBox = null; });   // what was typed is kept for the next time
   document.body.append(box);

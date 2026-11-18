@@ -187,6 +187,17 @@ Ask these before building Phase 1. Recommended answers are the builder's.
 9. **A book removed from the library.** Its file in `Books` stays (recommended: idea notes cite it), marked as no longer in the library.
 10. **Splitting Phase 1.** Deliver it whole, or first files and search, then the editor and the reader's "Idea note"? Recommended: whole, unless the editor takes long; then tell the owner and split.
 
+## 6a. Answers from the Phase 1 interview
+
+Filled in as the owner answers. Questions of section 6 that have an answer here are closed.
+
+| Question | Answer |
+| --- | --- |
+| Names (2) | Plain names. The area is "Notes"; the kinds are "Idea note", "Index note", "Quick note", "Project note" |
+| A note without a title (3) | It waits in the inbox under a name made from the date and its first words. Giving it a title moves it out of the inbox and names its file |
+| Citing a source (4) | A link, not a copy: the note gets a line `Source: [[Book#^highlight]]` and the same link in its `sources` property. The highlighted words are shown beside the editor and on hover over the link |
+| Where the folder is (1) | `ebook-processor-notes` in the home folder, made the first time Notes is opened. Settings shows it and lets the owner point the app at another folder; the app does not move files |
+
 ## 7. Record of progress
 
 | Date | What |

@@ -546,11 +546,22 @@ class Vault:
             raise VaultError(f"The notes folder cannot be made at {self.root}: {exc.strerror or exc}") from exc
 
     def _inside(self, relative: str) -> Path:
-        path = (self.root / relative).resolve()
-        root = self.root.resolve()
-        if root != path and root not in path.parents:
+        """The path of a file in the folder, refused when it would lie outside it. The path is given back as it
+        was asked for: resolved, Windows would return the letter case of a file that is already there."""
+        path = self.root / relative
+        real, root = path.resolve(), self.root.resolve()
+        if root != real and root not in real.parents:
             raise VaultError("that is outside the notes folder")
         return path
+
+    def _there(self, relative: str) -> bool:
+        """A file of exactly this name is in the folder. Windows and macOS say yes to any letter case of a name,
+        so the folder's own list is asked."""
+        path = self.root / relative
+        try:
+            return path.is_file() and path.name in os.listdir(path.parent)
+        except OSError:
+            return False
 
     def _files(self) -> Iterator[Path]:
         for folder, folders, names in os.walk(self.root):
@@ -630,7 +641,7 @@ class Vault:
         """After the app wrote or moved files itself."""
         for rel in relative:
             path = self.root / rel
-            if path.is_file():
+            if self._there(rel):
                 self.notes[rel] = read_text(path.read_bytes().decode("utf-8", errors="replace"), rel, self._stamp(path))
             else:
                 self.notes.pop(rel, None)
@@ -976,9 +987,9 @@ class Vault:
             self.refresh(force=True)
             source = self._inside(f"{TRASH}/{name}")
             trash = (self.root / TRASH).resolve()
-            if trash not in source.parents or not source.is_file():
+            if trash not in source.resolve().parents or not source.is_file():
                 raise Missing("There is no such note in the trash.")
-            rel = source.relative_to(trash).as_posix()
+            rel = source.resolve().relative_to(trash).as_posix()
             folder, stem = (rel.rsplit("/", 1)[0], rel.rsplit("/", 1)[1][:-3]) if "/" in rel else ("", rel[:-3])
             target, n = (f"{folder}/{stem}.md" if folder else f"{stem}.md"), 1
             while (self.root / target).exists() or self._taken(target.rsplit("/", 1)[-1][:-3]):

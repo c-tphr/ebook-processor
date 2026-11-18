@@ -244,6 +244,8 @@ def test_rename_moves_the_file_and_rewrites_every_link(vault):
     # letter case only; a title that is taken; a note out of the inbox
     assert vault.rename(old["id"], "NEW - name")["title"] == "NEW - name"
     assert sorted(p.name for p in vault.root.glob("*.md")) == ["First.md", "NEW - name.md", "Older name.md"]
+    assert sorted(n["title"] for n in vault.listing()) == ["First", "NEW - name", "Older name"]  # one note, not one per letter case
+    assert "[[NEW - name]]" in (vault.root / "First.md").read_text(encoding="utf-8")
     with pytest.raises(VaultError, match="already a note called First"):
         vault.rename(old["id"], "first")
     quick = vault.create("", "a quick thought", "quick")

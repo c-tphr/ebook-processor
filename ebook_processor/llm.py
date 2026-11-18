@@ -418,12 +418,14 @@ class ClaudeCodeBackend:
             return out
         return []
 
-    def command(self, system: str, schema: dict[str, Any], model: str | None, read_dir: Path | None) -> list[str]:
+    def command(self, system_file: Path, schema: dict[str, Any], model: str | None, read_dir: Path | None) -> list[str]:
+        # The instructions go in a file, not on the command line. They run to many thousands of characters,
+        # and Windows allows a command line 8,191 of them when the program is a .cmd script, 32,767 otherwise.
         cmd = [
             self.program(), "-p",
             "--output-format", "json",
             "--json-schema", json.dumps(schema, separators=(",", ":")),
-            "--system-prompt", system,
+            "--system-prompt-file", str(system_file),
             "--no-session-persistence",  # nothing of the book is kept in Claude Code's session history
             "--strict-mcp-config",  # no MCP servers
             "--disable-slash-commands",
@@ -442,9 +444,13 @@ class ClaudeCodeBackend:
 
     def complete(self, *, role: str, system: str, prompt: str, schema: dict[str, Any], model: str | None = None,
                  read_dir: Path | None = None) -> Completion:
-        cmd = self.command(system, schema, model, read_dir)
-        return _with_retries("Claude", role, self.retries, self.backoff, self.sleep,
-                             lambda: self._once(cmd, prompt, read_dir), self.link, self.cancel)
+        # The file is kept apart from the empty folder a call works in, and lasts for every try of the call.
+        with tempfile.TemporaryDirectory(prefix="ebook-processor-", ignore_cleanup_errors=True) as held:
+            system_file = Path(held) / "instructions.md"
+            system_file.write_text(system, encoding="utf-8")
+            cmd = self.command(system_file, schema, model, read_dir)
+            return _with_retries("Claude", role, self.retries, self.backoff, self.sleep,
+                                 lambda: self._once(cmd, prompt, read_dir), self.link, self.cancel)
 
     def _once(self, cmd: list[str], prompt: str, read_dir: Path | None) -> Completion:
         started = time.monotonic()

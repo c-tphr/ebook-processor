@@ -172,12 +172,31 @@ def test_instructions_carry_the_settings():
 
 def test_claude_code_is_called_without_tools_unless_figures_are_viewed(tmp_path):
     backend = ClaudeCodeBackend(model="opus", effort="high")
-    cmd = backend.command("SYSTEM", {"type": "object"}, None, None)
+    cmd = backend.command(tmp_path / "instructions.md", {"type": "object"}, None, None)
     assert cmd[:2] == ["claude", "-p"] and cmd[cmd.index("--tools") + 1] == "" and "--allowedTools" not in cmd
+    assert cmd[cmd.index("--system-prompt-file") + 1] == str(tmp_path / "instructions.md") and "--system-prompt" not in cmd
     assert cmd[cmd.index("--model") + 1] == "opus" and cmd[cmd.index("--effort") + 1] == "high"
     assert cmd[cmd.index("--setting-sources") + 1] == "" and "--no-session-persistence" in cmd
-    cmd = backend.command("SYSTEM", {"type": "object"}, "sonnet", tmp_path)
+    cmd = backend.command(tmp_path / "instructions.md", {"type": "object"}, "sonnet", tmp_path)
     assert cmd[cmd.index("--tools") + 1] == "Read" and cmd[cmd.index("--model") + 1] == "sonnet"
+
+
+def test_the_instructions_reach_claude_code_as_a_file_so_the_command_line_stays_short(tmp_path):
+    """Windows allows a command line of 8,191 characters when the program is a script, which is how npm installs
+    Claude Code there. The drafting instructions alone are longer than that."""
+    exe = make_program(tmp_path / "bin", "claude", '''import json, sys
+args = sys.argv[1:]
+text = open(args[args.index("--system-prompt-file") + 1], encoding="utf-8").read()
+schema = json.loads(args[args.index("--json-schema") + 1])
+print(json.dumps({"structured_output": {"instructions": text, "task": sys.stdin.read(), "schema": schema,
+                                        "command_line": sum(len(a) + 1 for a in sys.argv)}, "usage": {}}))
+''')
+    system = prompts.drafter_system(Settings()) + "\nA line with other letters: Brontë, “quoted”, 100 % & more."
+    assert len(system) > 8191
+    done = ClaudeCodeBackend(executable=exe).complete(role="draft", system=system, prompt="THE TASK", schema=prompts.DRAFT_SCHEMA)
+    assert done.data["instructions"] == system and done.data["task"] == "THE TASK"
+    assert done.data["schema"] == prompts.DRAFT_SCHEMA  # the schema, with its quotes and braces, arrives whole
+    assert done.data["command_line"] < 4000
 
 
 def test_a_reply_with_text_around_its_json_is_still_read():

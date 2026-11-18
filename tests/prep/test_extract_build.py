@@ -69,7 +69,7 @@ def test_one_word_pass():
 
 
 def test_extract_writes_the_work_folder(workdir):
-    names = sorted(str(p.relative_to(workdir)) for p in workdir.rglob("*") if p.is_file())
+    names = sorted(p.relative_to(workdir).as_posix() for p in workdir.rglob("*") if p.is_file())
     assert names == ["source.json", "structure.json", "text/d01-title.txt", "text/d02-chapter-1.txt",
                      "text/d03-chapter-2.txt", "text/d04-chapter-3.txt", "text/d05-endnotes.txt"]
     source = json.loads((workdir / "source.json").read_text(encoding="utf-8"))

@@ -456,8 +456,8 @@ def read_text(text: str, path: str, stamp: tuple[int, int]) -> Note:
         head = HEADING_RE.match(line)
         if head and head.group(2):
             note.headings.append(_plain_text(head.group(2)))
-    for name in ("sources",):  # links kept in a property count as links of the note
-        value = prop(props, name)
+    for held in props:  # links kept in a property count as links of the note
+        value = held.value if held.key else None
         for item in value if isinstance(value, list) else [value] if isinstance(value, str) else []:
             for m in LINK_RE.finditer(str(item)):
                 if not any(k.target == _nfc(m.group(2).strip()) and k.anchor == (m.group(3) or "").strip() for k in note.links):

@@ -1,0 +1,191 @@
+"""The notes folder over HTTP: the routes, the books' files, and where the folder is."""
+
+from __future__ import annotations
+
+import json
+import threading
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+import pytest
+
+from ebook_processor import bookfile
+from ebook_processor.web import server as web
+from tests.test_reading import PREPARED
+
+
+@pytest.fixture
+def app(tmp_path):
+    server = web.make_server(tmp_path / "data", "127.0.0.1", 0, claude={"ok": True, "version": "test"}, models=[])
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+
+    def call(method: str, path: str, json_body=None, body: bytes | None = None, csrf: bool = True):
+        if json_body is not None:
+            body = json.dumps(json_body).encode()
+        request = urllib.request.Request(base + path, data=body, method=method, headers={"X-Ebook-Processor": "1"} if csrf else {})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return response.status, json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read())
+
+    call.folder = tmp_path / web.NOTES_FOLDER
+    call.jobs = server.RequestHandlerClass.jobs
+    call.book = lambda: call("POST", "/api/books/import?name=fixture.prepared.epub", body=PREPARED.read_bytes())[1]["id"]
+    yield call
+    server.shutdown()
+    server.server_close()
+
+
+def q(**values: str) -> str:
+    return urllib.parse.urlencode(values)
+
+
+def test_the_folder_is_made_when_notes_is_first_opened_and_every_book_gets_its_file(app):
+    jid = app.book()
+    hid = app("POST", f"/api/jobs/{jid}/notes/highlight", json_body={"chapter": 2, "start": 3, "end": 9, "note": "Why it matters."})[1]["made"]
+    state = app("GET", "/api/vault/folder")[1]
+    assert state == {"folder": str(app.folder), "default": str(app.folder), "exists": False, "chosen": False}
+    assert not app.folder.exists()  # marking a book does not make the folder
+    assert app("GET", "/api/vault/search?q=supply")[1]["passages"] == [] and app("GET", "/api/vault/complete?q=a")[1] == {"notes": []}
+    home = app("GET", "/api/vault")[1]
+    assert home["folder"] == str(app.folder) and home["inbox"] == [] and home["recent"] == [] and home["notes"] == 0 and home["trash"] == 0
+    assert [(b["title"], b["job"], b["in_library"], b["entries"]) for b in home["books"]] == [("The Lighthouse Keeper's Almanac", jid, True, 2)]
+    file = app.folder / "Books" / "The Lighthouse Keeper's Almanac.md"
+    assert (app.folder / "Inbox").is_dir() and f"^{hid}\n\nWhy it matters. ^{hid}-note\n" in file.read_text(encoding="utf-8")
+    # from now on the file follows the book
+    app("PUT", f"/api/jobs/{jid}/notes/target", json_body={"target": {"on": "book"}, "text": "On the whole book"})
+    assert "On the whole book ^n" in file.read_text(encoding="utf-8")
+    app("DELETE", f"/api/jobs/{jid}/notes/item/{hid}")
+    assert hid not in file.read_text(encoding="utf-8")
+    stamp = file.stat().st_mtime_ns
+    app("GET", "/api/vault")
+    assert file.stat().st_mtime_ns == stamp  # nothing changed: not written again
+
+
+def test_notes_are_created_read_saved_renamed_and_trashed(app):
+    made = app("POST", "/api/vault/notes", json_body={"title": "Prices carry information", "body": "No one holds it all. #pricing"})
+    assert made[0] == 201 and made[1]["kind"] == "idea" and made[1]["sources"] == [] and made[1]["tags"] == ["pricing"]
+    nid, token = made[1]["id"], made[1]["token"]
+    quick = app("POST", "/api/vault/notes", json_body={"body": "look at [[Prices carry information]] again", "kind": "quick"})[1]
+    assert quick["inbox"] and quick["untitled"] and quick["links"][0]["to"]["id"] == nid
+    home = app("GET", "/api/vault")[1]
+    assert [n["id"] for n in home["inbox"]] == [quick["id"]] and [n["id"] for n in home["recent"]] == [nid] and home["notes"] == 2
+    assert home["tags"] == [{"tag": "pricing", "count": 1}]
+    note = app("GET", f"/api/vault/notes/{nid}")[1]
+    assert note["body"] == "No one holds it all. #pricing" and [b["id"] for b in note["backlinks"]] == [quick["id"]]
+    assert app("GET", f"/api/vault/notes/{nid}/token")[1] == {"token": token}
+    saved = app("PUT", f"/api/vault/notes/{nid}", json_body={"body": "Rewritten.", "token": token,
+                                                              "props": note["props"] + [{"key": "tags", "value": ["markets"]}]})[1]
+    assert saved["body"] == "Rewritten." and saved["tags"] == ["markets"] and saved["token"] != token
+    # written over in another program: the app does not write over that, and says what is there now
+    path = app.folder / "Prices carry information.md"
+    path.write_text(path.read_text(encoding="utf-8") + "\nFrom Obsidian.", encoding="utf-8")
+    clash = app("PUT", f"/api/vault/notes/{nid}", json_body={"body": "From the app.", "token": saved["token"]})
+    assert clash[0] == 409 and clash[1]["current"]["body"] == "Rewritten.\nFrom Obsidian." and "outside the app" in clash[1]["error"]
+    assert app("GET", f"/api/vault/notes/{nid}/token")[1]["token"] == clash[1]["current"]["token"] != saved["token"]
+    kept = app("PUT", f"/api/vault/notes/{nid}", json_body={"body": "From the app.", "token": saved["token"], "force": True})[1]
+    assert kept["body"] == "From the app."
+    # a quick note becomes an idea note in place: a title, a kind, and it leaves the inbox
+    idea = app("PUT", f"/api/vault/notes/{quick['id']}", json_body={
+        "title": "Look again at prices", "token": quick["token"],
+        "props": [p if p["key"] != "kind" else {"key": "kind", "value": "idea"} for p in quick["props"]]})[1]
+    assert idea["id"] == quick["id"] and idea["kind"] == "idea" and not idea["inbox"] and idea["title"] == "Look again at prices"
+    assert (app.folder / "Look again at prices.md").is_file() and not list((app.folder / "Inbox").iterdir())
+    renamed = app("PUT", f"/api/vault/notes/{nid}", json_body={"title": "Prices are signals", "token": kept["token"]})[1]
+    assert renamed["title"] == "Prices are signals" and renamed["relinked"] == 1
+    assert "[[Prices are signals]]" in app("GET", f"/api/vault/notes/{quick['id']}")[1]["body"]
+    taken = app("PUT", f"/api/vault/notes/{nid}", json_body={"title": "look again at PRICES", "body": "not saved", "token": renamed["token"]})
+    assert taken[0] == 400 and "already a note" in taken[1]["error"] and app("GET", f"/api/vault/notes/{nid}")[1]["body"] == "From the app."
+    assert app("PUT", f"/api/vault/notes/{nid}", json_body={"title": "a/b", "token": renamed["token"]})[0] == 400
+    assert app("GET", "/api/vault/complete?q=pri")[1]["notes"][0]["title"] == "Prices are signals"
+    assert app("GET", "/api/vault/anchors?" + q(target="prices are signals"))[1] == {"headings": [], "blocks": []}
+    assert app("GET", "/api/vault/peek?" + q(target="Prices are signals"))[1]["text"] == "From the app."
+    assert app("GET", "/api/vault/peek?" + q(target="No such note"))[1] == {"found": False}
+    assert app("DELETE", f"/api/vault/notes/{nid}")[1]["trash"] == "Prices are signals.md"
+    assert app("GET", f"/api/vault/notes/{nid}")[0] == 404 and app("GET", "/api/vault")[1]["trash"] == 1
+    assert [n["title"] for n in app("GET", "/api/vault/trash")[1]["notes"]] == ["Prices are signals"]
+    assert app("POST", "/api/vault/trash/restore", json_body={"name": "Prices are signals.md"})[1]["id"] == nid
+    assert app("POST", "/api/vault/trash/restore", json_body={"name": "../x.md"})[0] in (400, 404)
+    assert app("POST", "/api/vault/notes", json_body={"title": "x"}, csrf=False)[0] == 403
+    assert app("POST", "/api/vault/notes", json_body={"title": "Prices are signals"})[0] == 400
+    assert app("POST", "/api/vault/notes", json_body={"kind": "book"})[0] == 400
+    assert app("GET", "/api/vault/notes/n00000000")[0] == 404 and app("DELETE", "/api/vault/notes/n00000000")[0] == 404
+
+
+def test_an_idea_note_cites_a_highlight_and_a_quick_note_remembers_its_place(app):
+    jid = app.book()
+    made = app("POST", f"/api/jobs/{jid}/notes/highlight", json_body={"chapter": 2, "start": 3, "end": 9})[1]
+    hid, words = made["made"], made["highlights"][0]["text"]
+    note = app("POST", "/api/vault/notes", json_body={"source": {"job": jid, "block": hid}})[1]  # this also makes the folder
+    link = f"[[The Lighthouse Keeper's Almanac#^{hid}]]"
+    assert note["inbox"] and note["untitled"] and note["kind"] == "idea" and note["body"] == f"\n\nSource: {link}\n"
+    assert {"key": "sources", "value": [link]} in note["props"]
+    assert note["sources"] == [{"id": bookfile.book_id(jid), "title": "The Lighthouse Keeper's Almanac", "block": hid, "text": words,
+                                "found": True, "job": jid, "go": {"chapter": 2, "word": 3}, "in_library": True}]
+    titled = app("PUT", f"/api/vault/notes/{note['id']}", json_body={"title": "Boats come when they can", "body": "In my words.\n\nSource: " + link + "\n",
+                                                                     "token": note["token"]})[1]
+    assert titled["path"] == "Boats come when they can.md" and len(titled["sources"]) == 1
+    book = app("GET", f"/api/vault/notes/{bookfile.book_id(jid)}")[1]
+    assert book["kind"] == "book" and book["in_library"] and book["job"] == jid and [b["id"] for b in book["backlinks"]] == [note["id"]]
+    assert app("PUT", f"/api/vault/notes/{book['id']}", json_body={"body": "mine", "token": book["token"]})[0] == 400
+    assert app("DELETE", f"/api/vault/notes/{book['id']}")[0] == 400
+    assert app("POST", "/api/vault/notes", json_body={"source": {"job": jid, "block": "h0000"}})[0] == 400
+    assert app("POST", "/api/vault/notes", json_body={"source": {"job": "20200101-000000-none", "block": hid}})[0] == 404
+    quick = app("POST", "/api/vault/notes", json_body={"body": "a thought while reading", "kind": "quick",
+                                                       "where": {"job": jid, "chapter": 2, "word": 61}})[1]
+    assert {"key": "book", "value": "[[The Lighthouse Keeper's Almanac]]"} in quick["props"] and {"key": "place", "value": "2:61"} in quick["props"]
+    assert quick["links"][0]["to"]["job"] == jid and quick["body"] == "a thought while reading"
+    peek = app("GET", "/api/vault/peek?" + q(target="the lighthouse keeper's almanac", anchor="^" + hid))[1]
+    assert peek["text"] == words and peek["go"] == {"chapter": 2, "word": 3} and peek["job"] == jid
+    found = app("GET", "/api/vault/search?q=supply+boat")[1]
+    assert [(p["block"], p["job"], p["go"]) for p in found["passages"]] == [(hid, jid, {"chapter": 2, "word": 3})] and found["notes"] == []
+    assert [n["id"] for n in app("GET", "/api/vault/search?" + q(q="", book=bookfile.book_id(jid)))[1]["notes"]] == [quick["id"], note["id"]]
+    assert [n["id"] for n in app("GET", "/api/vault/search?" + q(q="words", kind="idea"))[1]["notes"]] == [note["id"]]
+    # the book leaves the library: its file stays and says so, links still lead to the words, the reader is not offered
+    assert app("DELETE", f"/api/jobs/{jid}")[0] == 200
+    file = app.folder / "Books" / "The Lighthouse Keeper's Almanac.md"
+    assert bookfile.REMOVED in file.read_text(encoding="utf-8") and f"^{hid}" in file.read_text(encoding="utf-8")
+    after = app("GET", f"/api/vault/notes/{note['id']}")[1]
+    assert after["sources"][0]["text"] == words and after["sources"][0]["in_library"] is False and after["sources"][0]["job"] is None
+    home = app("GET", "/api/vault")[1]
+    assert [(b["in_library"], b["entries"]) for b in home["books"]] == [(False, 1)]
+    assert file.read_text(encoding="utf-8").count(bookfile.REMOVED) == 1
+    assert app("DELETE", f"/api/vault/notes/{bookfile.book_id(jid)}")[0] == 200 and not file.exists()
+
+
+def test_the_folder_can_be_pointed_elsewhere(app, tmp_path):
+    app("POST", "/api/vault/notes", json_body={"title": "In the first folder"})
+    other = tmp_path / "elsewhere" / "My notes"
+    assert app("PUT", "/api/settings", json_body={"notes_folder": "relative/path"})[0] == 400
+    blocked = tmp_path / "a file"
+    blocked.write_text("x")
+    assert app("PUT", "/api/settings", json_body={"notes_folder": str(blocked)})[0] == 400
+    assert app("PUT", "/api/settings", json_body={"notes_folder": str(other)})[1]["notes_folder"] == str(other)
+    assert app("GET", "/api/vault/folder")[1] == {"folder": str(other), "default": str(app.folder), "exists": False, "chosen": True}
+    assert app("GET", "/api/vault")[1]["recent"] == [] and (other / "Inbox").is_dir()  # the app does not move files
+    assert (app.folder / "In the first folder.md").is_file()
+    app("PUT", "/api/settings", json_body={"notes_folder": None})
+    assert [n["title"] for n in app("GET", "/api/vault")[1]["recent"]] == ["In the first folder"]
+    assert app("PUT", "/api/settings", json_body={"notes_folder": str(blocked / "under a file")})[0] == 200
+    assert app("GET", "/api/vault")[0] == 400 and "cannot be made" in app("GET", "/api/vault")[1]["error"]
+
+
+def test_serve_remembers_the_folder_it_is_started_with(tmp_path, monkeypatch, capsys):
+    from ebook_processor import update
+
+    def no_serving(self):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(web.ThreadingHTTPServer, "serve_forever", no_serving)
+    monkeypatch.setattr(web, "claude_status", lambda: {"ok": False, "error": "not here"})
+    monkeypatch.setattr(web, "codex_status", lambda: {"ok": False, "installed": False, "error": "not here"})
+    monkeypatch.setattr(update, "write_record", lambda host, port, data: {"token": "t"})
+    monkeypatch.setattr(update, "remove_record", lambda port, pid: None)
+    web.serve(tmp_path / "data", "127.0.0.1", 0, False, tmp_path / "chosen notes")
+    assert f"Notes are kept in {tmp_path / 'chosen notes'}" in capsys.readouterr().out
+    assert web.Jobs(tmp_path / "data").notes_folder() == tmp_path / "chosen notes"
+    assert not (tmp_path / "chosen notes").exists()

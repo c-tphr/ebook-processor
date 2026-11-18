@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from .. import __version__, editing, notes, reading, srs
+from .. import __version__, bookfile, editing, notes, reading, srs
 from .. import forms as qforms
 from .. import highlight_questions as hq
 from .. import steer as steering
@@ -43,6 +43,7 @@ from ..runner import (Cancelled, PipelineError, change_run, default_backend, reb
                       try_chapter, work_dir)
 from ..settings import DENSITIES, MAX_QUESTIONS, Settings, SettingsError, from_options
 from ..steer import Steer, SteerError
+from ..vault import Conflict, Missing, Vault, VaultError, clean_title, compose
 
 STATIC = Path(__file__).resolve().parent / "static"
 MAX_UPLOAD = 300 * 1024 * 1024
@@ -54,6 +55,7 @@ PAGES = {"index.html": "text/html; charset=utf-8", "reader.html": "text/html; ch
 SETTINGS_FILE = "reader-settings.json"  # what the settings window keeps, for every page of the app
 LONG_SETTINGS = ("steer_about", "steer_style")  # the reader's own texts: longer than any other setting
 WAITING = ("asking", "tried")  # a run that waits for its reader: to confirm a reading, or after a trial chapter
+NOTES_FOLDER = "ebook-processor-notes"  # the notes folder's name where none was chosen: beside the data folder
 CSRF_HEADER = "X-Ebook-Processor"  # a page of another site cannot send this header, so it cannot start runs
 
 
@@ -113,6 +115,9 @@ class Jobs:
     def __init__(self, data: Path, backend_factory: Any = None):
         self.data = data
         self.data.mkdir(parents=True, exist_ok=True)
+        self.notes_default = self.data.resolve().parent / NOTES_FOLDER
+        self._vault: Vault | None = None
+        self.filed: dict[str, tuple[int, int]] = {}  # book id -> what its file in the notes folder was made from
         self.lock = threading.RLock()
         self.turn = threading.Lock()  # held by the run that is being processed
         self.jobs: dict[str, dict[str, Any]] = {}
@@ -654,6 +659,8 @@ class Jobs:
                     continue
                 if value is None:
                     stored.pop(key, None)
+                elif key == "notes_folder":
+                    stored[key] = self._folder_setting(value)
                 elif isinstance(value, (bool, int, float)) or (isinstance(value, str) and len(value) <= 200):
                     stored[key] = value
                 elif key in LONG_SETTINGS and isinstance(value, str):
@@ -682,7 +689,222 @@ class Jobs:
                 except notes.NotesError as exc:
                     raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
                 write_json(folder / notes.FILE, store)
+        if change is not None:
+            self.file_book(job_id, quiet=True)
         return store
+
+    # ---- the notes folder (see vault.py)
+
+    @staticmethod
+    def _folder_setting(value: Any) -> str:
+        if not isinstance(value, str) or not value.strip() or len(value) > 400:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "The notes folder is a path on this computer.")
+        path = Path(value.strip()).expanduser()
+        if not path.is_absolute():
+            raise ApiError(HTTPStatus.BAD_REQUEST, "Give the notes folder as a full path, such as "
+                           + str(Path.home() / NOTES_FOLDER))
+        if path.exists() and not path.is_dir():
+            raise ApiError(HTTPStatus.BAD_REQUEST, f"{path} is a file, not a folder.")
+        return str(path)
+
+    def notes_folder(self) -> Path:
+        stored = self.ui_settings().get("notes_folder")
+        return Path(stored).expanduser() if isinstance(stored, str) and stored.strip() else self.notes_default
+
+    def vault(self, make: bool = False) -> Vault:
+        """The notes folder in use. ``make`` creates it when it is not there, and gives every book its file."""
+        path = self.notes_folder()
+        with self.lock:
+            if self._vault is None or self._vault.root != path:
+                self._vault, self.filed = Vault(path), {}
+            vault = self._vault
+        if make:
+            try:
+                vault.ensure()
+            except VaultError as exc:
+                raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+            self.file_books()
+        return vault
+
+    def folder_state(self) -> dict[str, Any]:
+        path = self.notes_folder()
+        return {"folder": str(path), "default": str(self.notes_default), "exists": path.is_dir(),
+                "chosen": path != self.notes_default}
+
+    def _readable(self, job_id: str) -> bool:
+        job = self.jobs.get(job_id)
+        return bool(job) and job["status"] == "done" and self.prepared(job_id).is_file()
+
+    def file_book(self, job_id: str, quiet: bool = False) -> None:
+        """Write the book's file in the notes folder, when there is a notes folder. ``quiet``: a failure here
+        must not undo what the reader just did in the book."""
+        try:
+            vault = self.vault()
+            if not vault.exists or not self._readable(job_id):
+                return
+            book = self.book(job_id)
+            marks = self.folder(job_id) / notes.FILE
+            made_from = (self.prepared(job_id).stat().st_mtime_ns, marks.stat().st_mtime_ns if marks.is_file() else 0)
+            store = notes.load(self.folder(job_id))
+            vault.put_book(bookfile.book_id(job_id), self.jobs[job_id].get("title") or stem_of(self.jobs[job_id]["file"]),
+                           lambda name: bookfile.text(name, job_id, book, store))
+            self.filed[job_id] = made_from
+        except (ApiError, VaultError, OSError) as exc:
+            if not quiet:
+                raise exc if isinstance(exc, ApiError) else ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+
+    def file_books(self) -> None:
+        """Every book of the library has its file, made again when the book or what is marked in it changed."""
+        for job_id in [j for j in list(self.jobs) if self._readable(j)]:
+            marks = self.folder(job_id) / notes.FILE
+            try:
+                made_from = (self.prepared(job_id).stat().st_mtime_ns, marks.stat().st_mtime_ns if marks.is_file() else 0)
+            except OSError:
+                continue
+            if self.filed.get(job_id) != made_from or self.vault().book(bookfile.book_id(job_id)) is None:
+                self.file_book(job_id, quiet=True)
+
+    def _book_left(self, job_id: str) -> None:
+        """The book is being removed from the library: its file stays, and says so."""
+        try:
+            vault = self.vault()
+            note = vault.book(bookfile.book_id(job_id)) if vault.exists else None
+            if note is not None:
+                current = compose(note.props, note.body)
+                vault.put_book(note.id, note.title, lambda name: bookfile.mark_removed(current))
+        except (VaultError, OSError):
+            pass
+
+    def _cited(self, to: dict[str, Any]) -> dict[str, Any]:
+        """What a link into a book's file leads to, with the way to open the reader there."""
+        job_id = bookfile.job_of(to.get("id") or "") if to.get("kind") == "book" else None
+        if job_id is None:
+            return to
+        out = {**to, "in_library": self._readable(job_id)}
+        if out["in_library"]:
+            out["job"] = job_id
+            if to.get("block"):
+                out["go"] = bookfile.place(notes.load(self.folder(job_id)), to["block"])
+        return out
+
+    def _note(self, detail: dict[str, Any]) -> dict[str, Any]:
+        """A note as its page shows it: with the passages it cites, and where each can be read."""
+        for link in detail["links"]:
+            link["to"] = self._cited(link["to"])
+        seen: set[tuple[str, str]] = set()
+        detail["sources"] = []
+        for link in detail["links"]:
+            to = link["to"]
+            if to.get("kind") == "book" and to.get("block") and (to["id"], to["block"]) not in seen:
+                seen.add((to["id"], to["block"]))
+                detail["sources"].append({k: to.get(k) for k in ("id", "title", "block", "text", "found", "job", "go", "in_library")})
+        if detail["kind"] == "book":
+            detail["in_library"] = self._readable(bookfile.job_of(detail["id"]) or "")
+            detail["job"] = bookfile.job_of(detail["id"]) if detail["in_library"] else None
+        return detail
+
+    def _vaulted(self, call: Any) -> Any:
+        try:
+            return call()
+        except Missing as exc:
+            raise ApiError(HTTPStatus.NOT_FOUND, str(exc)) from exc
+        except Conflict:
+            raise
+        except VaultError as exc:
+            raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+
+    def vault_home(self) -> dict[str, Any]:
+        """The front page of Notes. Asking for it is what makes the folder, the first time."""
+        vault = self.vault(make=True)
+        rows = vault.listing()
+        books = [{**r, "job": bookfile.job_of(r["id"]), "in_library": self._readable(bookfile.job_of(r["id"]) or ""),
+                  "entries": len(vault.get(r["id"]).blocks)} for r in rows if r["kind"] == "book"]
+        return {"folder": str(vault.root), "inbox": [r for r in rows if r["inbox"]],
+                "recent": [r for r in rows if not r["inbox"] and r["kind"] != "book"][:40],
+                "notes": sum(1 for r in rows if r["kind"] != "book"), "tags": vault.tags(),
+                "books": sorted(books, key=lambda b: b["title"].casefold()), "trash": len(vault.trash())}
+
+    def vault_search(self, query: str, kind: str | None, tag: str | None, book: str | None) -> dict[str, Any]:
+        found = self.vault().search(query[:200], kind or None, tag or None, book or None)
+        for p in found["passages"]:
+            job_id = bookfile.job_of(p["book_id"])
+            p["in_library"] = self._readable(job_id or "")
+            if p["in_library"] and p["block"]:
+                p["job"], p["go"] = job_id, bookfile.place(notes.load(self.folder(job_id)), p["block"])
+        return found
+
+    def vault_note(self, note_id: str) -> dict[str, Any]:
+        vault = self.vault()
+        return self._note(self._vaulted(lambda: vault.detail(vault.get(note_id))))
+
+    def vault_peek(self, target: str, anchor: str, inside: str | None) -> dict[str, Any]:
+        vault = self.vault()
+        vault.refresh()
+        with vault.lock:
+            origin = vault.by_id.get(inside or "")
+            return self._cited(vault.peek(target, anchor, origin))
+
+    def vault_create(self, r: dict[str, Any]) -> dict[str, Any]:
+        """A new note. ``source`` names a highlight or note of a book that it starts from; ``where`` the place in
+        a book at which it was written."""
+        vault = self.vault(make=True)
+        body = r.get("body") if isinstance(r.get("body"), str) else ""
+        props: dict[str, Any] = {}
+        if isinstance(r.get("tags"), (list, str)):
+            props["tags"] = r["tags"]
+        source, where = r.get("source"), r.get("where")
+        if isinstance(source, dict):
+            job_id, block = str(source.get("job") or ""), str(source.get("block") or "")
+            self.get(job_id)
+            self.file_book(job_id)
+            book = vault.book(bookfile.book_id(job_id))
+            if book is None or block not in book.blocks:
+                raise ApiError(HTTPStatus.BAD_REQUEST, "that highlight or note is not in the book's file")
+            link = f"[[{book.title}#^{block}]]"
+            props["sources"] = [link]
+            body = (body.rstrip() + "\n\n" if body.strip() else "\n\n") + f"Source: {link}\n"
+        elif isinstance(where, dict):
+            job_id = str(where.get("job") or "")
+            self.get(job_id)
+            self.file_book(job_id)
+            book = vault.book(bookfile.book_id(job_id))
+            if book is not None:
+                props["book"] = f"[[{book.title}]]"
+                if isinstance(where.get("chapter"), int) and isinstance(where.get("word"), int):
+                    props["place"] = f"{where['chapter']}:{where['word']}"
+        kind = r.get("kind") if isinstance(r.get("kind"), str) else "idea"
+        return self._note(self._vaulted(lambda: vault.create(r.get("title") or "", body, kind, props)))
+
+    def vault_save(self, note_id: str, r: dict[str, Any]) -> dict[str, Any]:
+        """Save a note's text and properties, then give it the title that was sent, if it is a new one."""
+        vault = self.vault()
+
+        def work() -> dict[str, Any]:
+            with vault.lock:
+                note = vault.get(note_id)
+                if note.kind == "book" and bookfile.job_of(note.id):
+                    raise VaultError("A book's file is kept by the app. Change the highlight or the note in the book.")
+                title = r.get("title")
+                if isinstance(title, str) and title.strip():
+                    title = clean_title(title)  # refused before anything is written
+                    taken = vault._taken(title, but=note)
+                    if taken is not None:
+                        raise VaultError(f"There is already a note called {taken.title}.")
+                out = vault.save(note_id, r.get("body"), r.get("props"), r.get("token"), force=r.get("force") is True)
+                if isinstance(title, str) and title.strip() and (title != out["title"] or out["inbox"]):
+                    out = vault.rename(out["id"], title)
+                return out
+        return self._note(self._vaulted(work))
+
+    def vault_delete(self, note_id: str) -> dict[str, Any]:
+        vault = self.vault()
+
+        def work() -> dict[str, Any]:
+            note = vault.get(note_id)
+            if note.kind == "book" and self._readable(bookfile.job_of(note.id) or ""):
+                raise VaultError("This book is in your library, so its file is kept. Remove the book first.")
+            return vault.delete(note_id)
+        return self._vaulted(work)
 
     def practice_answer(self, job_id: str, pid: str, remembered: bool, text: str) -> None:
         self.get(job_id)
@@ -996,7 +1218,9 @@ class Jobs:
             self.get(job_id)
             if job_id in self.cancels:
                 raise ApiError(HTTPStatus.CONFLICT, "stop the run before deleting it")
+            self._book_left(job_id)
             del self.jobs[job_id]
+            self.filed.pop(job_id, None)
         shutil.rmtree(self.folder(job_id), ignore_errors=True)
 
     def _event(self, job: dict[str, Any], event: dict[str, Any]) -> None:
@@ -1307,6 +1531,41 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(jobs.ui_settings())
             case ("PUT", ["settings"]):
                 return self.send_json(jobs.ui_settings(self.json_body()))
+            case ("GET", ["vault"]):
+                return self.send_json(jobs.vault_home())
+            case ("GET", ["vault", "folder"]):
+                return self.send_json(jobs.folder_state())
+            case ("GET", ["vault", "search"]):
+                one = lambda name: (query.get(name) or [""])[0]
+                return self.send_json(jobs.vault_search(one("q"), one("kind"), one("tag"), one("book")))
+            case ("GET", ["vault", "complete"]):
+                return self.send_json({"notes": jobs.vault().complete((query.get("q") or [""])[0][:200])})
+            case ("GET", ["vault", "anchors"]):
+                return self.send_json(jobs.vault().anchors((query.get("target") or [""])[0][:300]))
+            case ("GET", ["vault", "peek"]):
+                one = lambda name: (query.get(name) or [""])[0][:300]
+                return self.send_json(jobs.vault_peek(one("target"), one("anchor"), one("from") or None))
+            case ("GET", ["vault", "tags"]):
+                return self.send_json({"tags": jobs.vault().tags()})
+            case ("GET", ["vault", "trash"]):
+                return self.send_json({"notes": jobs.vault().trash()})
+            case ("POST", ["vault", "trash", "restore"]):
+                vault = jobs.vault()
+                return self.send_json(jobs._note(jobs._vaulted(lambda: vault.restore(self.json_body().get("name")))))
+            case ("POST", ["vault", "notes"]):
+                return self.send_json(jobs.vault_create(self.json_body()), HTTPStatus.CREATED)
+            case ("GET", ["vault", "notes", note_id]):
+                return self.send_json(jobs.vault_note(note_id))
+            case ("GET", ["vault", "notes", note_id, "token"]):
+                vault = jobs.vault()
+                return self.send_json({"token": jobs._vaulted(lambda: vault.get(note_id)).token})
+            case ("PUT", ["vault", "notes", note_id]):
+                try:
+                    return self.send_json(jobs.vault_save(note_id, self.json_body()))
+                except Conflict as exc:  # changed on disk since the page loaded it: the page asks which to keep
+                    return self.send_json({"error": str(exc), "current": jobs._note(exc.current)}, HTTPStatus.CONFLICT)
+            case ("DELETE", ["vault", "notes", note_id]):
+                return self.send_json(jobs.vault_delete(note_id))
             case ("GET", ["jobs", job_id, "notes"]):
                 return self.send_json(jobs.notes_do(job_id))
             case ("POST", ["jobs", job_id, "notes", "highlight"]):
@@ -1499,7 +1758,8 @@ def make_server(data: Path, host: str = "127.0.0.1", port: int = 8765, backend_f
     return server
 
 
-def serve(data: Path, host: str, port: int, open_browser: bool) -> None:
+def serve(data: Path, host: str, port: int, open_browser: bool, notes_folder: Path | None = None) -> None:
+    """``notes_folder`` points the app at a notes folder, as the field in Settings does; it is remembered."""
     from .. import update
 
     try:
@@ -1508,11 +1768,19 @@ def serve(data: Path, host: str, port: int, open_browser: bool) -> None:
         raise PipelineError(f"the app cannot listen on port {port} ({exc.strerror or exc}). Is it already running? "
                             "Give --port to use another port.") from exc
     port = server.server_address[1]
+    library: Jobs = server.RequestHandlerClass.jobs
+    if notes_folder is not None:
+        try:
+            library.ui_settings({"notes_folder": str(notes_folder)})
+        except ApiError as exc:
+            server.server_close()
+            raise PipelineError(str(exc)) from exc
     # A record of this app while it runs, so that 'ebook-processor update' can find it and ask it to stop.
     record = update.write_record(host, port, data)
     server.RequestHandlerClass.shutdown_token = record["token"]
     url = f"http://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{port}/"
-    print(f"ebook-processor {__version__} is running at {url}\nRuns are kept in {data}\nPress Ctrl-C to stop.", flush=True)
+    print(f"ebook-processor {__version__} is running at {url}\nRuns are kept in {data}\n"
+          f"Notes are kept in {library.notes_folder()}\nPress Ctrl-C to stop.", flush=True)
     note = server.RequestHandlerClass.codex.get("models_note")
     if note:
         print(f"Codex is ready, but its models could not be listed ({note}). The Model fields offer Codex's default "

@@ -142,6 +142,9 @@ def make_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="127.0.0.1", help="address to listen on (default: 127.0.0.1, this computer only)")
     p.add_argument("--data", type=Path, default=Path.home() / "ebook-processor-runs",
                    help="folder that holds the runs (default: ~/ebook-processor-runs)")
+    p.add_argument("--notes", type=Path, default=None, metavar="FOLDER",
+                   help="the notes folder to use from now on (default: the one set in Settings, or "
+                        "ebook-processor-notes beside the data folder)")
     p.add_argument("--no-open", action="store_true", help="do not open the browser")
     p.set_defaults(func=cmd_serve)
 
@@ -338,7 +341,8 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
 
 def cmd_serve(args: argparse.Namespace) -> int:
     from .web.server import serve
-    serve(args.data.expanduser().resolve(), args.host, args.port, not args.no_open)
+    serve(args.data.expanduser().resolve(), args.host, args.port, not args.no_open,
+          args.notes.expanduser().resolve() if args.notes else None)
     return EXIT_OK
 
 

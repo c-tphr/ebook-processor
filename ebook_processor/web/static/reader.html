@@ -107,15 +107,17 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .rv { position: absolute; inset: 0; display: grid; grid-template-rows: minmax(120px, 1fr) auto minmax(0, 1.1fr); gap: 10px; padding: 16px 0; }
 /* The focus point is one fixed place, 38.5% from the left of the word's box and on a whole pixel, and nothing
    about the word moves it. The two marks stand on it. The focus letter is centred on it, whatever its width: it
-   alone gives its holder (.at) a width, and the letters before and after it are hung on the holder's edges, so
-   that neither can push it. */
+   stands at the left edge of its holder (.at), which is moved left by half the letter's width, and the letters
+   before and after it are hung on the holder, so that neither can push it. The width is the letter's own,
+   measured as drawn (--fw): a box around a letter is as wide as the browser rounds it, and WebKit rounds it up
+   to a whole pixel, which put the letter up to half a pixel off. */
 .rv .word { align-self: end; box-sizing: border-box; height: calc(1.1em + 36px); padding: 18px 0; position: relative; font: 500 clamp(40px, 6.4vw, 84px)/1.1 var(--grot); letter-spacing: -0.02em; white-space: nowrap; }
 .rv .word::before, .rv .word::after { content: ""; position: absolute; left: 38.5%; left: round(down, 38.5%, 1px); width: 1px; height: 12px; background: var(--ink); }
 .rv .word::before { top: 0; } .rv .word::after { bottom: 0; }
-.rv .word .at { position: absolute; left: 38.5%; left: calc(round(down, 38.5%, 1px) + 0.5px); top: 18px; transform: translateX(-50%); }
+.rv .word .at { position: absolute; left: 38.5%; left: calc(round(down, 38.5%, 1px) + 0.5px); top: 18px; transform: translateX(calc(var(--fw, 0px) / -2)); }
 .rv .word .focus { color: var(--blue); letter-spacing: 0; }
 .rv .word .pre, .rv .word .post { position: absolute; top: 0; }
-.rv .word .pre { right: 100%; } .rv .word .post { left: 100%; margin-left: -0.02em; }
+.rv .word .pre { right: 100%; } .rv .word .post { left: var(--fw, 100%); margin-left: -0.02em; }
 .rv .word.group { text-align: center; }
 .rv .word.group::before, .rv .word.group::after { display: none; }
 .rv .ctl { display: flex; justify-content: center; align-items: center; gap: 18px; flex-wrap: wrap; border-top: 1px solid var(--ghost); border-bottom: 1px solid var(--ghost); padding: 12px 0; }
@@ -586,7 +588,12 @@ function rsvpView() {
       const len = core.replace(/[^\p{L}\p{N}]+$/u, "").length, o = lead + (len <= 1 ? 0 : len <= 5 ? 1 : len <= 9 ? 2 : len <= 13 ? 3 : 4);
       wordEl.className = "word" + (lit(group[0]) ? " lit" : "");
       // the focus letter holds the place; what comes before and after it is hung on its holder's edges (see the styles)
-      put(wordEl, h("span", { class: "at" }, h("span", { class: "pre" }, w.slice(0, o)), h("span", { class: "focus" }, w[o] || ""), h("span", { class: "post" }, w.slice(o + 1))));
+      const letter = h("span", { class: "focus" }, w[o] || ""), at = h("span", { class: "at" }, h("span", { class: "pre" }, w.slice(0, o)), letter, h("span", { class: "post" }, w.slice(o + 1)));
+      put(wordEl, at);
+      if (letter.firstChild) {          // the letter's width as drawn; see the styles
+        const drawn = document.createRange(); drawn.selectNodeContents(letter.firstChild);
+        at.style.setProperty("--fw", drawn.getBoundingClientRect().width + "px");
+      }
     } else { wordEl.className = "word group"; put(wordEl, group.map((x) => data.words[x]).join(" ")); }
     return group;
   }

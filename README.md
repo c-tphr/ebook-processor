@@ -293,7 +293,19 @@ Codex is a coding agent and cannot be run with no tools at all, so a call to it 
 python3 -m pip install -e '.[test]' && python3 -m pytest -q
 ```
 
-The tests never call Claude: `tests/scripted.py` is a stand-in that answers from the task message alone.
+The tests never call a model: `tests/scripted.py` is a stand-in that answers from the task message alone, and small stand-in programs take the place of Claude Code and Codex.
+
+The browser tests (`tests/browser/`) drive the app itself: reading in the three views, checkpoints, highlights and notes, the notebook and the reader beside it, settings, adding a book, previews, practice. They need Playwright and are left out without it:
+
+```bash
+python3 -m pip install -e '.[browser]' && python3 -m playwright install
+```
+
+```bash
+python3 -m pytest tests/browser --browser firefox
+```
+
+After every push GitHub runs both (`.github/workflows/tests.yml`): the test suite on Linux, Windows and macOS, and the browser tests in Chromium and Firefox on Linux and Windows and in WebKit, the engine of Safari, on macOS.
 
 | Path | Contents |
 | --- | --- |

@@ -89,8 +89,10 @@ def test_the_rsvp_focus_point_does_not_move_from_word_to_word(reader: Reader):
             if (!f || !f.firstChild) continue;
             const r = document.createRange(); r.selectNodeContents(f.firstChild);
             const letter = r.getBoundingClientRect(), box = el.getBoundingClientRect(), mark = getComputedStyle(el, "::before");
+            const pre = el.querySelector(".pre").getBoundingClientRect(), post = el.querySelector(".post").getBoundingClientRect();
             out.push({ word: el.textContent, centre: letter.left + letter.width / 2 - box.left, top: letter.top - box.top,
-                       mark: parseFloat(mark.left) + parseFloat(mark.width) / 2, width: letter.width });
+                       mark: parseFloat(mark.left) + parseFloat(mark.width) / 2, width: letter.width,
+                       before: pre.width ? letter.left - pre.right : 0, after: post.width ? post.left - letter.right : 0 });
         }
         return out;
     }""")
@@ -98,7 +100,11 @@ def test_the_rsvp_focus_point_does_not_move_from_word_to_word(reader: Reader):
     centres, marks, tops = [s["centre"] for s in seen], [s["mark"] for s in seen], [s["top"] for s in seen]
     assert max(centres) - min(centres) < 0.05, f"the focus letter moved: {sorted(set(round(c, 2) for c in centres))}"
     assert max(marks) - min(marks) < 0.05 and max(tops) - min(tops) < 0.05
-    assert abs(centres[0] - marks[0]) < 0.6, "the letter is not centred on the marks"
+    assert abs(centres[0] - marks[0]) < 0.05, "the letter is not centred on the marks"
+    # the letters before and after sit against the focus letter, at the same distance for every word
+    assert max(abs(s["before"]) for s in seen) < 0.6, [s for s in seen if abs(s["before"]) >= 0.6][:3]
+    gaps = [s["after"] for s in seen if s["after"]]
+    assert max(gaps) - min(gaps) < 0.6, sorted(set(round(g, 2) for g in gaps))
 
 
 def test_space_still_plays_after_settings_was_used_with_the_mouse(reader: Reader):

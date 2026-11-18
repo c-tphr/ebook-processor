@@ -53,7 +53,12 @@ def test_a_note_on_a_paragraph_leaves_a_mark_that_opens_it(reader: Reader):
 
 def side(page: Page):
     """The reader beside the notebook, once it has drawn."""
-    frame = next(f for f in page.frames if "pane=1" in f.url)
+    for _ in range(100):                       # the frame is there before it has its address
+        frame = next((f for f in page.frames if "pane=1" in f.url), None)
+        if frame:
+            break
+        page.wait_for_timeout(100)
+    assert frame, f"the reader beside the notebook did not load: {[f.url for f in page.frames]}"
     frame.wait_for_function(READY)
     return frame
 

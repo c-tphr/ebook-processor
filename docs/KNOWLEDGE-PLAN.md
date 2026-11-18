@@ -2,7 +2,7 @@
 
 This is the working plan for the knowledge system, agreed with the project owner in a six-round interview on 2026-11-18. It is written for whoever builds it, so that the work can start from this file alone. It holds what was decided, the phases, a design for each phase, and the questions that are still open. Keep it up to date as phases are finished: mark what is done, and move what was passed over to `DEFERRED.md`.
 
-**Status: Phase 1 is built and on the development branch (section 6b). It goes to `main` when the owner says. Phase 2 starts with its interview.**
+**Status: Phase 1 is on `main`. Phase 2 (the Process view) is being built in the order of section 6c.**
 
 ## 1. What it is for
 
@@ -236,6 +236,33 @@ What Phase 1 turned out to be, where it differs from the design above:
 
 For Phase 2, start from: `vault.py` (`Vault.search`, `Vault.backlinks`, `Note.passages`), `Jobs._note` and `Jobs.vault_cite` in the server, `Notes.mount` in `notes.js`, and `showNotes` in `index.html`.
 
+## 6c. Phase 2: answers of the interview, and the order of work
+
+Asked on 2026-11-18, after Phase 1 went to `main` (`6cb78e6`).
+
+| Question | Answer |
+| --- | --- |
+| What already exists | Nothing to carry over: the owner has no older highlights to protect. Everything marked in a book waits to be processed; there is no cut-off date |
+| How to work | A list grouped by book and section; the chosen item's passage and the editor open beside the list |
+| Linking to an existing note | Two buttons each time: "Add as a source" (the citation is added to the note, done) and "Open and write" (the same, and the note opens to write about it) |
+| A highlight and its note | One item, processed together. An idea note started from it begins with the note's words |
+| Items that a note already cites | Processed automatically, however the citation was made (reader, Process view, by hand, Obsidian). When the citing note goes, the item waits again |
+| One highlight, several ideas | It leaves the waiting list after the first note, shows under Processed with the notes that cite it, and "Another idea note" starts a second |
+| Set aside | Kept in a list; one click brings back an item, a section or a book |
+| Related notes | Notes first, then passages of any book, found locally. On a note: open, insert a link, add the current passage as a source. On a passage: see it, cite it too |
+| Quick notes | Their own group at the top of the Process view; the inbox stays |
+| Where it is reached | "Process" with its count on the Notes front page, and on each book's page for that book. No other reminders |
+| Order | A switch: by book (last read first, reading order inside) or oldest first |
+
+Builder's choices: every note written in a book is an item (on a paragraph, a section, a chapter, the book), not only highlights. "Processed" is not stored: it is read from the links of the notes. "Set aside" is stored, per book in `process.json` in the book's folder, and for a quick note in its property `aside`. A quick note is added to an existing note by appending its words there and moving the quick note to the trash. Related notes are scored by shared uncommon words and shared tags, and the list says which words.
+
+Order of work:
+
+1. [ ] `vault.py`: which notes cite which block of a book; related notes and passages; a property set by the app. `process.py`: a book's items in reading order, set aside. Tests.
+2. [ ] Server: `/api/process` (the view), set aside and bring back, add to an existing note, `/api/vault/related`. Tests over HTTP.
+3. [ ] The Process view in `index.html` (`#/notes/process`), its entry on the Notes front page and on a book's page; related notes in `notes.js`.
+4. [ ] Browser tests, README, `DEFERRED.md`.
+
 ## 7. Record of progress
 
 | Date | What |
@@ -243,3 +270,4 @@ For Phase 2, start from: `vault.py` (`Vault.search`, `Vault.backlinks`, `Note.pa
 | 2026-11-18 | Six-round interview; this plan written. `main` is at `9b1dbf0` (editing a book's questions). Nothing of the knowledge system is built |
 | 2026-11-18 | Phase 1 interview done (three rounds). Building starts at step 1 of section 6b |
 | 2026-11-18 | Phase 1 built in the order of section 6b and pushed to the development branch: `vault.py`, `bookfile.py`, the server routes, the editor, `notes.js`, the Notes area, capture, and the reader's Idea note |
+| 2026-11-18 | Phase 1 pushed to `main` at `6cb78e6` on the owner's word. Phase 2 interview done (three rounds); building starts |

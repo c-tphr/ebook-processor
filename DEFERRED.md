@@ -4,7 +4,7 @@ Things that were discussed and put off, in one place. Nothing here is being work
 
 ## Decided for later
 
-These were chosen as later work by the project owner.
+These were chosen as later work by the project owner. The knowledge system is now planned in phases: see `docs/KNOWLEDGE-PLAN.md`. Nothing of it is built yet.
 
 | Item | What it means | Notes |
 | --- | --- | --- |

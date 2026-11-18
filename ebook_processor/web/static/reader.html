@@ -896,6 +896,7 @@ document.addEventListener("mouseup", (e) => {
 });
 async function notesCall(path, options) {
   try { NB = await api(`/jobs/${ID}/notes${path}`, options); } catch (e) { alert(e.message); return null; }
+  NB.questions = NB.questions || [];  // a book with no question from a highlight yet has no list of them
   syncPrompts();
   paint(); if (mode === "page" && view && view.relayout) view.relayout();
   tell({ ep: "notes" });
@@ -1157,6 +1158,7 @@ if (PANE) addEventListener("message", async (e) => {
   if (e.data.ep === "go" && chapterAt(e.data.chapter)) { await jump(e.data.chapter, e.data.word); aim(e.data.word); }
   else if (e.data.ep === "notes") {   // the notebook changed a note or a highlight
     try { NB = await api(`/jobs/${ID}/notes`); } catch (err) { return; }
+    NB.questions = NB.questions || [];
     paint(); if (mode === "page" && view && view.relayout) view.relayout();
   }
 });

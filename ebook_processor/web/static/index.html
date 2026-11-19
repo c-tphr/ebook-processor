@@ -1059,7 +1059,7 @@ async function showAsk(params) {
         got.closest.length ? [h("p", { class: "m mute" }, "What comes closest"), h("div", { class: "nz-list" }, got.closest.map((s, i) => sourceRow(s, i + 1)))] : null));
     }
     const number = new Map(got.sources.map((s, i) => [s.ref, i + 1]));
-    const text = got.answer.split(/(\[[NP]\d+\])/).map((part) => { const n = number.get(part.slice(1, -1)); return n ? h("a", { class: "cite", href: "#/notes/ask", title: got.sources[n - 1].title,
+    const text = got.answer.replace(/\s+(\[[NP]\d+\])/g, "$1").split(/(\[[NP]\d+\])/).map((part) => { const n = number.get(part.slice(1, -1)); return n ? h("a", { class: "cite", href: "#/notes/ask", title: got.sources[n - 1].title,
       onclick: (e) => { e.preventDefault(); const row = document.getElementById("az-s" + n); row.scrollIntoView({ block: "center" }); row.classList.remove("flash"); void row.offsetWidth; row.classList.add("flash"); } }, String(n)) : part; });
     const keep = h("button", { type: "button", onclick: async () => {
       keep.disabled = true;

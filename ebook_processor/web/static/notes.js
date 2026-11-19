@@ -163,7 +163,7 @@ dialog.nt-near::backdrop { background: color-mix(in srgb, var(--ink) 45%, transp
 .nt .nt-aside .rel { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; align-items: start; border-bottom: 1px solid var(--ghost); }
 .nt .nt-aside .rel .back { border-bottom: 0; } .nt .nt-aside .rel button { padding: 10px 0; }
 .nt .nt-aside .rel.passage { padding: 10px 0; } .nt .nt-aside .rel.passage blockquote { font-size: 15px; border-left-color: var(--ghost); }
-.nt .nt-aside .rel.passage .by { grid-column: 1 / -1; } .nt .nt-aside .rel.passage .by button { padding: 0; }
+.nt .nt-aside .rel.passage .by { grid-column: 1 / -1; display: flex; gap: 6px 12px; flex-wrap: wrap; align-items: baseline; margin-top: 6px; font-size: 13px; color: var(--mute); } .nt .nt-aside .rel.passage .by button { padding: 0; }
 .nt .nt-editor { min-width: 0; --editor-min: 16em; }
 .nt.compact .nt-editor { --editor-min: 9em; }
 .nt .nt-aside h3 { font: 12px/1.5 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; font-weight: 400; margin: 0 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--ink); }

@@ -570,11 +570,12 @@ def test_the_graph_a_neighbourhood_revisit_and_the_timeline(page: Page, book: Ap
     # the graph: notes and the book as points, joined by links and citations
     page.locator("#nz-views a", has_text="Graph").click()
     page.wait_for_function("() => !!window.graphState && graphState().points.length > 0")
-    expect(page.locator("#gz-info")).to_have_text("5 points / 3 joins", ignore_case=True)
+    books = len(book.call("GET", "/vault")["books"])                                     # another test may have added a second book
+    expect(page.locator("#gz-info")).to_have_text(f"{4 + books} points / 3 joins", ignore_case=True)
     page.wait_for_timeout(1500)                                                          # the layout settles
     state = page.evaluate("() => graphState()")
     assert {p["title"]: p["joins"] for p in state["points"] if p["kind"] != "book"} == {"First idea": 2, "Second idea": 2, "Third idea": 1, "Standing alone": 0}
-    assert sum(p["kind"] == "book" for p in state["points"]) == 1 and state["joins"] == 3
+    assert sum(p["kind"] == "book" for p in state["points"]) == books and state["joins"] == 3
     box = page.locator("#gz").bounding_box()
     assert all(box["x"] <= p["x"] <= box["x"] + box["width"] and box["y"] <= p["y"] <= box["y"] + box["height"] for p in state["points"])   # all in view
     second = next(p for p in state["points"] if p["title"] == "Second idea")
@@ -583,11 +584,11 @@ def test_the_graph_a_neighbourhood_revisit_and_the_timeline(page: Page, book: Ap
     page.get_by_label("Tag").select_option("chain")
     expect(page.locator("#gz-info")).to_have_text("1 point / 0 joins", ignore_case=True)
     page.get_by_label("Tag").select_option("")
-    page.get_by_label("Kind").select_option("book")
-    expect(page.locator("#gz-info")).to_have_text("1 point / 0 joins", ignore_case=True)
+    page.get_by_label("Kind").select_option("idea")
+    expect(page.locator("#gz-info")).to_have_text("4 points / 2 joins", ignore_case=True)
     page.get_by_label("Kind").select_option("")
     page.locator("details.adv summary").click()                                          # the same notes as links, for the keyboard
-    expect(page.locator("#gz-list .nz-row")).to_have_count(5)
+    expect(page.locator("#gz-list .nz-row")).to_have_count(4 + books)
     page.wait_for_timeout(1500)
     first = next(p for p in page.evaluate("() => graphState()")["points"] if p["title"] == "First idea")
     page.mouse.click(first["x"], first["y"])                                             # a click opens the note

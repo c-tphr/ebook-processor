@@ -120,6 +120,11 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .rv .word .pre { right: 100%; } .rv .word .post { left: var(--fw, 100%); margin-left: -0.02em; }
 .rv .word.group { text-align: center; }
 .rv .word.group::before, .rv .word.group::after { display: none; }
+.rv .word.stop { align-self: stretch; height: auto; min-height: 0; padding: 0; overflow: auto; display: flex; font: 17px/1.6 var(--serif); letter-spacing: 0; white-space: normal; }
+.rv .word.stop::before, .rv .word.stop::after { display: none; }
+.rv .word.stop .text { margin: auto auto 8px; width: 100%; max-width: 46em; }   /* at the foot of the space, where the word stands */
+.rv .word.stop .text img, .rv .word.stop .text table { margin: 0 auto; } .rv .word.stop .text figure, .rv .word.stop .text pre { margin: 0; }
+.rv .ctx .cue { text-align: center; color: var(--ink); margin: 14px 0 0; }
 .rv .ctl { display: flex; justify-content: center; align-items: center; gap: 18px; flex-wrap: wrap; border-top: 1px solid var(--ghost); border-bottom: 1px solid var(--ghost); padding: 12px 0; }
 .rv .ctx { overflow: auto; max-width: 46em; margin: 0 auto; padding: 4px 0; color: var(--mute); font: 17px/1.6 var(--serif); }
 .rv .ctx span { cursor: pointer; } .rv .ctx span:hover { color: var(--ink); } .rv .ctx span.cur { color: var(--on-blue); background: var(--blue); }
@@ -665,10 +670,15 @@ function rsvpView() {
   }
   function showStop(kind) {
     const el = [...dom.querySelectorAll("[data-w]")].filter((x) => ["image", "table", "code", "math", "media"].includes(x.dataset.kind) && +x.dataset.w <= i && i <= +x.dataset.w + +x.dataset.n).pop();
-    put(wordEl, h("span", { class: "m" }, { IMAGE: "A picture", TABLE: "A table", CODE: "A listing" }[kind] + ": look, then press play"));
-    wordEl.className = "word group";
+    // The picture (or table, or listing) stands where the words do; the line that says what to do is under the controls.
     const box = h("div", { class: "text" });
-    if (el) { fill(box, el.outerHTML); } put(ctx, box); controls();
+    if (el) fill(box, el.outerHTML);
+    wordEl.className = "word stop";
+    put(wordEl, box);
+    const caption = box.querySelector("figcaption");
+    box.style.setProperty("--img-h", Math.max(80, wordEl.clientHeight - 16 - (caption ? caption.offsetHeight + 24 : 0)) + "px");   // the picture fits the space it has
+    put(ctx, h("p", { class: "m cue" }, { IMAGE: "A picture", TABLE: "A table", CODE: "A listing" }[kind] + ": look, then press play"));
+    controls();
   }
   const primed = new Set();           // sections whose questions were shown on this pass
   let lead = null;                    // the section whose questions are on show now, until play or a move

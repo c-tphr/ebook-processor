@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from playwright.sync_api import Page, expect
+
 from tests.browser.conftest import Reader
 
 
@@ -142,3 +144,21 @@ def test_the_other_keys_of_the_reader(reader: Reader):
     assert not reader.state()["drawer"]
     reader.key("/")
     assert reader.page.locator("#d-title").text_content() == "Search"
+
+
+def test_rsvp_shows_a_picture_where_the_words_stand_and_says_what_to_do_below(reader: Reader, page: Page):
+    figure = page.request.get(f"{reader.app.url}/api/jobs/{reader.app.id}/book/chapter/2").json()
+    at = next(a for kind, a, b in figure["markers"] if kind == "IMAGE")
+    reader.open(f"2:{at}", "rsvp")
+    page.keyboard.press("Space")                # play: the reader stops at the picture at once
+    expect(page.locator(".rv .ctx .cue")).to_have_text("A picture: look, then press play")
+    expect(page.locator(".rv .word.stop figcaption")).to_be_visible()
+    page.wait_for_function("() => { const i = document.querySelector('.rv .word img'); return !!i && i.complete && i.naturalWidth > 0; }")
+    box = page.evaluate("""() => { const r = (s) => document.querySelector(s).getBoundingClientRect();
+        return { img: r(".rv .word img"), caption: r(".rv .word figcaption"), area: r(".rv .word"), ctl: r(".rv .ctl"), cue: r(".rv .ctx .cue") }; }""")
+    assert box["area"]["top"] - 1 <= box["img"]["top"] and box["caption"]["bottom"] <= box["area"]["bottom"] + 1   # all of it in view
+    assert box["caption"]["bottom"] <= box["ctl"]["top"] < box["cue"]["top"]                                    # above the controls; the cue below
+    page.keyboard.press("Space")                # on: the words are back where they were
+    page.keyboard.press("Space")
+    expect(page.locator(".rv .word.stop")).to_have_count(0)
+    assert not reader.state()["playing"]

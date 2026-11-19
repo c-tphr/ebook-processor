@@ -816,6 +816,18 @@ class Jobs:
             at = re.fullmatch(r"(\d+):(\d+)", str(held.get("place") or ""))
             detail["written"] = {"title": where["title"], "job": where.get("job"), "in_library": where.get("in_library"),
                                  "go": {"chapter": int(at.group(1)), "word": int(at.group(2))} if at and where.get("job") else None}
+        vault = self.vault()
+        with vault.lock:  # what a project holds, and which project a note belongs to or was gathered for
+            mine = vault.by_id.get(detail["id"])
+            if mine is not None and detail["kind"] == "project":
+                detail["project"] = {"status": "finished" if held.get("status") == "finished" else "active",
+                                     "notes": [vault.brief(n) for n in vault.project_notes(mine)]}
+            elif mine is not None and detail["kind"] != "book":
+                named = next((k["to"] for k in detail["links"] if held.get("project") == f"[[{k['target']}]]" and k["to"].get("kind") == "project"), None)
+                if detail["kind"] == "project-note" and named is not None:
+                    detail["of"] = {"id": named["id"], "title": named["title"]}
+                detail["gathered_for"] = [{"id": o.id, "title": o.title} for o in {o.id: o for o, _ in vault.backlinks(mine)}.values()
+                                          if o.kind == "project"]
         if detail["kind"] == "book":
             detail["in_library"] = self._readable(bookfile.job_of(detail["id"]) or "")
             detail["job"] = bookfile.job_of(detail["id"]) if detail["in_library"] else None
@@ -840,7 +852,8 @@ class Jobs:
         aside = {r["id"] for r in rows if r["kind"] == "quick" and vault.prop_of(r["id"], "aside") is True}
         return {"folder": str(vault.root), "inbox": [r for r in rows if r["inbox"] and r["id"] not in aside],
                 "waiting": self.process_view()["counts"]["waiting"],
-                "recent": [r for r in rows if not r["inbox"] and r["kind"] != "book"][:40],
+                "recent": [r for r in rows if not r["inbox"] and r["kind"] in ("idea", "quick")][:40],
+                "indexes": [r for r in rows if r["kind"] == "index" and not r["inbox"]], "projects": vault.projects(),
                 "notes": sum(1 for r in rows if r["kind"] != "book"), "tags": vault.tags(),
                 "books": sorted(books, key=lambda b: b["title"].casefold()), "trash": len(vault.trash())}
 
@@ -968,11 +981,11 @@ class Jobs:
                 return vault.detail(vault.get(note_id))
         return self._note(self._vaulted(read))
 
-    def vault_peek(self, target: str, anchor: str, inside: str | None) -> dict[str, Any]:
+    def vault_peek(self, target: str, anchor: str, inside: str | None, full: bool = False) -> dict[str, Any]:
         vault = self.vault()
         vault.refresh()
         with vault.lock:
-            found = vault.peek(target, anchor, vault.by_id.get(inside or ""))
+            found = vault.peek(target, anchor, vault.by_id.get(inside or ""), full)
         return self._cited(found)  # asks about the book, outside the folder's lock
 
     def vault_create(self, r: dict[str, Any]) -> dict[str, Any]:
@@ -1008,7 +1021,23 @@ class Jobs:
                 if isinstance(where.get("chapter"), int) and isinstance(where.get("word"), int):
                     props["place"] = f"{where['chapter']}:{where['word']}"
         kind = r.get("kind") if isinstance(r.get("kind"), str) else "idea"
+        if kind == "project":  # a project has a name, and its file the two sections the app works on
+            if not isinstance(r.get("title"), str) or not r["title"].strip():
+                raise ApiError(HTTPStatus.BAD_REQUEST, "A project needs a name.")
+            props["status"] = "active"
+            body = body if body.strip() else "\n\n## Gathered\n\n## Outline\n"
+        if kind == "project-note":
+            with vault.lock:
+                of = vault.by_id.get(str(r.get("project") or ""))
+                if of is None or of.kind != "project":
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "A project note belongs to a project.")
+                props["project"] = f"[[{of.title}]]"
         return self._note(self._vaulted(lambda: vault.create(r.get("title") or "", body, kind, props)))
+
+    def vault_gather(self, project_id: str, r: dict[str, Any]) -> dict[str, Any]:
+        vault = self.vault()
+        got = self._vaulted(lambda: vault.gather(project_id, str(r.get("note") or "")))
+        return {**self._note(got), "added": got["added"]}
 
     def vault_cite(self, r: dict[str, Any]) -> dict[str, Any]:
         """The link that cites a highlight or a note of a book, with the words it leads to. Makes the notes
@@ -1693,7 +1722,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(jobs.vault().anchors((query.get("target") or [""])[0][:300]))
             case ("GET", ["vault", "peek"]):
                 one = lambda name: (query.get(name) or [""])[0][:300]
-                return self.send_json(jobs.vault_peek(one("target"), one("anchor"), one("from") or None))
+                return self.send_json(jobs.vault_peek(one("target"), one("anchor"), one("from") or None, one("full") == "1"))
             case ("GET", ["vault", "tags"]):
                 return self.send_json({"tags": jobs.vault().tags()})
             case ("GET", ["vault", "trash"]):
@@ -1715,6 +1744,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(jobs.vault_create(self.json_body()), HTTPStatus.CREATED)
             case ("GET", ["vault", "notes", note_id]):
                 return self.send_json(jobs.vault_note(note_id))
+            case ("POST", ["vault", "projects", project_id, "gather"]):
+                return self.send_json(jobs.vault_gather(project_id, self.json_body()))
+            case ("GET", ["vault", "notes", note_id, "export.md"]):
+                vault = jobs.vault()
+                text = jobs._vaulted(lambda: vault.export(note_id)).encode("utf-8")
+                name = jobs._vaulted(lambda: vault.get(note_id)).title.encode("ascii", "replace").decode("ascii").replace('"', "_")
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/markdown; charset=utf-8")
+                self.send_header("Content-Length", str(len(text)))
+                self.send_header("Content-Disposition", f'attachment; filename="{name}.md"')
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(text)
+                return None
             case ("GET", ["vault", "notes", note_id, "token"]):
                 vault = jobs.vault()
                 return self.send_json({"token": jobs._vaulted(lambda: vault.get(note_id)).token})

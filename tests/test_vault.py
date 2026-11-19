@@ -454,3 +454,67 @@ def test_the_app_adds_a_source_or_words_to_a_note_and_sets_its_own_properties(va
     book = vault.put_book("b-1", "A Book", lambda name: "---\nid: b-1\nkind: book\n---\n> words ^h1\n")
     with pytest.raises(VaultError):
         vault.add_to(book.id, "mine")
+
+
+# ---- projects: sections of a file, gathering, the outline and its export
+
+
+def test_a_section_of_a_file_is_found_by_its_heading_and_added_to():
+    body = "About.\n\n## Gathered\n\n- [[One]]\n\n## Outline\n\n- Opening\n  - [[One]]\n  continued here\n- Close\n\n```\n## Gathered\n```\n\n# Later\n\ntext\n"
+    assert V.section(body, "gathered") == (3, 6) and V.section(body, "Outline") == (7, 17) and V.section(body, "Missing") is None
+    assert V.add_under(body, "Gathered", "- [[Two]]").split("\n")[3:7] == ["", "- [[One]]", "- [[Two]]", ""]
+    assert V.add_under("About.\n", "Gathered", "- [[One]]") == "About.\n\n## Gathered\n\n- [[One]]\n"
+    assert V.add_under("", "Gathered", "- [[One]]") == "## Gathered\n\n- [[One]]\n"
+    assert V.add_under("## Gathered\n## Outline\n", "Gathered", "- x") == "## Gathered\n\n- x\n\n## Outline\n"
+    assert V.add_under("## Gathered\n", "Gathered", "- x") == "## Gathered\n\n- x\n"
+    assert V.outline(body) == [{"depth": 0, "text": "Opening"}, {"depth": 1, "text": "[[One]] continued here"}, {"depth": 0, "text": "Close"}]
+    assert V.outline("## Outline\n1. a\n    * b\n        - c\n    * d\n2. e\nloose\n") == [
+        {"depth": 0, "text": "a"}, {"depth": 1, "text": "b"}, {"depth": 2, "text": "c"}, {"depth": 1, "text": "d"}, {"depth": 0, "text": "e loose"}]
+    assert V.outline("no outline") == []
+
+
+def test_a_project_gathers_notes_keeps_its_own_and_exports_its_outline(vault):
+    vault.put_book("b-20261118-101500-almanac", "The Almanac", lambda name: BOOK.replace("title: The Almanac", "title: The Almanac of Lights"))
+    rule = vault.create("A duty is kept by rule", "The keeper lights the lamp *whatever the weather*. See [[Decide once|deciding once]] and [[Nowhere]]. ^b1\n\n"
+                                                  "```\n[[kept in code]]\n```\n\nSource: [[The Almanac#^h3f9a]]\n")
+    once = vault.create("Decide once", "A decision made in advance is cheaper. #habits")
+    project = vault.create("Talk on habits", "For the spring meeting.\n", "project", props={"status": "active"})
+    done = vault.create("Old talk", "", "project", props={"status": "finished"})
+    mine = vault.create("Talk on habits - to do", "- [ ] book a room", "project-note", props={"project": "[[Talk on habits]]"})
+    vault.create("Other project note", "x", "project-note", props={"project": "[[Old talk]]"})
+    got = vault.gather(project["id"], rule["id"])
+    assert got["added"] and got["body"] == "For the spring meeting.\n\n## Gathered\n\n- [[A duty is kept by rule]]\n"
+    assert not vault.gather(project["id"], rule["id"])["added"]                       # once is enough
+    assert vault.gather(project["id"], once["id"])["body"].endswith("- [[A duty is kept by rule]]\n- [[Decide once]]\n")
+    assert vault.get(rule["id"]).body.startswith("The keeper lights")                  # the note itself is not touched
+    for bad in ((rule["id"], once["id"]), (project["id"], project["id"]), (project["id"], done["id"]), (project["id"], "b-20261118-101500-almanac")):
+        with pytest.raises(VaultError):
+            vault.gather(*bad)
+    rows = {r["title"]: r for r in vault.projects()}
+    assert (rows["Talk on habits"]["status"], rows["Talk on habits"]["gathered"], rows["Talk on habits"]["project_notes"]) == ("active", 2, 1)
+    assert rows["Old talk"]["status"] == "finished" and rows["Old talk"]["project_notes"] == 1
+    assert [n.id for n in vault.project_notes(vault.get(project["id"]))] == [mine["id"]]
+    vault.rename(project["id"], "Talk on rules")                                      # the project note follows its project
+    assert [n.id for n in vault.project_notes(vault.get(project["id"]))] == [mine["id"]]
+    now = vault.get(project["id"])
+    vault.save(project["id"], now.body + "\n## Outline\n\n- Why rules\n  - [[A duty is kept by rule]]\n  - [[The Almanac#^h3f9a]]\n  - A line of my own, citing [[Decide once]].\n"
+                                         "- [[Decide once]]\n  - a point under it\n- [[Gone note]]\n", None, now.token)
+    assert {r["title"]: r["outline"] for r in vault.projects()} == {"Talk on rules": 7, "Old talk": 0}
+    assert vault.export(project["id"]) == (
+        "# Talk on rules\n\n## Why rules\n\n"
+        "The keeper lights the lamp *whatever the weather*. See deciding once and Nowhere.\n\n```\n[[kept in code]]\n```\n\nSource: The Almanac of Lights\n\n"
+        "> The lamp is lit at sunset and put out at sunrise.\n>\n> (The Almanac of Lights)\n\n"
+        "A line of my own, citing Decide once.\n\n"
+        "## Decide once\n\nA decision made in advance is cheaper. #habits\n\na point under it\n\nGone note\n")
+    with pytest.raises(VaultError):
+        vault.export(rule["id"])
+    assert vault.export(done["id"]) == "# Old talk\n"
+
+
+def test_an_embed_shows_the_note_a_part_of_it_or_one_block(vault):
+    vault.create("Whole", "First paragraph.\n\n## A part\n\nUnder the part.\n\nA block. ^b1\n\n## Another\n\nNot this.\n")
+    assert vault.peek("whole", full=True)["body"].startswith("First paragraph.\n\n## A part")
+    assert vault.peek("Whole", "a part", full=True)["body"] == "\nUnder the part.\n\nA block. ^b1".strip("\n") and vault.peek("Whole", "A part")["found"]
+    assert vault.peek("Whole", "^b1", full=True)["body"] == "A block." and "body" not in vault.peek("Whole", "^b1")
+    assert vault.peek("Whole", "No such part", full=True) == {"found": False, "id": vault.resolve("Whole").id, "title": "Whole", "kind": "idea",
+                                                              "text": vault.resolve("Whole").excerpt, "heading": "No such part", "body": ""}

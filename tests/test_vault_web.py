@@ -32,6 +32,7 @@ def app(tmp_path):
         except urllib.error.HTTPError as exc:
             return exc.code, json.loads(exc.read())
 
+    call.port = server.server_address[1]
     call.folder = tmp_path / web.NOTES_FOLDER
     call.jobs = server.RequestHandlerClass.jobs
     call.book = lambda: call("POST", "/api/books/import?name=fixture.prepared.epub", body=PREPARED.read_bytes())[1]["id"]
@@ -245,3 +246,35 @@ def test_processing_what_was_marked_ends_in_a_note_a_source_or_aside(app):
     related = app("POST", "/api/vault/related", json_body={"text": "the supply boat and Gannet Rock at noon", "but": [keep["id"]]})[1]
     assert related["passages"][0]["block"] == first and related["passages"][0]["go"] == {"chapter": 2, "word": 3} and related["passages"][0]["job"] == jid
     assert set(related["passages"][0]["shares"]) >= {"gannet", "supply"} and related["notes"] == []
+
+
+def test_index_notes_and_projects_over_http(app):
+    idea = app("POST", "/api/vault/notes", json_body={"title": "Decide once", "body": "A decision made in advance is cheaper.\n"})[1]
+    index = app("POST", "/api/vault/notes", json_body={"title": "On habits", "kind": "index", "body": "- [[Decide once]]: the core.\n"})[1]
+    assert app("POST", "/api/vault/notes", json_body={"kind": "project"})[0] == 400                      # a project needs a name
+    project = app("POST", "/api/vault/notes", json_body={"title": "Talk on habits", "kind": "project"})
+    assert project[0] == 201 and project[1]["body"] == "\n\n## Gathered\n\n## Outline\n" and project[1]["project"] == {"status": "active", "notes": []}
+    pid = project[1]["id"]
+    assert {"key": "status", "value": "active"} in project[1]["props"]
+    own = app("POST", "/api/vault/notes", json_body={"title": "Talk - to do", "kind": "project-note", "project": pid, "body": "- [ ] room"})[1]
+    assert own["of"] == {"id": pid, "title": "Talk on habits"} and {"key": "project", "value": "[[Talk on habits]]"} in own["props"]
+    assert app("POST", "/api/vault/notes", json_body={"title": "x", "kind": "project-note", "project": idea["id"]})[0] == 400
+    got = app("POST", f"/api/vault/projects/{pid}/gather", json_body={"note": idea["id"]})[1]
+    assert got["added"] and got["body"] == "\n\n## Gathered\n\n- [[Decide once]]\n\n## Outline\n" and got["project"]["notes"][0]["id"] == own["id"]
+    assert not app("POST", f"/api/vault/projects/{pid}/gather", json_body={"note": idea["id"]})[1]["added"]
+    assert app("POST", f"/api/vault/projects/{idea['id']}/gather", json_body={"note": index["id"]})[0] == 400
+    assert app("POST", f"/api/vault/projects/{pid}/gather", json_body={"note": "n00000000"})[0] == 404
+    assert app("GET", f"/api/vault/notes/{idea['id']}")[1]["gathered_for"] == [{"id": pid, "title": "Talk on habits"}]
+    home = app("GET", "/api/vault")[1]
+    assert [n["id"] for n in home["indexes"]] == [index["id"]] and [n["id"] for n in home["recent"]] == [idea["id"]]
+    assert [(p["title"], p["status"], p["gathered"], p["project_notes"]) for p in home["projects"]] == [("Talk on habits", "active", 1, 1)]
+    # the outline, exported with the notes' text
+    now = app("GET", f"/api/vault/notes/{pid}")[1]
+    saved = app("PUT", f"/api/vault/notes/{pid}", json_body={"body": now["body"] + "\n- Opening\n  - [[Decide once]]\n", "token": now["token"],
+                                                             "props": [p if p["key"] != "status" else {"key": "status", "value": "finished"} for p in now["props"]]})[1]
+    assert saved["project"]["status"] == "finished" and app("GET", "/api/vault")[1]["projects"][0]["status"] == "finished"
+    request = urllib.request.Request(app.jobs and f"http://127.0.0.1:{app.port}/api/vault/notes/{pid}/export.md")
+    with urllib.request.urlopen(request, timeout=30) as response:
+        assert response.headers["Content-Disposition"] == 'attachment; filename="Talk on habits.md"'
+        assert response.read().decode() == "# Talk on habits\n\n## Opening\n\nA decision made in advance is cheaper.\n"
+    assert app("GET", "/api/vault/peek?" + q(target="Decide once", full="1"))[1]["body"] == "A decision made in advance is cheaper."

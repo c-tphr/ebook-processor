@@ -387,6 +387,70 @@ def terms(text: str) -> frozenset[str]:
     return frozenset(w for w in (m.group(0).casefold() for m in WORD_RE.finditer(text)) if w not in COMMON)
 
 
+ITEM_RE = re.compile(r"^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+(.*)$")
+GATHERED, OUTLINE = "Gathered", "Outline"  # the two sections of a project's file that the app works on
+
+
+def section(body: str, heading: str) -> tuple[int, int] | None:
+    """The lines under a heading, up to the next heading of its level or above: (first line, line after the
+    last). The heading is found in any letter case; None when it is not there."""
+    lines, masked = body.split("\n"), mask_code(body).split("\n")
+    for n, line in enumerate(masked):
+        head = HEADING_RE.match(line)
+        if head and key(_plain_text(head.group(2))) == key(heading):
+            level, end = len(head.group(1)), len(lines)
+            for m in range(n + 1, len(lines)):
+                other = HEADING_RE.match(masked[m])
+                if other and len(other.group(1)) <= level:
+                    end = m
+                    break
+            return n + 1, end
+    return None
+
+
+def add_under(body: str, heading: str, line: str) -> str:
+    """The text with a line added at the end of a section, which is made at the end of the text when missing."""
+    found = section(body, heading)
+    if found is None:
+        return body.rstrip("\n") + ("\n\n" if body.strip() else "") + f"## {heading}\n\n{line}\n"
+    lines = body.split("\n")
+    start, end = found
+    last = max((n for n in range(start, end) if lines[n].strip()), default=None)
+    if last is None:
+        lines[start:end] = ["", line, ""]
+    else:
+        lines.insert(last + 1, line)
+    return "\n".join(lines)
+
+
+def outline(body: str, heading: str = OUTLINE) -> list[dict[str, Any]]:
+    """The entries of the nested list under a heading, in order: {depth, text}. A line that is not an item of
+    the list belongs to the entry before it."""
+    found = section(body, heading)
+    if found is None:
+        return []
+    out: list[dict[str, Any]] = []
+    stack: list[int] = []
+    masked = mask_code(body).split("\n")
+    for n, line in enumerate(body.split("\n")[found[0]:found[1]], found[0]):
+        if not line.strip() or (FENCE_RE.match(line) or not masked[n].strip()):  # empty, or code
+            continue
+        m = ITEM_RE.match(line)
+        if not m:
+            if out:
+                out[-1]["text"] += " " + line.strip()
+            else:
+                out.append({"depth": 0, "text": line.strip()})
+            continue
+        indent = len(m.group(1).replace("\t", "    "))
+        while stack and indent < stack[-1]:
+            stack.pop()
+        if not stack or indent > stack[-1]:
+            stack.append(indent)
+        out.append({"depth": len(stack) - 1, "text": m.group(2).strip()})
+    return out
+
+
 @dataclass
 class Link:
     target: str  # as written, without what follows # or |
@@ -779,18 +843,115 @@ class Vault:
                 "tags": note.tags, "excerpt": note.excerpt, "created": note.created, "modified": note.modified,
                 "links": len(note.links), "backlinks": len({o.path for o, _ in self.backlinks(note)})}
 
-    def peek(self, target: str, anchor: str = "", inside: Note | None = None) -> dict[str, Any]:
-        """What a link leads to, for showing it without opening it."""
+    def peek(self, target: str, anchor: str = "", inside: Note | None = None, full: bool = False) -> dict[str, Any]:
+        """What a link leads to, for showing it without opening it. ``full`` adds ``body``: the text an embed
+        of the link shows (the note, the part under a heading, or one block)."""
         note = self.resolve(target) if target else inside
         if note is None:
             return {"found": False}
         out = {"found": True, "id": note.id, "title": note.title, "kind": note.kind, "text": note.excerpt}
+        body = note.body
         if anchor.startswith("^"):
             text = note.blocks.get(anchor[1:])
             out.update(found=text is not None, text=text or "", block=anchor[1:])
+            body = text or ""
         elif anchor:
-            out.update(found=any(key(h) == key(anchor) for h in note.headings), heading=anchor)
+            part = section(note.body, anchor)
+            out.update(found=part is not None, heading=anchor)
+            body = "\n".join(note.body.split("\n")[part[0]:part[1]]) if part else ""
+        if full:
+            out["body"] = body.strip("\n")[:8000]
         return out
+
+    # ---- projects
+
+    def _project(self, project_id: str) -> Note:
+        note = self.get(project_id)
+        if note.kind != "project":
+            raise VaultError("That note is not a project.")
+        return note
+
+    def project_notes(self, project: Note) -> list[Note]:
+        """The project notes that name this project in their ``project`` property."""
+        out = []
+        for note in self.notes.values():
+            named = prop(note.props, "project")
+            m = LINK_RE.search(named) if isinstance(named, str) else None
+            if note.kind == "project-note" and m and self.resolve(m.group(2)) is project:
+                out.append(note)
+        return sorted(out, key=lambda n: n.modified, reverse=True)
+
+    def projects(self) -> list[dict[str, Any]]:
+        self.refresh()
+        with self.lock:
+            rows = []
+            for note in self.notes.values():
+                if note.kind != "project":
+                    continue
+                part = section(note.body, GATHERED)
+                held = "\n".join(note.body.split("\n")[part[0]:part[1]]) if part else ""
+                rows.append({**self.brief(note), "status": "finished" if prop(note.props, "status") == "finished" else "active",
+                             "gathered": len(LINK_RE.findall(mask_code(held))), "project_notes": len(self.project_notes(note)),
+                             "outline": len(outline(note.body))})
+            return sorted(rows, key=lambda r: r["modified"], reverse=True)
+
+    def gather(self, project_id: str, note_id: str) -> dict[str, Any]:
+        """Add a note to what a project has gathered: a link in the project's file. The note is not changed.
+        ``added`` says whether the link is new."""
+        with self.lock:
+            self.refresh(force=True)
+            project, note = self._project(project_id), self.get(note_id)
+            if note is project or note.kind in ("book", "project"):
+                raise VaultError("A project gathers notes.")
+            if any(k.target and self.resolve(k.target) is note for k in project.links):
+                return {**self.detail(project), "added": False}
+            link = note.title if len(self.by_name.get(key(note.title), [])) == 1 else note.path[:-3]
+            body = add_under(project.body, GATHERED, f"- [[{link}]]")
+            self._write(self._inside(project.path), compose(project.props, body))
+            self._reread(project.path)
+            return {**self.detail(self.notes[project.path]), "added": True}
+
+    def _words(self, text: str) -> str:
+        """A line of a note as it reads outside the folder: links become the words they show."""
+        def shown(m: re.Match[str]) -> str:
+            if m.group(4):
+                return m.group(4).strip()
+            to = self.resolve(m.group(2)) if m.group(2).strip() else None
+            name = (prop(to.props, "title") if to is not None and to.kind == "book" else None) or (to.title if to is not None else m.group(2).strip())
+            part = (m.group(3) or "").strip()
+            return str(name) if not part or part.startswith("^") else f"{name}, {part}" if name else part
+        return BLOCK_RE.sub("", LINK_RE.sub(shown, text)).rstrip()
+
+    def export(self, project_id: str) -> str:
+        """A project's outline as one Markdown text: its headings as headings, under each entry the text of
+        the note it names, a passage of a book quoted with the book's title, and links as plain words."""
+        self.refresh()
+        with self.lock:
+            project = self._project(project_id)
+            items = outline(project.body)
+            out = [f"# {project.title}", ""]
+            for n, item in enumerate(items):
+                parent = n + 1 < len(items) and items[n + 1]["depth"] > item["depth"]
+                marks = "#" * min(6, item["depth"] + 2)
+                m = LINK_RE.fullmatch(item["text"])
+                to = self.resolve(m.group(2)) if m and m.group(2).strip() else None
+                if to is not None and to.kind == "book" and (m.group(3) or "").startswith("^"):
+                    words = to.blocks.get(m.group(3)[1:])
+                    if words:
+                        out += ["> " + line if line else ">" for line in words.split("\n")]
+                        out += [">", f"> ({prop(to.props, 'title') or to.title})", ""]
+                    continue
+                if to is not None and to.kind != "book":
+                    if parent:
+                        out += [f"{marks} {to.title}", ""]
+                    lines, masked = to.body.split("\n"), mask_code(to.body).split("\n")
+                    text = "\n".join(self._words(line) if masked[i] == line else line for i, line in enumerate(lines)).strip("\n")
+                    if text:
+                        out += [text, ""]
+                    continue
+                words = self._words(item["text"])
+                out += [f"{marks} {words}" if parent else words, ""]
+            return "\n".join(out).rstrip() + "\n"
 
     def detail(self, note: Note) -> dict[str, Any]:
         seen: set[str] = set()

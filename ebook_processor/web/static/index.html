@@ -460,9 +460,10 @@ function showAdd() {
   const error = h("div", { class: "msg err", role: "alert", hidden: true });
   const name = h("span", { class: "m mute" }, "No file chosen");
   const input = h("input", { type: "file", accept: ACCEPTED_FILES, hidden: true, onchange: () => choose(input.files[0]) });
-  const pathInput = h("input", { type: "text", placeholder: "https://example.org/an-essay   or   /home/you/Books/Title.epub", id: "path", onchange: () => { file = null; name.textContent = "No file chosen"; name.classList.add("mute"); look(); },
+  const pathInput = h("input", { type: "text", placeholder: "https://example.org/an-essay   or   /home/you/Books/Title.epub", id: "path", onchange: () => typed(),
     // Enter here shows what was found; it does not start the run before the reader has seen it
-    onkeydown: (e) => { if (e.key === "Enter") { e.preventDefault(); pathInput.blur(); } } });
+    onkeydown: (e) => { if (e.key === "Enter") { e.preventDefault(); typed(); } } });
+  function typed() { file = null; name.textContent = "No file chosen"; name.classList.add("mute"); look(); }
   // What the form knows of a chosen file and lets the reader set: what it is, and for a file that is no EPUB its
   // title, its author and whether its headings make chapters.
   const seen = h("div", { class: "seen", id: "seen", hidden: true });

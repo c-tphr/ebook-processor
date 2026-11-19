@@ -128,3 +128,77 @@ def test_a_file_that_cannot_be_taken_says_why(page: Page, own: App, tmp_path: Pa
         page.locator("#app form input[type=file]").set_input_files(str(tmp_path / name))
         expect(page.locator("#app form .msg.err")).to_contain_text(said)
         expect(page.locator("#seen")).to_be_hidden()
+
+
+# ---- step 2: a web address, a Word file, a page saved by the browser
+
+
+from ebook_processor.sources import fetch  # noqa: E402
+from tests.sources.makers import make_docx  # noqa: E402
+from tests.sources.test_convert import FILL, PNG, the_web  # noqa: E402, F401 - the_web is a fixture
+
+
+def test_an_article_is_added_by_its_address(page: Page, own: App, the_web: str):  # noqa: F811
+    page.goto(own.url + "/#/add")
+    page.locator("#app form").wait_for()
+    page.locator("#path").fill(the_web + "/essay?utm_source=mail")
+    page.locator("#path").press("Enter")
+    expect(page.locator("#seen-what")).to_contain_text("Web page / The Shore Review / 2024-03-09 /")
+    expect(page.locator("#src-title")).to_have_value("On Keeping Lamps")
+    expect(page.locator("#kind")).to_have_value("article")
+    expect(page.locator("#seen-page")).to_contain_text("Only the article was taken")
+    expect(page.locator("#seen")).to_contain_text("1 picture kept.")
+    words = page.locator("#seen-found").inner_text()
+    page.locator("#whole-page").check()
+    expect(page.locator("#seen-page")).to_contain_text("The whole page is taken")
+    assert page.locator("#seen-found").inner_text() != words          # the menu and the comments count now
+    page.locator("#whole-page").uncheck()
+    expect(page.locator("#seen-found")).to_have_text(words)
+    page.get_by_role("button", name="Process article").click()
+    job = finish(page)
+    expect(page.locator(".title a[title='Open the original']")).to_have_attribute("href", the_web + "/essay")
+    expect(page.locator(".title")).to_contain_text("Fetched")
+    page.goto(f"{own.url}/read/{job}")
+    expect(page.locator("[data-ref] >> nth=0")).to_have_text("On Keeping Lamps")
+    expect(page.locator(".text, .sv, body").first).not_to_contain_text("lamp oil")   # the advert is not in the article
+    expect(page.locator("img").first).to_be_visible()
+    # the same address again: the form says so, and still lets it be added
+    page.goto(own.url + "/#/add")
+    page.locator("#path").fill(the_web + "/essay")
+    page.locator("#path").press("Enter")
+    expect(page.locator("#seen-before")).to_contain_text("You added this on")
+    # an address that gives nothing to read says why, and what to do
+    page.locator("#path").fill(the_web + "/forbidden")
+    page.locator("#path").press("Enter")
+    expect(page.locator("#app form .msg.err")).to_contain_text("The site refused to give the page")
+    expect(page.locator("#app form .msg.err")).to_contain_text("Save the page in your browser")
+    expect(page.locator("#seen")).to_be_hidden()
+
+
+def test_a_word_file_is_added(page: Page, own: App, tmp_path: Path):
+    path = tmp_path / "lamps.docx"
+    path.write_bytes(make_docx([("Title", "On Keeping Lamps"), ("Author", "Ione Hartwell"), ("Heading1", "The rule"), (None, FILL * 20),
+                                ("Quote", "Whatever the weather."), (None, "<picture>"), (None, FILL * 20)], picture=PNG))
+    add(page, own, path)
+    expect(page.locator("#src-title")).to_have_value("On Keeping Lamps")
+    expect(page.locator("#src-author")).to_have_value("Ione Hartwell")
+    expect(page.locator("#seen-what")).to_contain_text("Word file /")
+    expect(page.locator("#whole-page")).to_have_count(0)              # no page: nothing to choose
+    page.get_by_role("button", name="Process article").click()
+    job = finish(page)
+    page.goto(f"{own.url}/read/{job}")
+    expect(page.locator("blockquote").first).to_contain_text("Whatever the weather.")
+
+
+def test_a_page_saved_by_the_browser_itself_is_read(page: Page, own: App, the_web: str, tmp_path: Path, browser_name: str):  # noqa: F811
+    if browser_name != "chromium":
+        pytest.skip("only Chromium can be asked to save a page as one file")
+    page.goto(the_web + "/essay")
+    saved = page.context.new_cdp_session(page).send("Page.captureSnapshot", {"format": "mhtml"})["data"]
+    path = tmp_path / "essay.mhtml"
+    path.write_text(saved, encoding="utf-8", newline="")
+    add(page, own, path)
+    expect(page.locator("#src-title")).to_have_value("On Keeping Lamps")
+    expect(page.locator("#seen-what")).to_contain_text("Saved page / The Shore Review /")
+    expect(page.locator("#seen-page")).to_contain_text("Only the article was taken")
+    expect(page.locator("#seen")).to_contain_text("1 picture kept.")   # the picture came inside the file

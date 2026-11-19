@@ -125,6 +125,11 @@ def _split_how(value: Any) -> str:
     return "none" if value == "none" else "auto"
 
 
+def _whole(value: Any) -> bool | None:
+    """How much of a page is taken: all of it, only its article, or as the app guesses."""
+    return value if isinstance(value, bool) else None
+
+
 def estimate(words: Any, settings: Settings, steered: bool) -> dict[str, Any]:
     if not isinstance(words, list) or len(words) > 5000 or not all(isinstance(w, int) and not isinstance(w, bool) and 0 <= w < 10**8 for w in words):
         raise ApiError(HTTPStatus.BAD_REQUEST, "'words' is the list of the chapters' lengths")
@@ -1603,7 +1608,8 @@ class Jobs:
         """What an entry of the library is: a book or an article."""
         return job["type"] if job.get("type") in sources.TYPES else "book"
 
-    def _convert(self, entry: dict[str, Any], split_how: str, title: str | None = None, author: str | None = None) -> sources.Made:
+    def _convert(self, entry: dict[str, Any], split_how: str, title: str | None = None, author: str | None = None,
+                 whole: bool | None = None) -> sources.Made:
         """``entry`` is a held file. Its pictures are fetched once, however often it is converted."""
         cache = entry["pictures"]
 
@@ -1616,7 +1622,8 @@ class Jobs:
 
         try:
             return sources.convert(entry["name"], entry["data"], url=entry["url"], folder=entry["folder"], split_how=split_how,
-                                   title=title, author=author, pictures=remember)
+                                   whole=whole, title=title, author=author, pictures=remember, fetched=entry.get("fetched"),
+                                   charset=entry.get("charset"))
         except sources.SourceError as exc:
             raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
 
@@ -1626,6 +1633,21 @@ class Jobs:
         does not send it again."""
         entry = {"name": Path(name.replace("\\", "/")).name, "data": data, "folder": folder, "url": url, "pictures": {},
                  "time": time.monotonic()}
+        return self._hold(entry, split_how)
+
+    def look_url(self, url: Any, split_how: str = "auto") -> dict[str, Any]:
+        """What the Add form shows of the page at a web address. The page is fetched once and held."""
+        if not isinstance(url, str) or not url.strip():
+            raise ApiError(HTTPStatus.BAD_REQUEST, "Give a web address.")
+        try:
+            page = sources.fetch_page(url)
+        except sources.SourceError as exc:
+            raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+        entry = {"name": page.name, "data": page.data, "folder": None, "url": page.url, "pictures": {}, "time": time.monotonic(),
+                 "fetched": page.fetched, "charset": page.charset}
+        return self._hold(entry, split_how)
+
+    def _hold(self, entry: dict[str, Any], split_how: str) -> dict[str, Any]:
         made = self._convert(entry, split_how)
         token = secrets.token_urlsafe(12)
         with self.lock:
@@ -1643,10 +1665,10 @@ class Jobs:
                 raise ApiError(HTTPStatus.GONE, "the app no longer holds this file; choose it again")
             return entry
 
-    def look_held(self, token: Any, split_how: str) -> dict[str, Any]:
-        """A held file converted again, with another choice for its chapters."""
+    def look_held(self, token: Any, split_how: str, whole: Any = None) -> dict[str, Any]:
+        """A held file converted again, with another choice for its chapters or for how much of a page is taken."""
         entry = self._held(token)
-        return self._seen(token, entry, self._convert(entry, split_how), split_how)
+        return self._seen(token, entry, self._convert(entry, split_how, whole=_whole(whole)), split_how)
 
     def _seen(self, token: str, entry: dict[str, Any], made: sources.Made, split_how: str) -> dict[str, Any]:
         origin = made.origin
@@ -1655,6 +1677,7 @@ class Jobs:
                     and (j["origin"].get("sha256") == origin["sha256"] or (origin["url"] and j["origin"].get("url") == origin["url"]))]
         return {**_looked(made.book, made.title), "type": made.type, "author": made.author, "origin": origin,
                 "found": made.found, "split": split_how, "pictures": made.pictures, "warnings": made.warnings, "held": token,
+                "page": made.page,
                 "seen_before": max((j["created"] for j in same), default=None)}
 
     def create_held(self, token: Any, settings: Settings, plan: Any = None) -> dict[str, Any]:
@@ -1664,7 +1687,7 @@ class Jobs:
         plan = plan if isinstance(plan, dict) else {}
         title, author = plan.get("title"), plan.get("author")
         made = self._convert(entry, _split_how(plan.get("split")), _text(title, 300) if isinstance(title, str) else None,
-                             _text(author, 300) if isinstance(author, str) else None)
+                             _text(author, 300) if isinstance(author, str) else None, _whole(plan.get("whole")))
         job = self.create(made.name, made.epub, settings, plan, made, entry)
         with self.lock:
             self.held.pop(token, None)
@@ -2051,7 +2074,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(jobs.look_source(path.name, data, _split_how(request.get("split")), folder=path.parent))
             case ("POST", ["look", "held"]):
                 request = self.json_body()
-                return self.send_json(jobs.look_held(request.get("held"), _split_how(request.get("split"))))
+                return self.send_json(jobs.look_held(request.get("held"), _split_how(request.get("split")), request.get("whole")))
+            case ("POST", ["look", "url"]):  # the page at a web address, fetched once and held
+                request = self.json_body()
+                return self.send_json(jobs.look_url(request.get("url"), _split_how(request.get("split"))))
+            case ("POST", ["jobs", "url"]):
+                request = self.json_body()
+                settings = self.settings(request.get("settings") or {})
+                plan = request.get("plan")
+                held = jobs.look_url(request.get("url"), _split_how(plan.get("split") if isinstance(plan, dict) else None))["held"]
+                return self.send_json(jobs.summary(jobs.create_held(held, settings, plan)), HTTPStatus.CREATED)
             case ("POST", ["estimate"]):
                 request = self.json_body()
                 return self.send_json(estimate(request.get("words"), self.settings(request.get("settings") or {}),

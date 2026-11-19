@@ -266,7 +266,7 @@ PAGE = f"""<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>On 
 
 
 def test_html_file() -> None:
-    made = sources.convert("lamps.html", PAGE.encode(), web=False)
+    made = sources.convert("lamps.html", PAGE.encode(), web=False, whole=True)
     assert (made.title, made.author) == ("On Keeping Lamps", "Ione Hartwell")
     assert made.origin["url"] == "https://example.org/essays/lamps" and made.origin["site"] == "The Shore Review"
     assert made.origin["published"] == "2024-03-09" and made.book.language == "fr"
@@ -369,7 +369,9 @@ def test_fetch_refuses_what_is_not_the_web(site: str) -> None:
 
 @pytest.mark.parametrize("name, data, said", [
     ("a.txt", b"too short", "only 3 words"), ("a.txt", b"   \n", "empty"), ("a.pdf", b"%PDF", "PDF files are not supported yet"),
-    ("a.docx", b"PK", "Word files are not supported yet"), ("a.xyz", b"x", "not supported"),
+    ("a.docx", b"PK", "cannot be read as a Word file"), ("a.doc", b"\xd0\xcf\x11\xe0", "Save it as a Word file"),
+    ("a.docx", b"\xd0\xcf\x11\xe0old", "of the old kind"), ("a.mhtml", b"From: x\n\nnothing", "holds no page"),
+    ("a.webarchive", b"bplist00", "not supported yet"), ("a.xyz", b"x", "not supported"),
 ])
 def test_refused(name: str, data: bytes, said: str) -> None:
     with pytest.raises(sources.SourceError, match=said):
@@ -385,3 +387,165 @@ def test_a_file_too_large_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_formats() -> None:
     assert sources.format_of("A.MD") == "markdown" and sources.format_of("b.txt") == "text" and sources.format_of("c.HTM") == "html"
     assert sources.format_of("d.epub") is None and not sources.is_source("d.epub") and sources.is_source("x/y.markdown")
+
+
+# ---- step 2: the article in a page, saved pages, Word files, web addresses
+
+
+from tests.sources.makers import make_docx, make_mhtml  # noqa: E402
+
+CLUTTER = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><title>On Keeping Lamps | The Shore Review</title>
+<meta property="og:title" content="On Keeping Lamps"><meta name="author" content="Ione Hartwell">
+<meta property="article:published_time" content="2024-03-09T08:00:00Z"><meta property="og:site_name" content="The Shore Review">
+<script>var track = 1;</script></head>
+<body><header><nav><a href="/">Home</a> <a href="/subscribe">Subscribe now</a></nav></header>
+<div class="ad">Buy lamp oil today! Fifty percent off for new readers.</div>
+<main><article><h1>On Keeping Lamps</h1><p class="byline">By Ione Hartwell</p>
+<p>A lamp is a <em>promise</em> made to strangers. {FILL * 12}</p>
+<figure><img src="/light.png" alt="The light"><figcaption>Gannet Rock, 1911.</figcaption></figure>
+<h2>The rule</h2><p>{FILL * 14}</p><blockquote><p>Whatever the weather. {FILL * 3}</p></blockquote>
+<h2>What the log shows</h2><p>{FILL * 14}</p></article></main>
+<aside class="related"><h3>Related</h3><a href="/a">Ten lighthouses to visit</a></aside>
+<div id="comments"><h3>Comments (2)</h3><p>Great piece! Posted by reader42.</p></div>
+<footer><p>Copyright The Shore Review. <a href="/privacy">Privacy</a></p></footer></body></html>"""
+
+
+def test_the_article_is_found_in_a_page_and_the_whole_page_can_be_taken() -> None:
+    made = sources.convert("saved.html", CLUTTER.encode(), web=False)
+    assert made.page == {"page": True, "whole": False, "lost": False} and made.type == "article"
+    assert (made.title, made.author, made.origin["site"], made.origin["published"]) == ("On Keeping Lamps", "Ione Hartwell", "The Shore Review", "2024-03-09")
+    html = shown(made)
+    for gone in ("Subscribe", "lamp oil", "Related", "Comments", "reader42", "Copyright"):
+        assert gone not in html
+    assert "promise" in html and "Whatever the weather." in html and "Gannet Rock, 1911." in html and html.count("</h2>") == 2
+    whole = sources.convert("saved.html", CLUTTER.encode(), web=False, whole=True)
+    assert whole.page == {"page": True, "whole": True, "lost": False} and "lamp oil" in shown(whole) and "Comments" in shown(whole)
+    assert whole.words > made.words
+
+
+def test_a_document_written_as_html_is_taken_whole() -> None:
+    doc = f"<html><head><title>My notes</title><style>p {{}}</style></head><body><h1>My notes</h1><p>{FILL * 40}</p></body></html>"
+    made = sources.convert("notes.html", doc.encode())
+    assert made.page == {"page": False, "whole": True, "lost": False}
+    assert sources.convert("notes.html", doc.encode(), whole=False).page["whole"] is False  # the reader may still ask for the article
+
+
+def test_a_page_without_an_article_is_taken_whole_and_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    from ebook_processor.sources import from_html
+    monkeypatch.setattr(from_html, "article", lambda html, url: (None, {}))
+    made = sources.convert("index.html", CLUTTER.encode(), web=False)
+    assert made.page["lost"] and made.page["whole"] and "could not be told from the rest" in made.warnings[0]
+
+
+def test_a_saved_page_brings_its_pictures() -> None:
+    page = CLUTTER.replace('src="/light.png"', 'src="https://example.org/img/light.png"')
+    data = make_mhtml(page, "https://example.org/essays/lamps?utm_source=mail&id=7#top", {"https://example.org/img/light.png": PNG})
+    made = sources.convert("lamps.mhtml", data, web=False)
+    assert made.origin["format"] == "saved" and made.origin["url"] == "https://example.org/essays/lamps?id=7"
+    assert made.pictures == {"kept": 1, "missing": 0} and made.type == "article" and "lamp oil" not in shown(made)
+    assert 'data-src="OEBPS/images/p001.png"' in shown(made)
+
+
+def test_a_word_file() -> None:
+    data = make_docx([("Title", "On Keeping Lamps"), ("Author", "Ione Hartwell"), ("Heading1", "The rule"), (None, FILL * 20),
+                      ("Quote", "Whatever the weather."), (None, "<picture>"), ("Odd", "In a style nobody knows."),
+                      ("Heading1", "The log"), ("Heading2", "A night"), (None, FILL * 20)], title="Document1", author="Someone Else", picture=PNG)
+    made = sources.convert("lamps.docx", data)
+    assert (made.title, made.author, made.origin["format"], made.type) == ("On Keeping Lamps", "Ione Hartwell", "docx", "article")
+    assert kinds(made) == ["heading", "heading", "paragraph", "blockquote", "image", "paragraph", "heading", "heading", "paragraph"]
+    html = shown(made)
+    assert html.count("</h1>") == 1 and html.count("</h2>") == 2 and html.count("</h3>") == 1 and "Ione Hartwell" not in html
+    assert made.pictures == {"kept": 1, "missing": 0} and "not recognised" in made.warnings[0]
+    plain = sources.convert("report.docx", make_docx([("Heading1", "One"), (None, FILL * 20), ("Heading1", "Two"), (None, FILL * 20)],
+                                                     title="From the properties", author="I. H."))
+    assert (plain.title, plain.author, plain.warnings) == ("From the properties", "I. H.", [])
+
+
+def test_addresses_are_tidied() -> None:
+    assert sources.tidy("HTTPS://Example.org/a?utm_source=x&id=3&fbclid=9#part") == "https://example.org/a?id=3"
+    assert sources.tidy("https://example.org") == "https://example.org/"
+
+
+LD = '<script type="application/ld+json">{"@type": "NewsArticle", "isAccessibleForFree": false, "wordCount": 4000}</script>'
+PAGES = {
+    "/essay": ("text/html; charset=utf-8", CLUTTER.encode()),
+    "/latin": ("text/html; charset=iso-8859-1", CLUTTER.replace('<meta charset="utf-8">', "").replace("promise", "promesse naïve").encode("latin-1")),
+    "/paywalled": ("text/html", CLUTTER.replace("</head>", LD + "</head>").encode()),
+    "/shell": ("text/html", b"<html><head><title>App</title><script src='a.js'></script></head><body><noscript>Please enable JavaScript to "
+                            b"read this.</noscript><div id='root'></div></body></html>"),
+    "/thin": ("text/html", b"<html><body><nav>x</nav><article><h1>Sign in</h1><p>Sign in to read this article.</p></article></body></html>"),
+    "/paper.pdf": ("application/pdf", b"%PDF-1.4"),
+    "/notes.md": ("text/markdown", MARKDOWN.encode()),
+    "/plain.txt": ("text/plain; charset=utf-8", ("A plain piece\n\n" + body(400)).encode()),
+    "/data.zip": ("application/zip", b"PK"),
+}
+
+
+class _Web(_Site):
+    def do_GET(self) -> None:  # noqa: N802
+        path = self.path.split("?")[0]
+        if path in PAGES:
+            kind, data = PAGES[path]
+            self.send_response(200)
+            self.send_header("Content-Type", kind)
+            self.end_headers()
+            self.wfile.write(data)
+        elif path == "/moved":
+            self.send_response(301)
+            self.send_header("Location", "/essay?utm_campaign=x")
+            self.end_headers()
+        elif path in ("/forbidden", "/limited", "/gone"):
+            self.send_error({"/forbidden": 403, "/limited": 429, "/gone": 404}[path])
+        elif path == "/slow":
+            import time
+            time.sleep(1.5)
+            self.send_error(500)
+        else:
+            super().do_GET()
+
+
+@pytest.fixture
+def the_web(monkeypatch: pytest.MonkeyPatch):
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Web)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setattr(fetch, "is_private", lambda host: False)  # the pictures of these pages are on this computer
+    yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+    server.server_close()
+
+
+def from_address(url: str, **how) -> sources.Made:
+    page = sources.fetch_page(url)
+    return sources.convert(page.name, page.data, url=page.url, fetched=page.fetched, charset=page.charset, **how)
+
+
+def test_an_article_from_a_web_address(the_web: str) -> None:
+    made = from_address(the_web + "/moved")
+    assert made.origin["format"] == "web" and made.origin["url"] == the_web + "/essay" and made.origin["fetched"].endswith("Z")
+    assert (made.title, made.author, made.type) == ("On Keeping Lamps", "Ione Hartwell", "article")
+    assert made.pictures == {"kept": 1, "missing": 0} and "lamp oil" not in shown(made) and made.warnings == []
+    assert made.name == "On Keeping Lamps.epub" and made.origin["original"] == "page.html"
+    assert "promesse naïve" in shown(from_address(the_web + "/latin"))  # the encoding the server names
+
+
+def test_other_things_at_an_address(the_web: str) -> None:
+    assert from_address(the_web + "/notes.md").origin["format"] == "web" and from_address(the_web + "/notes.md").title == "On Keeping Lamps"
+    assert from_address(the_web + "/plain.txt").title == "A plain piece"
+    for path, said in (("/paper.pdf", "PDF files are not supported yet"), ("/data.zip", "not a web page"), ("/forbidden", "refused to give the page"),
+                       ("/limited", "answered 429"), ("/gone", "no page at this address"), ("/shell", "builds its text with JavaScript"),
+                       ("/thin", "were found at this address")):
+        with pytest.raises(sources.SourceError, match=said):
+            from_address(the_web + path)
+    with pytest.raises(sources.SourceError, match="begins with http"):
+        sources.fetch_page("file:///etc/passwd")
+    with pytest.raises(fetch.FetchError) as caught:
+        fetch.get(the_web + "/slow", seconds=0.3)
+    assert caught.value.reason == "timeout"
+    with pytest.raises(fetch.FetchError) as caught:
+        fetch.get(the_web + "/essay", limit=500)
+    assert caught.value.reason == "size"
+
+
+def test_a_page_that_is_not_free_to_read_says_so(the_web: str) -> None:
+    made = from_address(the_web + "/paywalled")
+    assert "not free to read" in made.warnings[0] and "Save the page" in made.warnings[0]

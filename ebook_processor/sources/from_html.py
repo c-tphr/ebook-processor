@@ -1,13 +1,17 @@
-"""An HTML file, taken whole."""
+"""An HTML file or a web page: taken whole, or only the article in it."""
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
+
+import lxml.html
 
 from . import clean as C
 
 SPACE = re.compile(r"\s+")
+NEEDS_SCRIPT = re.compile(r"(enable|requires?|turn on|activate)\s+javascript|javascript (is )?(required|disabled|needed)", re.I)
 
 
 def facts(html: str) -> dict[str, Any]:
@@ -36,5 +40,106 @@ def facts(html: str) -> dict[str, Any]:
             "language": (root.get("lang") or "").strip() or None}
 
 
-def read(html: str) -> tuple[str, dict[str, Any]]:
-    return html, facts(html)
+def is_page(html: str) -> bool:
+    """Whether the HTML is a page of a web site (a menu, scripts, the marks sites put in their heads), and not a
+    document that someone wrote or exported as HTML."""
+    root = C.parse(html).getroottree().getroot()
+    marks = any((el.get("property") or "").lower().startswith(("og:", "article:")) for el in root.iter("meta"))
+    canonical = any("canonical" in (el.get("rel") or "").lower().split() for el in root.iter("link"))
+    scripts = len(list(root.iter("script")))
+    return root.find(".//nav") is not None or marks or canonical or scripts >= 3
+
+
+def signs(html: str) -> dict[str, Any]:
+    """What a page says of how much of it a program is given: whether it is free to read, how long the piece is
+    said to be, and whether it asks for JavaScript."""
+    root = C.parse(html).getroottree().getroot()
+    out: dict[str, Any] = {"free": None, "words": None, "script": False}
+
+    def look(data: Any) -> None:
+        if isinstance(data, list):
+            for item in data:
+                look(item)
+        elif isinstance(data, dict):
+            free = data.get("isAccessibleForFree")
+            if free in (False, "False", "false") and out["free"] is None:
+                out["free"] = False
+            count = data.get("wordCount")
+            if isinstance(count, (int, str)) and str(count).isdigit() and out["words"] is None:
+                out["words"] = int(count)
+            for value in data.values():
+                if isinstance(value, (dict, list)):
+                    look(value)
+
+    for el in root.iter("script"):
+        if "ld+json" in (el.get("type") or "").lower():
+            try:
+                look(json.loads(el.text_content()))
+            except ValueError:
+                pass
+    for el in root.iter("noscript"):
+        if NEEDS_SCRIPT.search(el.text_content() or ""):
+            out["script"] = True
+    return out
+
+
+def article(html: str, url: str | None) -> tuple[str | None, dict[str, Any]]:
+    """The article of a page, as HTML, with what the page says of it; None when no article was found."""
+    import warnings
+
+    with warnings.catch_warnings():  # a library it uses grumbles about an extra this app has no use for
+        warnings.simplefilter("ignore")
+        import trafilatura
+
+    known: dict[str, Any] = {}
+    if "<figcaption" in html.lower():  # the library drops the line under a picture: hand it over as a paragraph in italics
+        tree = C.parse(html).getroottree().getroot()
+        for caption in tree.iter("figcaption"):
+            em = lxml.html.Element("em")
+            em.text, caption.text = caption.text, None
+            for child in list(caption):
+                em.append(child)
+            caption.append(em)
+            caption.tag = "p"
+        html = lxml.html.tostring(tree, encoding="unicode")
+    try:
+        found = trafilatura.extract(html, output_format="html", include_images=True, include_tables=True, include_links=True,
+                                    include_formatting=True, include_comments=False, url=url)
+        meta = trafilatura.extract_metadata(html, default_url=url)
+    except Exception:  # noqa: BLE001 - a page the library cannot read is a page without an article
+        return None, known
+    if meta is not None:
+        for key, name in (("title", "title"), ("author", "author"), ("published", "date"), ("site", "sitename"), ("url", "url")):
+            value = getattr(meta, name, None)
+            if isinstance(value, str) and value.strip():
+                known[key] = value.strip()
+    if not found:
+        return None, known
+    body = lxml.html.document_fromstring(found).find("body")
+    if body is None:
+        return None, known
+    inner = (body.text or "") + "".join(lxml.html.tostring(child, encoding="unicode") for child in body)
+    return inner, known
+
+
+def read(html: str, whole: bool | None = None, url: str | None = None) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    """The HTML to clean; what is known of the piece; and how it was taken: ``page`` (it looks like a page of a
+    site), ``whole`` (all of it was taken) and ``lost`` (an article was looked for and not found)."""
+    known = facts(html)
+    page = is_page(html)
+    how = {"page": page, "whole": True, "lost": False}
+    if whole is True or (whole is None and not page):
+        return html, known, how
+    found, said = article(html, url or known.get("url"))
+    if found is None or C.words(lxml.html.fragment_fromstring(found, create_parent="div")) < 40:
+        how["lost"] = True
+        return html, known, how
+    how["whole"] = False
+    # the page's own head is the better word on the address; the library is the better word on the rest
+    for key, value in said.items():
+        if key == "url" and known.get("url"):
+            continue
+        if key == "author" and (";" in value or len(value) > 120) and known.get("author"):
+            continue
+        known[key] = value
+    return found, known, how

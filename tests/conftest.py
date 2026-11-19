@@ -19,7 +19,8 @@ def no_web(monkeypatch):
     real = fetch.check
 
     def check(url: str, public_only: bool) -> None:
-        if urllib.parse.urlsplit(url).hostname not in ("127.0.0.1", "localhost"):
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme.lower() in ("http", "https") and parts.hostname not in ("127.0.0.1", "localhost"):
             raise fetch.FetchError("the tests do not reach the web", reason="unreachable")
         real(url, public_only)
 

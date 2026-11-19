@@ -1,6 +1,6 @@
 # ebook-processor
 
-Give it a book as an EPUB, or an article or document as a Markdown, text or HTML file. It divides the text into sections, writes recall questions for the end of each section, has every question checked against the text by a second, independent Claude session, and gives you:
+Give it a book as an EPUB, the address of an article on the web, or a document as a Markdown, text, HTML or Word file. It divides the text into sections, writes recall questions for the end of each section, has every question checked against the text by a second, independent Claude session, and gives you:
 
 - the book with **checkpoints**: at the end of each section you stop and recall what you just read, before going on;
 - the questions on their own, as **structured data**, an **Anki deck** and a **text file** for other spaced-repetition apps.
@@ -96,12 +96,13 @@ python3 -m pip install -e path/to/ebook-processor
 ebook-processor path/to/Book.epub
 ```
 
-A Markdown, text or HTML file is taken in the same way (`ebook-processor Essay.md`); see "Articles and documents" below. That processes the book with the default options and prints where the files are. Progress is shown while it runs. Useful options:
+An article at a web address, or a Markdown, text, HTML or Word file, is taken in the same way (`ebook-processor https://example.org/an-essay`, `ebook-processor Essay.md`); see "Articles and documents" below. That processes the book with the default options and prints where the files are. Progress is shown while it runs. Useful options:
 
 | Option | What it does | Default |
 | --- | --- | --- |
 | `-o FOLDER` | Where the results go | `Book-processed` beside the EPUB |
-| `--one-piece` | For a file that is no EPUB: do not cut it into chapters at its headings | |
+| `--one-piece` | For what is no EPUB: do not cut it into chapters at its headings | |
+| `--whole-page` | For a web page: take the whole page, not only the article found in it | |
 | `--density short\|medium\|long` | Target section length: 300 to 1,000, 600 to 2,000 or 1,500 to 4,000 words. A checkpoint follows each section | `medium` |
 | `--section-words MIN-MAX` | The same, in your own numbers | |
 | `--max-questions N` | Most questions per checkpoint, 1 to 8. The model chooses how many, up to this, by the section's length and density and by what you want from the book | 3 |
@@ -143,23 +144,35 @@ ebook-processor rebuild path/to/Book-processed --remove c0004-p2 c0011-p1
 ebook-processor serve
 ```
 
-It opens `http://localhost:8765/` in your browser. Drop a file on the page (or type the path of a file on the computer), choose the options and press **Process book**. Under **Advanced**, the two model fields list the models your Claude login can use, as Claude Code reports them when the app starts, and Codex's models when Codex is installed and signed in. The page shows the run's progress. When it is finished you can download each file and go through the questions: untick the ones you do not want and press **Rebuild files**. The app listens on your own computer only, runs one book at a time and keeps its runs in `~/ebook-processor-runs` (`--data` chooses another folder).
+It opens `http://localhost:8765/` in your browser. Drop a file on the page (or type a web address, or the path of a file on the computer), choose the options and press **Process book**. Under **Advanced**, the two model fields list the models your Claude login can use, as Claude Code reports them when the app starts, and Codex's models when Codex is installed and signed in. The page shows the run's progress. When it is finished you can download each file and go through the questions: untick the ones you do not want and press **Rebuild files**. The app listens on your own computer only, runs one book at a time and keeps its runs in `~/ebook-processor-runs` (`--data` chooses another folder).
 
 The app opens on your **library**: every book with how far you have read and how many questions you recalled on the first try, and the book you were last reading on top. **Add book or article** processes a new file, or takes a `Book.prepared.epub` made elsewhere as it is.
 
 ### Articles and documents
 
-The app also takes what is not a book and not an EPUB: a **Markdown** file (`.md`), a **plain text** file (`.txt`) and an **HTML** file (`.html`). Each is turned into a small EPUB when you add it, and from there on it is handled like a book: sections with checkpoints, the reader, highlights and notes, Practice, and every file under "What you get". The file you gave is kept unchanged beside the run. Web addresses, pages saved from the browser and Word files are planned next (`docs/SOURCES-PLAN.md`); PDF is not supported yet.
+The app also takes what is not a book and not an EPUB:
 
-When you choose such a file, the form shows what it found before anything is run:
+| What | How |
+| --- | --- |
+| An article on the web | Type or paste its **address** into the field under the drop zone and press Enter. The app fetches the page once, finds the article in it and leaves out the menus, adverts and comments around it |
+| A page you saved | **`.mhtml`** (in Chrome or Edge: Save as, "Webpage, Single File"), which carries its pictures, or a saved **`.html`** file. This is the way in for a page behind a login or a paywall: open it in your browser, save it, add the file |
+| A document | **Markdown** (`.md`), **plain text** (`.txt`), **HTML** (`.html`), **Word** (`.docx`) |
 
-- **Title and author**, which you can change. A Markdown file may name them in a properties block at its top (`title`, `author`, `date`, `url`); a text file's title is its first line; an HTML file's come from its head.
-- **Kind**: Book or Article. The app guesses (a file with three or more chapters and 20,000 words or more is a book) and you can change it, here or later on the entry's page. The library says what each entry is and, once it holds both kinds, can be narrowed to one.
-- **Chapters.** A file of 5,000 words or more that has headings is cut into chapters at its top-level headings, and the form lists them. In a text file the headings are found by their look: lines such as `Chapter 4` or `PART TWO`, a short line in capitals, a number on a line of its own, or Markdown marks. Tick **Treat it as one piece** when the guess is wrong. A shorter piece is one document; its sections are still found by the model.
+Each is turned into a small EPUB when you add it, and from there on it is handled like a book: sections with checkpoints, the reader, highlights and notes, Practice, and every file under "What you get". What you gave is kept unchanged beside the run. PDF is not supported yet.
+
+The form shows what it found before anything is run:
+
+- **Title and author**, which you can change. They come from the page or the file: a page's head, the properties block at the top of a Markdown file (`title`, `author`, `date`, `url`), the first line of a text file, the Title paragraph or the properties of a Word file.
+- **Kind**: Book or Article. The app guesses (a web page is an article; a file with three or more chapters and 20,000 words or more is a book) and you can change it, here or later on the entry's page. The library says what each entry is and, once it holds both kinds, can be narrowed to one.
+- **The article or the whole page.** For a web page, saved or fetched, the form says which was taken, and a tick switches between the two. When no article can be told from the rest, the whole page is taken and the form says so.
+- **Chapters.** A piece of 5,000 words or more that has headings is cut into chapters at its top-level headings, and the form lists them. In a text file the headings are found by their look: lines such as `Chapter 4` or `PART TWO`, a short line in capitals, a number on a line of its own, or Markdown marks. Tick **Treat it as one piece** when the guess is wrong. A shorter piece is one document; its sections are still found by the model.
 - **Length.** A short essay gets one checkpoint at its end; the estimate under the form says how many questions to expect. Fewer than 150 words is refused.
-- **Pictures** are kept. A picture written into the file is taken as it is, and one at a web address is fetched. A picture that lies beside the file can only be read when you type the file's path instead of dropping the file, because a browser sends the one file and nothing around it. A picture that cannot be had leaves its description.
+- **Pictures** are kept: those of a web page are fetched with it, those of a saved `.mhtml` page and of a Word file come inside the file. A picture that lies beside a Markdown or HTML file can only be read when you type the file's path instead of dropping the file, because a browser sends the one file and nothing around it. A picture that cannot be had leaves its description.
+- **Added before.** When the same address or the same file is already in your library, the form says when you added it. You can still add it: the copy in the library stays as it was fetched, and a newer version of a page is a second entry. The entry's page shows where it came from and the day it was fetched, with a link to the original.
 
-Scripts, menus, forms and styling are taken out of HTML. An HTML file is taken whole, so a page saved from a web site keeps the text around the article for now. A Project Gutenberg text file loses its licence text. From the command line: `ebook-processor Essay.md`, with `--one-piece` to keep it whole; the EPUB made from the file is written to the output folder beside the others.
+**When a site does not give the page.** Some sites refuse programs, want a login, or build their text with JavaScript. The form then says which, and that the saved page is the way in. A page that says it is not free to read is taken with a warning that it may be only the opening. The app asks for a page the way a browser does, once, when you ask; it does not follow links or fetch anything on its own.
+
+Scripts, menus, forms and styling are taken out of every HTML source. A Word file's headings, lists, tables, quotations, footnotes and pictures are kept; formatting the app does not recognise becomes plain paragraphs, and the form says so. A Project Gutenberg text file loses its licence text. From the command line: `ebook-processor https://example.org/an-essay` or `ebook-processor Essay.docx`, with `--one-piece` and `--whole-page`; the EPUB made from it is written to the output folder beside the others, and for an address the fetched page is kept there too, so that running the command again carries on from the same page.
 
 ### Settings
 
@@ -502,7 +515,7 @@ After every push GitHub runs both (`.github/workflows/tests.yml`): the test suit
 | Path | Contents |
 | --- | --- |
 | `ebook_processor/prep/` | The EPUB engine, ported from `tools/prep` of eink-learner-aid: reading and numbering (`epub.py`, `words.py`), byte-exact rewriting (`epubzip.py`, `xmltree.py`), the draft's checks (`draft.py`), the firmware-format build (`build.py`) and its validator (`validate.py`). `python3 -m ebook_processor.prep` runs `extract`, `build` and `validate` on their own |
-| `ebook_processor/sources/` | Files that are no EPUB, turned into one at the door: any HTML made clean (`clean.py`), chapters cut at headings (`split.py`), the EPUB written (`pack.py`), a reader for each format (`from_markdown.py`, `from_text.py`, `from_html.py`), one web request with limits (`fetch.py`). `convert()` is all the rest of the app calls. Design: `docs/SOURCES-PLAN.md` |
+| `ebook_processor/sources/` | What is no EPUB, turned into one at the door: any HTML made clean (`clean.py`), chapters cut at headings (`split.py`), the EPUB written (`pack.py`), a reader for each format (`from_markdown.py`, `from_text.py`, `from_html.py`, which also finds the article in a page with trafilatura, `from_docx.py` with mammoth, `saved.py` for `.mhtml`), one web request with limits (`fetch.py`). `fetch_page()` and `convert()` are all the rest of the app calls. Design: `docs/SOURCES-PLAN.md` |
 | `ebook_processor/pipeline.py` | The run: parts, drafting, checking, revising, the saved state |
 | `ebook_processor/prompts.py`, `instructions/` | What is sent to Claude, and the reply shapes |
 | `ebook_processor/llm.py` | Claude Code without a terminal (`claude -p`, with no tools, no settings and no session history), Codex the same way (`codex exec`), and the router that sends each call to the tool its model setting names. A backend that calls an API directly would go here |

@@ -2,7 +2,7 @@
 
 This is the working plan for taking in articles and documents as well as EPUB books. It was agreed with the project owner in a three-round interview on 2026-11-19 and is written for whoever builds it, so that the work can start from this file alone. It holds what was decided, what was tried before writing it, the design, the order of work in two steps, and what is left for later.
 
-**Status: step 1 is built and on the development branch (Markdown, text and HTML files, the library's kinds, the `Articles` folder, the command line). Step 2 (web addresses, saved pages, Word files) is not started. Section 11 records what was done and where the work departed from this plan.**
+**Status: both steps are built and on the development branch; neither is on `main` yet (that is the owner's word). Section 11 records what was done and where the work departed from this plan. Real web sites have not been tried: see section 9.**
 
 ## 1. What it is for
 
@@ -285,3 +285,20 @@ Built as planned, with these differences:
 - **Real model:** a 320-word text file gave one section and two questions; a 1,370-word Markdown essay gave two sections and five questions. All passed their check, and none called the piece a book. The 8,000-word piece with headings was not run with the real model: once cut into chapters it takes the same path as a book.
 
 Order of work, section 8, step 1: items 1 to 10 done; item 11 (push, CI, report) follows.
+
+### Step 2 (2026-11-19)
+
+Built as planned, with these differences:
+
+- **One field, not two.** The form's field under the drop zone takes a web address or a path; what is typed decides (`https://…`, or a name like `example.org/essay`). Enter in it shows what was found and does not start the run.
+- **`fetch_page(url)`** gives the page; `convert(name, data, url=…, fetched=…, charset=…)` turns it into the EPUB, as for a file. An address that gives Markdown, plain text or a Word file is taken as that.
+- **A fetched page is always offered the choice** "only the article / the whole page", however plain it looks. For a file the choice is offered when it looks like a page of a site (a menu, the marks sites put in their heads, three scripts or more).
+- **Found too little.** Under 150 words at an address is refused with the reason (JavaScript, when the page says so) and the way out. A page that says it is not free to read, or says it is much longer than what was found, is taken with a warning; it is not refused.
+- **Captions.** The article finder drops the line under a picture, so the line is handed to it as a paragraph in italics.
+- **Word files.** The Title paragraph is the title and the headings move down one step under it; an Author paragraph is the author and no part of the text. The file's own properties are used only where the pages say nothing, and its creation date is not taken as a date of publication.
+- **The command line** keeps the fetched page in `<output>/source/` and reads it from there on a second run.
+- **`.webarchive`** is refused with a hint; not built.
+- **Pandoc:** not added. See `DEFERRED.md`.
+- **A flaw found on the way:** a test of the notes folder's search depended on two files getting different times; on Windows they can be written within one tick of the clock. The test now sets the older time itself.
+
+Order of work, section 8, step 2: items 1 to 8 done; item 9 (push, CI, report) follows. Section 9's first row stands: no real web site was reached from this session.

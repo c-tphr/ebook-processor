@@ -371,6 +371,10 @@ def test_search_covers_notes_and_the_passages_of_books(vault):
     lamp = vault.create("Lamps need tending", "A lamp left alone goes out. See [[The Almanac#^h3f9a]]. #keeping")
     wick = vault.create("Wicks", "Trim the wick; the LAMP burns clean. " + "filler " * 80 + "the end mentions sunrise.", props={"tags": ["keeping", "craft"]})
     quick = vault.create("", "lamp oil to buy", "quick")
+    # two files written within one tick of the clock (Windows) are as new as each other: say which is older
+    then = (vault.root / "Wicks.md").stat().st_mtime - 60
+    os.utime(vault.root / "Wicks.md", (then, then))
+    vault.refresh(force=True)
     found = vault.search("lamp")
     assert [n["id"] for n in found["notes"]] == [lamp["id"], quick["id"], wick["id"]]  # the title first, then the newest
     assert [t["title"] for t in found["titles"]] == ["Lamps need tending"]

@@ -447,8 +447,10 @@ function chapterSelect(chapters, chosen) {
   if (sel.selectedIndex < 0) sel.selectedIndex = 0;
   return sel;
 }
-const ACCEPTED_FILES = ".epub,.md,.markdown,.txt,.text,.html,.htm,.xhtml,application/epub+zip,text/markdown,text/plain,text/html";
-const SOURCE_NAMES = { markdown: "Markdown file", text: "Text file", html: "HTML file", epub: "EPUB" };
+const ACCEPTED_FILES = ".epub,.md,.markdown,.txt,.text,.html,.htm,.xhtml,.docx,.mhtml,.mht,application/epub+zip,text/markdown,text/plain,text/html,application/vnd.openxmlformats-officedocument.wordprocessingml.document,multipart/related";
+const SOURCE_NAMES = { markdown: "Markdown file", text: "Text file", html: "HTML file", docx: "Word file", saved: "Saved page", web: "Web page", epub: "EPUB" };
+// What is typed in the Add form's field: a web address ("example.org/essay" counts), or else a path on this computer.
+const isAddress = (text) => /^https?:\/\//i.test(text) || (/^[\w-]+(\.[\w-]+)*\.[a-z]{2,}(\/|$)/i.test(text) && !/\.(epub|md|markdown|txt|text|html?|xhtml|docx|mhtml?)$/i.test(text));
 const PURPOSE_HINT = "For example: I am reading this to decide how to price our product. I want to come away able to explain the main models and when each one fails.";
 
 /* ---------- home ---------- */
@@ -458,13 +460,15 @@ function showAdd() {
   const error = h("div", { class: "msg err", role: "alert", hidden: true });
   const name = h("span", { class: "m mute" }, "No file chosen");
   const input = h("input", { type: "file", accept: ACCEPTED_FILES, hidden: true, onchange: () => choose(input.files[0]) });
-  const pathInput = h("input", { type: "text", placeholder: "/home/you/Books/Title.epub", id: "path", onchange: () => { file = null; name.textContent = "No file chosen"; name.classList.add("mute"); look(); } });
+  const pathInput = h("input", { type: "text", placeholder: "https://example.org/an-essay   or   /home/you/Books/Title.epub", id: "path", onchange: () => { file = null; name.textContent = "No file chosen"; name.classList.add("mute"); look(); },
+    // Enter here shows what was found; it does not start the run before the reader has seen it
+    onkeydown: (e) => { if (e.key === "Enter") { e.preventDefault(); pathInput.blur(); } } });
   // What the form knows of a chosen file and lets the reader set: what it is, and for a file that is no EPUB its
   // title, its author and whether its headings make chapters.
   const seen = h("div", { class: "seen", id: "seen", hidden: true });
   const kindSel = h("select", { id: "kind", "aria-label": "Kind", onchange: () => noun() }, h("option", { value: "book" }, "Book"), h("option", { value: "article" }, "Article"));
   const titleIn = h("input", { type: "text", id: "src-title", maxlength: 300 }), authorIn = h("input", { type: "text", id: "src-author", maxlength: 300 });
-  let splitHow = "auto";
+  let splitHow = "auto", wholeHow = null;   // wholeHow: all of a page (true), only its article (false), or as the app guesses
   function noun() {                     // the form speaks of what was chosen
     const word = kindSel.value;
     if (!$("go").disabled) $("go").textContent = "Process " + word;
@@ -478,12 +482,15 @@ function showAdd() {
     const how = !f ? null : f.rule === "headings" ? `${n} chapters, cut at its headings.`
       : `${n} chapters, found by ${{ named: "lines like", capitals: "lines in capitals like", numerals: "numbers on a line of their own like", marks: "headings like" }[f.rule] || "lines like"} “${f.example}”.`;
     const one = h("input", { type: "checkbox", id: "one-piece", checked: splitHow === "none", onchange: () => { splitHow = one.checked ? "none" : "auto"; look(true); } });
+    const pg = looked.page, all = h("input", { type: "checkbox", id: "whole-page", checked: !!(pg && pg.whole), disabled: !!(pg && pg.lost), onchange: () => { wholeHow = all.checked; look(true); } });
     put(seen,
       src ? h("div", { class: "grid2" }, field("Title", titleIn), field("Author", authorIn)) : null,
       h("div", { class: "row", style: "gap:18px;align-items:flex-end;flex-wrap:wrap" }, field("Kind", kindSel),
-        src ? h("p", { class: "m mute", style: "margin:0 0 8px", id: "seen-what" }, `${SOURCE_NAMES[looked.origin.format] || "File"}${looked.origin.site ? " / " + looked.origin.site : ""} / ${fmt(looked.words)} words`) : null),
+        src ? h("p", { class: "m mute", style: "margin:0 0 8px", id: "seen-what" }, `${SOURCE_NAMES[looked.origin.format] || "File"}${looked.origin.site ? " / " + looked.origin.site : ""}${looked.origin.published ? " / " + looked.origin.published : ""} / ${fmt(looked.words)} words`) : null),
       src ? h("p", { id: "seen-found", style: "margin:12px 0 0" }, how || (splitHow === "none" ? `One piece of ${fmt(looked.words)} words.` : looked.format === "text" || looked.origin.format === "text" ? `No chapter headings were found. It will be read as one piece of ${fmt(looked.words)} words.` : `One piece of ${fmt(looked.words)} words.`)) : null,
       src && (f || splitHow === "none") ? h("label", { class: "check", style: "margin-top:8px" }, one, h("span", {}, "Treat it as one piece, without chapters")) : null,
+      src && pg && pg.page ? h("label", { class: "check", style: "margin-top:8px" }, all, h("span", { id: "seen-page" }, pg.lost ? "The whole page is taken"
+        : pg.whole ? "The whole page is taken. Untick to take only the article in it" : "Only the article was taken. Tick to take the whole page")) : null,
       src && f ? h("details", { class: "adv", style: "margin-top:8px" }, h("summary", {}, "The chapters"), h("ol", { class: "chapters" }, looked.chapters.map((c) => h("li", {}, c.title, h("span", { class: "m mute" }, ` / ${fmt(c.words)} words`))))) : null,
       src && looked.pictures.kept ? h("p", { class: "m mute", style: "margin:10px 0 0" }, `${looked.pictures.kept} picture${looked.pictures.kept === 1 ? "" : "s"} kept.`) : null,
       ...(looked.warnings || []).map((w) => h("p", { class: "msg", style: "margin:10px 0 0" }, w)),
@@ -499,7 +506,7 @@ function showAdd() {
     ondragover: (e) => { e.preventDefault(); drop.classList.add("over"); },
     ondragleave: () => drop.classList.remove("over"),
     ondrop: (e) => { e.preventDefault(); drop.classList.remove("over"); choose(e.dataTransfer.files[0]); } },
-    h("strong", {}, "Drop a file here"), h("span", { class: "m mute" }, "EPUB, Markdown, plain text or HTML"),
+    h("strong", {}, "Drop a file here"), h("span", { class: "m mute" }, "EPUB, Markdown, text, HTML, Word, or a saved web page"),
     h("div", { class: "row" }, h("button", { type: "button", onclick: () => input.click() }, "Choose a file"), name), input);
 
   const field = (label, control, hint) => h("label", { class: "field" }, h("span", { class: "m" }, label), control, hint ? h("small", {}, hint) : null);
@@ -535,13 +542,16 @@ function showAdd() {
     if (!key) { looked = lookedOf = null; drawSeen(); return estimate(); }
     if (lookedOf === key && !again) return;
     const held = again && looked && looked.held;
-    if (!again) splitHow = "auto";
+    if (!again) { splitHow = "auto"; wholeHow = null; }
     lookedOf = key; error.hidden = true;
+    const address = !file && isAddress(path);
+    if (address && !again) { looked = null; put(seen, h("p", { class: "m mute", style: "margin:0", id: "fetching" }, "Fetching the page")); seen.hidden = false; }
     const fresh = () => (file ? api(`/look?name=${encodeURIComponent(file.name)}&split=${splitHow}`, { method: "POST", body: file, headers: { "Content-Type": "application/octet-stream" } })
+      : address ? api("/look/url", { method: "POST", json: { url: path, split: splitHow } })
       : api("/look/local", { method: "POST", json: { path, split: splitHow } }));
     try {
       let got;
-      try { got = held ? await api("/look/held", { method: "POST", json: { held, split: splitHow } }) : await fresh(); }
+      try { got = held ? await api("/look/held", { method: "POST", json: { held, split: splitHow, whole: wholeHow } }) : await fresh(); }
       catch (err) { if (!held || err.status !== 410) throw err; got = await fresh(); }   // the app was started again since
       if (lookedOf !== key) return;
       if (!again) { titleIn.value = got.title || ""; authorIn.value = got.author || ""; kindSel.value = got.type || "book"; }
@@ -569,7 +579,7 @@ function showAdd() {
   let trial = false;
   const form = h("form", { onsubmit: submit },
     drop,
-    h("div", { style: "margin-top:18px" }, field("Or the path of a file on this computer", pathInput)),
+    h("div", { style: "margin-top:18px" }, field("Or a web address, or the path of a file on this computer", pathInput)),
     seen,
     options.main,
     h("details", { class: "adv" }, h("summary", {}, "Advanced"), options.advanced),
@@ -588,13 +598,14 @@ function showAdd() {
     const settings = options.read();
     const path = pathInput.value.trim();
     if (!file && !path) { error.textContent = "Choose a file first."; error.hidden = false; return; }
-    const plan = { purpose: purpose.value, interests: useAbout.checked, type: kindSel.value };
+    const plan = { purpose: purpose.value, interests: useAbout.checked };
+    if (looked) plan.type = kindSel.value;   // before the file was looked at, the app's own guess stands
     if (trial && chapter) plan.trial = +chapter.value;
     const held = looked && looked.held;
-    if (held) Object.assign(plan, { title: titleIn.value.trim(), author: authorIn.value.trim(), split: splitHow });
+    if (held) Object.assign(plan, { title: titleIn.value.trim(), author: authorIn.value.trim(), split: splitHow, whole: wholeHow });
     $("go").disabled = $("go-try").disabled = true; $("go").textContent = "Reading the " + kindSel.value;
     const whole = () => (path && !file
-      ? api("/jobs/local", { method: "POST", json: { path, settings, plan } })
+      ? api(isAddress(path) ? "/jobs/url" : "/jobs/local", { method: "POST", json: { path, url: path, settings, plan } })
       : api(`/jobs?name=${encodeURIComponent(file.name)}&settings=${encodeURIComponent(JSON.stringify(settings))}&plan=${encodeURIComponent(JSON.stringify(plan))}`,
           { method: "POST", body: file, headers: { "Content-Type": "application/octet-stream" } }));
     try {
@@ -618,7 +629,7 @@ function showAdd() {
   put(app,
     h("a", { class: "back m", href: "#/" }, "← Library"),
     h("div", { class: "title" }, h("h1", {}, "Add a book or article"),
-      h("p", { style: "margin:0;max-width:46ch" }, "Give it an EPUB, or an article or document as a Markdown, text or HTML file. It divides the text into sections, writes recall questions for the end of each one, has them checked against the text, and puts it in your library with its checkpoints.")),
+      h("p", { style: "margin:0;max-width:46ch" }, "Give it an EPUB, the address of an article on the web, or a document as a Markdown, text, HTML or Word file. It divides the text into sections, writes recall questions for the end of each one, has them checked against the text, and puts it in your library with its checkpoints.")),
     info.claude.ok ? null : info.codex && info.codex.ok
       ? h("div", { class: "msg" }, "Claude Code is not ready, so choose a Codex model under Advanced, or make one the default in Settings. ", h("span", { class: "mute" }, info.claude.error))
       : h("div", { class: "msg err", role: "alert" }, info.claude.error),

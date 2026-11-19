@@ -170,3 +170,80 @@ def test_the_command_line_estimates_and_processes_a_file(tmp_path: Path, capsys,
     assert (out_dir / "On Keeping Lamps.epub").is_file() and (out_dir / "On Keeping Lamps.prepared.epub").is_file()
     made = (out_dir / "On Keeping Lamps.epub").stat().st_mtime_ns
     assert cli.main([str(essay)]) == 0 and (out_dir / "On Keeping Lamps.epub").stat().st_mtime_ns == made  # carried on, not made again
+
+
+# ---- step 2: web addresses, saved pages, Word files
+
+
+from tests.sources.makers import make_docx, make_mhtml  # noqa: E402
+from tests.sources.test_convert import CLUTTER, FILL, PNG, the_web  # noqa: E402, F401 - the_web is a fixture
+
+
+def test_an_address_is_fetched_once_held_and_processed(app, the_web, monkeypatch):  # noqa: F811
+    from ebook_processor.sources import fetch
+    asked = []
+    real = fetch.get
+    monkeypatch.setattr(fetch, "get", lambda url, *a, **k: asked.append(url) or real(url, *a, **k))
+    status, seen = app("POST", "/look/url", json_body={"url": the_web + "/moved"})
+    assert status == 200 and seen["origin"]["format"] == "web" and seen["origin"]["url"] == the_web + "/essay" and seen["type"] == "article"
+    assert seen["page"] == {"page": True, "whole": False, "lost": False} and seen["pictures"] == {"kept": 1, "missing": 0}
+    assert (seen["title"], seen["author"]) == ("On Keeping Lamps", "Ione Hartwell") and seen["origin"]["fetched"]
+    whole = app("POST", "/look/held", json_body={"held": seen["held"], "whole": True})[1]
+    assert whole["page"]["whole"] and whole["words"] > seen["words"]
+    job = app("POST", "/jobs/held", json_body={"held": seen["held"], "settings": {}, "plan": {"whole": False}})[1]
+    assert asked == [the_web + "/moved", the_web + "/light.png"]  # the page and its picture, each asked for once
+    assert job["type"] == "article" and job["origin"]["site"] == "The Shore Review" and job["file"] == "On Keeping Lamps.epub"
+    job = app.done(job["id"])
+    assert job["status"] == "done" and (app.data / job["id"] / "input" / "original" / "page.html").read_bytes() == CLUTTER.encode()
+    assert job["words"] == seen["words"]
+    made = app("POST", f"/jobs/{job['id']}/notes/highlight", json_body={"chapter": 1, "start": 3, "end": 9, "note": ""})[1]["made"]
+    app("GET", "/vault")
+    text = (app.folder / "Articles" / "On Keeping Lamps.md").read_text(encoding="utf-8")
+    assert f"url: {the_web}/essay\n" in text and "site: The Shore Review\n" in text and "fetched: " in text and f"^{made}" in text
+    again = app("POST", "/look/url", json_body={"url": the_web + "/essay?utm_source=x#top"})[1]
+    assert again["seen_before"] == job["created"]  # the same address, however it was written
+    second = app("POST", "/jobs/url", json_body={"url": the_web + "/essay", "settings": {}, "plan": {}})
+    assert second[0] == 201 and second[1]["id"] != job["id"]  # a second entry, as the reader asked
+
+
+def test_an_address_that_cannot_be_taken_says_why(app, the_web):  # noqa: F811
+    for path, said in (("/forbidden", "refused to give the page"), ("/paper.pdf", "PDF files are not supported yet"), ("/shell", "JavaScript")):
+        status, answer = app("POST", "/look/url", json_body={"url": the_web + path})
+        assert status == 400 and said in answer["error"]
+    assert app("POST", "/look/url", json_body={"url": ""})[0] == 400 and app("POST", "/look/url", json_body={"url": "file:///etc/passwd"})[0] == 400
+
+
+def test_a_word_file_and_a_saved_page_through_the_app(app):
+    data = make_docx([("Title", "On Keeping Lamps"), ("Heading1", "The rule"), (None, FILL * 20), (None, "<picture>")], picture=PNG)
+    seen = app("POST", "/look?name=lamps.docx", body=data)[1]
+    assert seen["origin"]["format"] == "docx" and seen["title"] == "On Keeping Lamps" and seen["pictures"]["kept"] == 1 and seen["page"] is None
+    assert app.done(app("POST", "/jobs/held", json_body={"held": seen["held"], "settings": {}})[1]["id"])["status"] == "done"
+    page = make_mhtml(CLUTTER.replace('src="/light.png"', 'src="https://example.org/img/light.png"'), "https://example.org/essays/lamps",
+                      {"https://example.org/img/light.png": PNG})
+    seen = app("POST", "/look?name=lamps.mhtml", body=page)[1]
+    assert seen["origin"]["format"] == "saved" and seen["origin"]["url"] == "https://example.org/essays/lamps" and seen["pictures"]["kept"] == 1
+    assert seen["page"] == {"page": True, "whole": False, "lost": False}
+
+
+def test_the_command_line_takes_an_address(tmp_path: Path, the_web, capsys, monkeypatch) -> None:  # noqa: F811
+    monkeypatch.chdir(tmp_path)
+
+    def stand_in(*args, **kwargs):
+        backend = Script().backend()
+        backend.check_available = lambda models=None: {}
+        return backend
+
+    monkeypatch.setattr(runner, "default_backend", stand_in)
+    assert cli.main(["estimate", the_web + "/essay"]) == 0 and capsys.readouterr().out.startswith("On Keeping Lamps: ")
+    assert cli.main(["estimate", the_web + "/forbidden"]) == 1 and "refused to give the page" in capsys.readouterr().err
+    assert cli.main([the_web + "/essay"]) == 0
+    out_dir = tmp_path / "On Keeping Lamps-processed"
+    assert (out_dir / "On Keeping Lamps.prepared.epub").is_file() and (out_dir / "source" / "page.html").read_bytes() == CLUTTER.encode()
+    said = json.loads((out_dir / "source" / "page.json").read_text(encoding="utf-8"))
+    assert said["url"] == the_web + "/essay" and said["asked"] == the_web + "/essay"
+    made = (out_dir / "On Keeping Lamps.epub").read_bytes()
+    # the site changes; the run's own copy is what a second run reads
+    monkeypatch.setitem(__import__("tests.sources.test_convert", fromlist=["PAGES"]).PAGES, "/essay", ("text/html", CLUTTER.replace("promise", "CHANGED").encode()))
+    assert cli.main([the_web + "/essay", "-o", str(out_dir)]) == 0 and (out_dir / "On Keeping Lamps.epub").read_bytes() == made
+    assert cli.main([the_web + "/essay", "-o", str(tmp_path / "whole"), "--whole-page"]) == 0
+    assert (tmp_path / "whole" / "On Keeping Lamps.epub").stat().st_size != len(made)

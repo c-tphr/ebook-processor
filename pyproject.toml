@@ -16,6 +16,8 @@ dependencies = [
     "markdown>=3.6,<4",
     "lxml>=5,<7",
     "charset-normalizer>=3,<4",
+    "trafilatura>=2,<3",  # finds the article in a web page
+    "mammoth>=1.8,<2",  # reads Word files
 ]
 
 [project.optional-dependencies]

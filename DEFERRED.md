@@ -202,12 +202,16 @@ Passed over while Phase 1 was built. The later phases are in `docs/KNOWLEDGE-PLA
 | The notes' questions in the Anki deck | A book's exports hold the book's questions. Cards made from notes are practised in the app only |
 | Choosing the sources of an answer | The sources sent with a question are found by shared words and tags. A question phrased in words your notes do not use can miss them; the model is not asked to search |
 
-### Other sources than EPUB (step 1: Markdown, text and HTML files)
+### Other sources than EPUB
 
-Planned and not yet built, in `docs/SOURCES-PLAN.md`: web addresses, pages saved from the browser (with the article found in them), Word files. Left for later there: PDF, a browser extension, pasted text, several files at once, fetching a page again.
+Both steps of `docs/SOURCES-PLAN.md` are built: Markdown, text, HTML and Word files, saved pages, web addresses. Left for later there: PDF, a browser extension (or taking pages from one that exists), pasted text, several files at once, fetching a page again to see what changed, articles spread over several pages, Safari's `.webarchive`, `.rtf` and `.odt`.
 
 | Item | What it means |
 | --- | --- |
+| Pandoc for Word files | Not added. Word files are read by a small library (mammoth), which did well on the files tried. Pandoc stays the fallback if your own files come out badly: say so and it can be added as an optional extra |
+| A route for a browser extension | Not built. The converter already takes "a page's HTML and its address", which is what an extension would send; what is missing is a route another program may call, with a key of its own shown in Settings |
+| A page's caption lines | The line under a picture is kept as a paragraph in italics, not as a caption tied to the picture |
+| Sites that refuse the app | No way round is built (no other identity, no waiting and trying again). The form names the saved page as the way in |
 | Where an article came from, in the reader | The address and "open the original" are on the entry's page. The reader's top bar does not show them |
 | "Book" in the wording | The Add form, the entry's page and the library speak of an article. Settings, the help under options, the reader and the Process view still say "book" for both |
 | A setting of its own for articles' section length | Not built: the usual setting applies and can be changed per run |
@@ -226,10 +230,13 @@ Things that work in tests but have not been confirmed in real use, and facts tha
 
 | Item | What is missing |
 | --- | --- |
+| Real web sites | **Not tried at all.** The session that built this could not reach the web, so fetching and article finding were tested against a small site run by the tests themselves (a page with a menu, an advert, a related box, comments and a footer; a redirect; refusals; a PDF; a script-only page; a paywalled page). Try five or six of your own addresses with `ebook-processor beta` before trusting it |
+| A page saved by Firefox or Safari | A `.mhtml` file written by Chromium itself is tested. Firefox saves `.html` with a folder beside it (the pictures are then missing unless the page names them by full address); Safari's `.webarchive` is refused with a hint |
+| Real Word files | Tried on files built by the tests and on one written by Pandoc. Files from Word, Google Docs and Pages differ in their styles |
 | Real Markdown, text and HTML files | Tried on files written for the tests and on two pieces through the real model (320 and 1,370 words: one and two sections, two and five questions, all passing their check). Your own exports from writing tools, and text files of real books, have not been through it |
 | Chapter headings in text files | The rules were tried on made-up layouts. Real books vary more (a contents list that repeats every heading, for one) |
 | A file in a non-Western encoding without a mark | The guess prefers Western European when it fits. A wrong guess shows as garbled accents in the form's title, before anything is run |
-| The new libraries on every system | `lxml` is compiled code; GitHub's runs confirm Linux, Windows and macOS on the Python versions tested |
+| The new libraries on every system | `lxml` is compiled code, and trafilatura brings a dozen libraries of its own (about 35 MB on disk in all); GitHub's runs confirm that they install and work on Linux, Windows and macOS on the Python versions tested |
 | The notes folder in Obsidian | The folder is written to be an Obsidian vault: file names as titles, `[[links]]` by name, block ids, YAML properties, `.trash`. Obsidian itself has not opened one, because it is not available where the app is built. To check: open the folder as a vault, follow a `Source: [[Book#^id]]` link to its highlight (a highlight is written as `> words ^id`; if Obsidian does not find an id at the end of a quoted line, the id belongs on a line of its own after the quote, a form the app already reads), edit a note there and see it change in the app, rename a note in the app and see Obsidian's links follow |
 | The notes folder on Windows and macOS | File names, letter case and renaming are tested, and GitHub runs the tests on both systems. Not seen in real use: a note open in another program while the app saves it (Windows refuses, and the app says so), and a folder inside OneDrive or iCloud |
 | The editor on a phone or tablet | CodeMirror supports touch, but the Notes pages were laid out and tested for a laptop or desktop browser |

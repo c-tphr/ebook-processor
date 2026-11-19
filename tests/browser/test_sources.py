@@ -202,3 +202,31 @@ def test_a_page_saved_by_the_browser_itself_is_read(page: Page, own: App, the_we
     expect(page.locator("#seen-what")).to_contain_text("Saved page / The Shore Review /")
     expect(page.locator("#seen-page")).to_contain_text("Only the article was taken")
     expect(page.locator("#seen")).to_contain_text("1 picture kept.")   # the picture came inside the file
+
+
+def test_a_picture_that_stands_alone_is_shown_in_every_view(page: Page, own: App):
+    """An article's picture is a block of its own, not inside a figure as a book's mostly are."""
+    import base64
+
+    from tests.browser.conftest import Reader
+
+    inline = "data:image/png;base64," + base64.b64encode(PNG).decode()
+    text = f"# Lamps\n\n{FILL * 30}\n\n![The light]({inline})\n\n{FILL * 30}"
+    own.id = own.call("POST", "/jobs?name=lamps.md", text.encode())["id"]
+    for _ in range(600):
+        if own.call("GET", f"/jobs/{own.id}")["status"] not in ("queued", "running"):
+            break
+        page.wait_for_timeout(50)
+    chapter = own.call("GET", f"/jobs/{own.id}/book/chapter/1")
+    at = next(a for kind, a, b in chapter["markers"] if kind == "IMAGE")
+    assert f'data-w="{at}" data-n="0"' in chapter["html"] and 'data-kind="image" data-src="OEBPS/images/p001.png"' in chapter["html"]
+    reader = Reader(page, own).open(f"1:{at}", "scroll")
+    shown = "(sel) => { const i = document.querySelector(sel); return !!i && i.complete && i.naturalWidth > 0; }"
+    page.wait_for_function(shown, arg=".sv img")
+    reader.open(f"1:{at - 4}", "rsvp")
+    page.keyboard.press("Space")                                   # play: the reader stops at the picture
+    expect(page.locator(".rv .word")).to_contain_text("A picture: look, then press play")
+    page.wait_for_function(shown, arg=".rv .ctx img")              # the picture itself, not only the words about it
+    expect(page.locator(".rv .ctx img")).to_be_visible()
+    reader.mode("page")
+    page.wait_for_function(shown, arg="img[alt='The light']")

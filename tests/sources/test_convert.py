@@ -446,6 +446,22 @@ def test_a_saved_page_brings_its_pictures() -> None:
     assert 'data-src="OEBPS/images/p001.png"' in shown(made)
 
 
+def test_a_page_saved_as_one_html_file_keeps_the_pictures_written_into_it() -> None:
+    inline = "data:image/png;base64," + base64.b64encode(PNG).decode()
+    page = CLUTTER.replace('src="/light.png"', f'src="{inline}"')
+    made = sources.convert("single.html", page.encode(), web=False)
+    assert made.page["whole"] is False and made.pictures == {"kept": 1, "missing": 0} and "lamp oil" not in shown(made)
+    assert sources.convert("single.html", page.encode(), web=False, whole=True).pictures == {"kept": 1, "missing": 0}
+
+
+def test_a_picture_that_stands_alone_says_where_it_lies() -> None:
+    inline = "data:image/png;base64," + base64.b64encode(PNG).decode()
+    made = sources.convert("a.md", f"# T\n\n{FILL * 30}\n\n![The light]({inline})\n\n{FILL * 30}".encode(), web=False)
+    block = next(b for b in made.book.spine[0].blocks if b.kind == "image")
+    assert block.element.local == "img"  # not inside a figure: the picture is the block
+    assert f'<img data-w="{block.start}" data-n="0" data-ref="{block.ref}" data-kind="image" data-src="OEBPS/images/p001.png"' in shown(made)
+
+
 def test_a_word_file() -> None:
     data = make_docx([("Title", "On Keeping Lamps"), ("Author", "Ione Hartwell"), ("Heading1", "The rule"), (None, FILL * 20),
                       ("Quote", "Whatever the weather."), (None, "<picture>"), ("Odd", "In a style nobody knows."),

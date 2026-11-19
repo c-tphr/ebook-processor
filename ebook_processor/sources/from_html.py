@@ -83,6 +83,36 @@ def signs(html: str) -> dict[str, Any]:
     return out
 
 
+def lift(html: str) -> tuple[str, dict[str, bytes]]:
+    """Pictures written into a page (``data:`` addresses, as a page saved as one HTML file has them) are given
+    addresses of their own, because the article finder keeps only pictures that have one. The bytes come back
+    under those addresses."""
+    if "data:image/" not in html:
+        return html, {}
+    import base64
+    import binascii
+    import urllib.parse
+
+    tree = C.parse(html).getroottree().getroot()
+    held: dict[str, bytes] = {}
+    for image in tree.iter("img"):
+        src = (image.get("src") or "").strip()
+        if not src.startswith("data:image/"):
+            continue
+        head, _, body = src.partition(",")
+        try:
+            data = base64.b64decode(body, validate=False) if ";base64" in head else urllib.parse.unquote_to_bytes(body)
+        except (binascii.Error, ValueError):
+            continue
+        kind = head[len("data:image/"):].split(";")[0].split("+")[0].lower() or "png"
+        address = f"https://written-into-the-page.invalid/{len(held) + 1}.{ {'jpeg': 'jpg'}.get(kind, kind) }"
+        held[address] = data
+        image.set("src", address)
+        for name in ("srcset", "data-src", "data-srcset"):
+            image.attrib.pop(name, None)
+    return (lxml.html.tostring(tree, encoding="unicode"), held) if held else (html, {})
+
+
 def article(html: str, url: str | None) -> tuple[str | None, dict[str, Any]]:
     """The article of a page, as HTML, with what the page says of it; None when no article was found."""
     import warnings
@@ -122,18 +152,20 @@ def article(html: str, url: str | None) -> tuple[str | None, dict[str, Any]]:
     return inner, known
 
 
-def read(html: str, whole: bool | None = None, url: str | None = None) -> tuple[str, dict[str, Any], dict[str, Any]]:
-    """The HTML to clean; what is known of the piece; and how it was taken: ``page`` (it looks like a page of a
-    site), ``whole`` (all of it was taken) and ``lost`` (an article was looked for and not found)."""
+def read(html: str, whole: bool | None = None, url: str | None = None) -> tuple[str, dict[str, Any], dict[str, Any], dict[str, bytes]]:
+    """The HTML to clean; what is known of the piece; how it was taken: ``page`` (it looks like a page of a
+    site), ``whole`` (all of it was taken) and ``lost`` (an article was looked for and not found); and the
+    pictures that were written into the page, by the addresses they now have."""
     known = facts(html)
     page = is_page(html)
     how = {"page": page, "whole": True, "lost": False}
     if whole is True or (whole is None and not page):
-        return html, known, how
-    found, said = article(html, url or known.get("url"))
+        return html, known, how, {}
+    lifted, held = lift(html)
+    found, said = article(lifted, url or known.get("url"))
     if found is None or C.words(lxml.html.fragment_fromstring(found, create_parent="div")) < 40:
         how["lost"] = True
-        return html, known, how
+        return html, known, how, {}
     how["whole"] = False
     # the page's own head is the better word on the address; the library is the better word on the rest
     for key, value in said.items():
@@ -142,4 +174,4 @@ def read(html: str, whole: bool | None = None, url: str | None = None) -> tuple[
         if key == "author" and (";" in value or len(value) > 120) and known.get("author"):
             continue
         known[key] = value
-    return found, known, how
+    return found, known, how, held

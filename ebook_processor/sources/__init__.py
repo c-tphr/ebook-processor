@@ -222,7 +222,9 @@ def convert(name: str, data: bytes, *, url: str | None = None, folder: Path | No
             text = decode(data_html, charset or declared_in_html(data_html))
         else:
             text = decode(data, charset or declared_in_html(data))
-        html, facts, how = from_html.read(text, whole, url)
+        html, facts, how, written = from_html.read(text, whole, url)
+        if written:
+            parts = {**(parts or {}), **written}
         signs = from_html.signs(text)
         if fetched is not None:
             how["page"] = True  # what an address gave is a page, however plain: the reader may choose how much of it

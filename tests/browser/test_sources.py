@@ -225,8 +225,16 @@ def test_a_picture_that_stands_alone_is_shown_in_every_view(page: Page, own: App
     page.wait_for_function(shown, arg=".sv img")
     reader.open(f"1:{at - 4}", "rsvp")
     page.keyboard.press("Space")                                   # play: the reader stops at the picture
-    expect(page.locator(".rv .word")).to_contain_text("A picture: look, then press play")
-    page.wait_for_function(shown, arg=".rv .ctx img")              # the picture itself, not only the words about it
-    expect(page.locator(".rv .ctx img")).to_be_visible()
+    expect(page.locator(".rv .ctx .cue")).to_have_text("A picture: look, then press play")
+    page.wait_for_function(shown, arg=".rv .word img")             # the picture itself, where the words stand
+    expect(page.locator(".rv .word img")).to_be_visible()
+    box = page.evaluate("""() => { const r = (s) => document.querySelector(s).getBoundingClientRect();
+        return { img: r(".rv .word img"), area: r(".rv .word"), ctl: r(".rv .ctl"), cue: r(".rv .ctx .cue") }; }""")
+    assert box["img"]["bottom"] <= box["ctl"]["top"] < box["cue"]["top"]          # the picture above the controls, the cue below
+    assert box["img"]["top"] >= box["area"]["top"] - 1 and box["img"]["bottom"] <= box["area"]["bottom"] + 1   # and all of it in view
+    page.keyboard.press("Space")                                   # playing on puts the words back where they were
+    page.keyboard.press("Space")
+    expect(page.locator(".rv .word.stop")).to_have_count(0)
+    expect(page.locator(".rv .word img")).to_have_count(0)
     reader.mode("page")
     page.wait_for_function(shown, arg="img[alt='The light']")

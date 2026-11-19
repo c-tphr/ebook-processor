@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-import pytest
-from playwright.sync_api import Page, expect
+import threading
+import time
 
+import pytest
+from playwright.sync_api import Page, Route, expect
+
+from ebook_processor.web import server
 from tests.browser.conftest import App, Reader
 from tests.browser.test_notes import SELECT, highlight
 
@@ -111,6 +115,43 @@ def test_questions_are_made_reworded_written_and_proposed_for_many_in_the_notebo
     state = book.call("GET", f"/jobs/{book.id}/questions")["questions"]
     assert sorted(q["status"] for q in state) == ["accepted", "accepted", "proposed", "proposed"]
     assert [q["highlight"] for q in state if q["status"] == "accepted"] == [None, None]
+
+
+def test_a_question_written_while_the_notebook_loads_is_still_shown(reader: Reader, page: Page, book: App, monkeypatch):
+    """The notebook page reads the entries and what is still being written. A question can be finished between
+    the two, and here it always is: the entries are read before it is written, and anything read apart from them
+    is read after. The page must still come to show it, and not rest on "no question, nothing being written"."""
+    reader.open("2:0", "scroll")
+    highlight(reader, 2, 7)
+    page.goto(f"{book.url}/#/notebook/{book.id}")
+    entry = page.locator(".nb .quote").first.locator("xpath=..")
+    make = entry.get_by_role("button", name="Make a question")
+    make.wait_for()
+    entries_read = threading.Event()
+    read_entries, write_question = server.Jobs.notebook, server.hq.propose
+
+    def notebook(jobs: server.Jobs, job_id: str) -> dict:
+        try:
+            return read_entries(jobs, job_id)
+        finally:
+            entries_read.set()
+
+    def propose(*args, **kwargs) -> dict:
+        entries_read.wait(5)                     # the model answers only when the page has read the entries
+        return write_question(*args, **kwargs)
+
+    def after_the_question(route: Route) -> None:
+        for _ in range(250):                     # what is being written is asked about only when nothing is
+            if route.request.method != "GET" or not book.call("GET", f"/jobs/{book.id}/questions")["pending"]:
+                break
+            time.sleep(0.02)
+        route.continue_()
+
+    monkeypatch.setattr(server.Jobs, "notebook", notebook)
+    monkeypatch.setattr(server.hq, "propose", propose)
+    page.route("**/api/jobs/*/questions", after_the_question)
+    make.click()
+    expect(entry.locator(".ans[data-status=proposed]")).to_have_count(1, timeout=10000)
 
 
 def test_a_question_for_a_section_already_read_is_practised(reader: Reader, page: Page, book: App):

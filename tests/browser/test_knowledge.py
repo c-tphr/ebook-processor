@@ -534,9 +534,10 @@ def test_tables_embeds_callouts_footnotes_and_tasks_show_as_what_they_are(page: 
     note = make(book, title="More of Markdown", body="| Name | Price |\n| :--- | ---: |\n| Lamp oil | 12 |\n\nA footnote[^1] and an embed:\n\n![[Decide once]]\n\n"
                                                      "> [!note] Remember\n> Callouts are boxes.\n\n- [ ] book a room\n- [x] write the outline\n\n[^1]: The footnote's text.\n")
     page.goto(f"{book.url}/#/notes/{note['id']}")
-    page.wait_for_selector(".cm-content .cm-table")
-    page.locator(".nt-status").click()
+    page.wait_for_selector(".cm-focused")
+    page.locator(".nt-status").click()                                          # the cursor starts in the table, which then shows as text
     content = page.locator(".cm-content")
+    expect(content.locator(".cm-table")).to_be_visible()
     expect(content.locator(".cm-table th")).to_have_text(["Name", "Price"])
     expect(content.locator(".cm-table td")).to_have_text(["Lamp oil", "12"])
     expect(content.locator(".cm-embed")).to_contain_text("A decision made in advance is cheaper.")

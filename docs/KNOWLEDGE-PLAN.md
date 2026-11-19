@@ -2,7 +2,7 @@
 
 This is the working plan for the knowledge system, agreed with the project owner in a six-round interview on 2026-11-18. It is written for whoever builds it, so that the work can start from this file alone. It holds what was decided, the phases, a design for each phase, and the questions that are still open. Keep it up to date as phases are finished: mark what is done, and move what was passed over to `DEFERRED.md`.
 
-**Status: Phases 1 to 3 are on `main`. Phase 4 (the graph, the neighbourhood, revisiting, the timeline) is built and on the development branch (section 6e); it goes to `main` when the owner says. Phase 5, the model's part, starts with its interview.**
+**Status: Phases 1 to 4 are on `main`. Phase 5 (the model: connections, answers, questions from notes) is being built in the order of section 6f.**
 
 ## 1. What it is for
 
@@ -312,6 +312,29 @@ Order of work:
 2. [x] The pages: graph, revisit, timeline in `index.html`; the neighbourhood in `notes.js`; "Worth another look" and the ways in on the Notes front page.
 3. [x] Browser tests, README, `DEFERRED.md`.
 
+## 6f. Phase 5: answers of the interview, and the order of work
+
+Asked on 2026-11-19, after Phase 4 went to `main` (`a0862d6`).
+
+| Question | Answer |
+| --- | --- |
+| What "Find connections" may send | The note, the title and first line of every other note, and the full text of the likeliest (those the app finds related). The page says what is sent before the call |
+| What a proposed connection offers | The other note, the reason, and the sentences of both it rests on. "Link" puts the link at the cursor. The model never writes into a note |
+| An answer to a question | Shown with its citations. "Keep as a quick note" puts it in the inbox, marked as written by the model, with its question and sources. Otherwise nothing is kept |
+| When the notes do not answer | It says so, names what is missing and lists what comes closest. Nothing is filled in from the model's general knowledge |
+| Cards made from notes | Practised in the one queue, with the cards of books, on the same schedule |
+| What a note's question is checked against | The note alone: it is the passage |
+| A note rewritten after a question was made | The card stays. The note's page marks the question as made before the change, with "Check it again" |
+
+Builder's choices: `assist.py` holds the three kinds of call, each with instructions in `instructions/`, a reply schema, and a check of the reply made here, not by the model: a connection must name a note or passage it was shown, its quoted sentences are kept only when they are found in the texts, and a citation in an answer must be one of the sources that were sent. An answer whose notes hold nothing related is given without a call. Questions of notes and their cards are kept in the data folder (`notes-practice/`), not in the notes folder, like the questions of books. The models are those of the Add a book tab in Settings, as for a highlight's question.
+
+Order of work:
+
+1. [ ] `assist.py` and its instructions: connections, answers, a note's questions and their check. Tests with a scripted model.
+2. [ ] Server: the routes, the notes' deck in Practice. Tests over HTTP.
+3. [ ] The pages: "Find connections" and "Questions" on a note, the Ask page, a note's card in Practice.
+4. [ ] Browser tests, a few real calls, README, `DEFERRED.md`.
+
 ## 7. Record of progress
 
 | Date | What |
@@ -325,3 +348,4 @@ Order of work:
 | 2026-11-19 | Phase 3 built: sections, `gather`, `export`, `projects` and embeds in `vault.py`; the project page, index notes and "Add to a project" in `notes.js` (`projectParts`, `sectionOf`, `outlineOf`); tables, embeds, callouts, footnotes and tasks in `editor/src/index.js` (block decorations come from a state field, which also holds whether the editor has the keyboard) |
 | 2026-11-19 | Phase 3 pushed to `main` at `3598492` on the owner's word. Phase 4 interview done (two rounds); building starts |
 | 2026-11-19 | Phase 4 built: `graph`, `neighbourhood` and `revisit` in `vault.py`; `Jobs.timeline` and the routes in the server; `showGraph` (canvas, its own force layout), `showRevisit` and `showTimeline` in `index.html`; the neighbourhood diagram (SVG) in `notes.js` |
+| 2026-11-19 | Phase 4 pushed to `main` at `a0862d6` on the owner's word. Phase 5 interview done (two rounds); building starts |

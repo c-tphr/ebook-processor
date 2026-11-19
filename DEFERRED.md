@@ -4,7 +4,7 @@ Things that were discussed and put off, in one place. Nothing here is being work
 
 ## Decided for later
 
-These were chosen as later work by the project owner. The knowledge system is planned in five phases: see `docs/KNOWLEDGE-PLAN.md`. Phases 1 to 4 (the notes folder, the editor, idea notes and quick notes, search; the Process view and related notes; index notes, projects and more of Markdown in the editor; the graph, the neighbourhood, revisiting and the timeline) are built; phase 5, the model's part, is not.
+These were chosen as later work by the project owner. The knowledge system is planned in five phases: see `docs/KNOWLEDGE-PLAN.md`. All five phases are built: the notes folder, the editor, idea notes and quick notes, search; the Process view and related notes; index notes, projects and more of Markdown in the editor; the graph, the neighbourhood, revisiting and the timeline; and the model's part (connections, answers from the notes, questions from a note).
 
 | Item | What it means | Notes |
 | --- | --- | --- |
@@ -186,6 +186,22 @@ Passed over while Phase 1 was built. The later phases are in `docs/KNOWLEDGE-PLA
 | Reading on the timeline | Reading sessions are not there: the app keeps totals per book, not a log by day (see "Detailed reading history" above) |
 | The graph for the keyboard | The canvas can be moved and zoomed with the keys, but a point cannot be chosen with them. The list under the graph and the neighbourhood diagram, whose points are links, are the keyboard's way in |
 
+### The model in the notes folder (Phase 5 of the knowledge system)
+
+| Item | What it means |
+| --- | --- |
+| The model drafting notes | By the owner's decision the model does not write idea notes, and "Link" inserts a link only, not the model's reason |
+| Sending the whole folder | Not chosen. A connection is looked for among the titles and first lines of the newest 400 notes and the full text of the 16 likeliest; a note beyond those cannot be proposed |
+| Answers from general knowledge | Not chosen: when the notes do not answer, that is said, and nothing is added |
+| A log of questions and answers | Not chosen: an answer is kept only on request, as a quick note |
+| A queue of their own for notes' cards | Not chosen: they are practised with the cards of books. Practice for one book alone does not include them |
+| A note's question checked against the passages it cites | Not chosen: the note alone is the passage |
+| Pausing a card when its note changes | Not chosen: the card stays, and the note's page says the question was made before the change |
+| Connections for many notes at once | "Find connections" is asked for one note at a time. A pass over the whole folder was not built |
+| Follow-up questions | Each question to "Ask" stands alone; there is no conversation |
+| The notes' questions in the Anki deck | A book's exports hold the book's questions. Cards made from notes are practised in the app only |
+| Choosing the sources of an answer | The sources sent with a question are found by shared words and tags. A question phrased in words your notes do not use can miss them; the model is not asked to search |
+
 ## To verify
 
 Things that work in tests but have not been confirmed in real use, and facts that are still unknown.
@@ -197,6 +213,7 @@ Things that work in tests but have not been confirmed in real use, and facts tha
 | The editor on a phone or tablet | CodeMirror supports touch, but the Notes pages were laid out and tested for a laptop or desktop browser |
 | More of Markdown, compared with Obsidian | Tables, embeds, callouts, footnotes and tasks were written to match how Obsidian reads them, and were not compared side by side with it. In a table, a bar inside a link must be written `\\|`, as Obsidian also asks |
 | Dragging in the outline | Tested with the buttons. Dragging uses the browser's own drag and drop and was tried by hand in Chromium only |
+| The model's help with a real folder | Six real calls on a made-up folder of seven notes: "Find connections" proposed two sound connections with quotations that were in the texts and left the weak ones out; an answer named its sources after each statement; a question the notes did not cover was answered with "your notes do not say" and what would be needed; a question made from a note passed its check, and a deliberately wrong one failed it for the right reason. Each call took 3 to 8 seconds. Not seen: a folder of hundreds of notes, kinds of question other than open, Codex, and how often a real proposal names something it was not shown |
 | The graph with many notes | The layout was tried with a few dozen points. It is written to stay quick with a few thousand (points only push those near them), but that was not measured, and how readable a large graph is will show with a real folder |
 | Related notes on a real folder | The scoring was tried on a handful of made-up notes. Whether the list is useful, and how many everyday words slip through, will show only with a real folder of some size |
 | A large notes folder | The index is kept in memory and files are read again when they change. Measured only with a handful of notes; the design expects a few thousand to be read in under a second |

@@ -154,6 +154,11 @@ dialog.nt-near::backdrop { background: color-mix(in srgb, var(--ink) 45%, transp
 .nt .nt-aside .rowline { display: flex; gap: 8px 14px; flex-wrap: wrap; align-items: center; margin: 0 0 4px; }
 .nt .nt-pick { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .nt .nt-pick select { font: 15px/1.2 var(--grot); color: var(--ink); background: var(--paper); border: 1px solid var(--ink); border-radius: 0; padding: 8px 9px; max-width: min(100%, 40ch); }
+.nt .nt-aside .conn .why { color: var(--ink); font-size: 14px; } .nt .nt-aside .conn .back span + span { font: 14px/1.45 Georgia, "Iowan Old Style", serif; }
+.nt .nt-aside .nq { padding: 10px 0; border-bottom: 1px solid var(--ghost); } .nt .nt-aside .nq b { display: block; font: 600 15px/1.35 var(--grot); }
+.nt .nt-aside .nq > span { display: block; font-size: 14px; line-height: 1.45; margin-top: 3px; } .nt .nt-aside .nq > small { display: block; margin-top: 4px; }
+.nt .nt-aside .nq small.stale { color: var(--ink); } .nt .nt-aside .nq .rowline { margin: 2px 0 0; } .nt .nt-aside .nq .rowline button { padding: 6px 0; }
+.nt .nt-aside .nq-form textarea, .nt .nt-aside .nq-form input[type=text] { width: 100%; font: 15px/1.4 var(--grot); color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 7px 9px; }
 .nt .nt-more:not(:empty) { margin-top: 26px; } .nt.compact .nt-top:not(:empty) { margin-bottom: 4px; }
 .nt .nt-aside .rel { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; align-items: start; border-bottom: 1px solid var(--ghost); }
 .nt .nt-aside .rel .back { border-bottom: 0; } .nt .nt-aside .rel button { padding: 10px 0; }
@@ -287,7 +292,7 @@ function install({ where, button } = {}) {
 /* ---------- one note ---------- */
 // options: id, or draft { kind, body, sources: [link], cited: [source] } for a note that is made on its first save;
 // compact (a narrow column: one column, sources above the text); close() adds a Close button; related: false leaves
-// out the list of related notes;
+// out the list of related notes, model: false what asks a model (connections, questions);
 // onOpen(id) another note is asked for; onPlace(source, event) a place in a book; onTag(tag); onGone(); onState(note).
 function mount(root, options) {
   const opts = options || {};
@@ -305,6 +310,8 @@ function mount(root, options) {
   const edBox = el("div", { class: "nt-editor" });
   const top = el("div", { class: "nt-top" + (opts.compact ? " nt-aside" : "") }), more = el("div", { class: "nt-more" + (opts.compact ? " nt-aside" : "") });
   let related = null, relatedTurn = 0, outlineTimer = null;
+  let found = null, finding = "", told = null;                // connections a model found; "ask" while what is sent is shown, "busy" during the call
+  let quest = null, writing = false, wording = null;          // the note's questions; a call under way; the question being reworded ("new": one's own)
   const buttons = el("span", { class: "row" });
   const shell = el("div", { class: "nt" + (opts.compact ? " compact" : "") },
     el("div", { class: "nt-head" }, status, buttons), title, meta, notice, propsBox,
@@ -429,7 +436,77 @@ function mount(root, options) {
             el("button", { type: "button", class: "quiet", title: "Cite this passage where the cursor is", onclick: () => editor && editor.insert(`[[${r.book}#^${r.block}]]`) }, "Cite"),
             r.job && r.go ? el("a", { href: `/read/${r.job}?go=${r.go.chapter}:${r.go.word}`, onclick: (e) => { if (opts.onPlace) opts.onPlace(r, e); } }, "Open in the book") : null)))));
     }
+    if (note && !readOnly() && note.kind !== "project" && opts.model !== false) parts.push(connectionsPart(), questionsPart());
     more.replaceChildren(...parts);
+  }
+  // "Find connections": a model reads this note beside the others and says which belong together, and why. What
+  // is sent is told first. A proposal is a link to make in your own words: nothing is written into the note.
+  function connectionsPart() {
+    const row = (c) => el("div", { class: "rel conn" },
+      el("a", { class: "back", onclick: () => (c.kind === "note" ? go(c.id) : c.job && c.go && opts.onPlace ? opts.onPlace(c, null) : go(c.id)) },
+        el("b", {}, c.kind === "note" ? (c.untitled ? "A note without a title" : c.title) : c.title + " ¶"), el("span", { class: "why" }, c.reason),
+        c.mine ? el("span", {}, "Here: “" + c.mine + "”") : null, c.theirs ? el("span", {}, (c.kind === "note" ? "There: “" : "The passage: “") + c.theirs + "”") : null),
+      el("button", { type: "button", class: "quiet", title: "Put the link where the cursor is, to write the connection in your own words", onclick: () => editor && editor.insert(`[[${c.link}]]`) }, c.kind === "note" ? "Link" : "Cite"));
+    const start = async () => {
+      await leave();
+      if (!note) return toast("Write something first.");
+      try { told = await call("/assist/connections?" + query({ note: note.id })); finding = "ask"; } catch (e) { toast(e.message); }
+      drawAside();
+    };
+    const send = async () => {
+      finding = "busy"; drawAside();
+      try { found = await call("/assist/connections", { method: "POST", json: { note: note.id } }); } catch (e) { toast(e.message); }
+      finding = ""; if (!closed) drawAside();
+    };
+    const t = told && told.sent;
+    return el("section", { class: "nt-connections" }, el("h3", {}, "Connections"),
+      finding === "busy" ? el("p", { class: "none", role: "status" }, "The model is reading your notes")
+        : finding === "ask" ? el("div", {}, el("p", { class: "none" }, t.listed + t.passages === 0 ? "There is no other note or passage to compare this one with yet."
+          : `To ${told.model} go: this note, the title and first line of ${t.listed} other note${t.listed === 1 ? "" : "s"}${t.total > t.listed ? ` (the newest of ${t.total})` : ""}, the full text of the ${t.full} likeliest, and ${t.passages} highlighted passage${t.passages === 1 ? "" : "s"}.`),
+          el("div", { class: "rowline", style: "margin-top:8px" }, t.listed + t.passages ? el("button", { type: "button", class: "primary", onclick: send }, "Send and find") : null,
+            el("button", { type: "button", onclick: () => { finding = ""; drawAside(); } }, "Cancel")))
+        : [found ? (found.connections.length ? found.connections.map(row) : el("p", { class: "none" }, "The model found no connection it would stand by.")) : null,
+          el("div", { style: "margin-top:10px" }, el("button", { type: "button", onclick: start }, found ? "Ask again" : "Find connections"),
+            found ? null : el("small", { style: "display:block;margin-top:6px" }, "A model looks for notes that belong together, also where they share no words. You are told first what is sent."))]);
+  }
+  // Questions made from this note, for Practice: proposed by a model and checked against the note, or your own.
+  async function loadQuestions() {
+    if (!note || readOnly() || note.kind === "project" || opts.model === false) return;
+    try { quest = await call("/assist/questions?" + query({ note: note.id })); } catch (e) { return; }
+    if (!closed) drawAside();
+  }
+  function questionsPart() {
+    const rows = quest ? quest.questions : [], forms = window.QForms;
+    const run = async (work) => { try { quest = await work(); } catch (e) { toast(e.message); } writing = false; wording = null; if (!closed) drawAside(); };
+    const change = (q, json) => run(() => call("/assist/questions/" + q.id, { method: "PUT", json }));
+    const fields = wording && forms ? (wording === "new" ? forms.compose() : forms.edit(rows.find((q) => q.id === wording) || { question: "", answer: "" })) : null;
+    const form = fields ? el("div", { class: "nq-form" }, fields.el, el("div", { class: "rowline", style: "margin-top:8px" },
+      el("button", { type: "button", class: "primary", onclick: () => (wording === "new" ? run(() => call("/assist/questions", { method: "POST", json: { note: note.id, ...fields.read() } }))
+        : change({ id: wording }, fields.read())) }, "Save"), el("button", { type: "button", onclick: () => { wording = null; drawAside(); } }, "Cancel"))) : null;
+    const act = (label, fn, title) => el("button", { type: "button", class: "quiet", title, onclick: fn }, label);
+    const row = (q) => {
+      if (wording === q.id) return el("div", { class: "nq" }, form);
+      const shown = forms ? forms.plain(q) : { question: q.question, answer: q.answer };
+      const state = q.status === "accepted" ? "In Practice" + (q.card && q.card.times ? `, answered ${q.card.times} time${q.card.times === 1 ? "" : "s"}` : "")
+        : q.status === "held" ? "Held back by its check: " + q.problem : "Proposed by the model, and checked";
+      return el("div", { class: "nq", id: "nq-" + q.id }, el("b", {}, shown.question), el("span", {}, shown.answer), el("small", {}, state),
+        q.stale ? el("small", { class: "stale" }, "Made before this note was changed.") : null,
+        el("div", { class: "rowline" }, q.status !== "accepted" ? act("Accept", () => change(q, { accept: true }), "Practise this question") : null,
+          q.stale ? act("Check it again", () => { writing = true; drawAside(); change(q, { check: true }); }, "One short call: is the question still right for the note as it now is?") : null,
+          act("Reword", () => { wording = q.id; drawAside(); }), act(q.status === "accepted" ? "Remove" : "Discard", () => run(() => call("/assist/questions/" + q.id, { method: "DELETE" })))));
+    };
+    const make = async () => {
+      await leave();
+      if (!note) return toast("Write the note first.");
+      writing = true; drawAside();
+      run(() => call("/assist/questions", { method: "POST", json: { note: note.id } }));
+    };
+    return el("section", { class: "nt-questions" }, el("h3", {}, "Questions" + (rows.length ? " " + rows.length : "")), rows.map(row),
+      wording === "new" ? form : null,
+      writing ? el("p", { class: "none", role: "status" }, "The model is at work")
+        : wording ? null : el("div", { class: "rowline", style: "margin-top:10px" }, el("button", { type: "button", onclick: make, title: "A model writes a question about this note's idea, and it is checked against the note" }, "Make a question"),
+          forms ? el("button", { type: "button", class: "quiet", onclick: () => { wording = "new"; drawAside(); } }, "Write my own") : null),
+      rows.length || writing || wording ? null : el("small", { style: "display:block;margin-top:6px" }, "To remember the idea: a question from this note joins your cards in Practice."));
   }
   // What else in the folder is about the same thing: asked when the note opens and after each save.
   async function findRelated() {
@@ -551,7 +628,7 @@ function mount(root, options) {
     });
     if (note && note.kind === "project") drawAside();
     say(note ? "Saved" : "");
-    findRelated();
+    findRelated(); loadQuestions();
     watching = setInterval(look, 4000);
     addEventListener("focus", look);
     if (opts.focus !== false && !readOnly()) editor.focus(draft ? "start" : undefined);
@@ -590,7 +667,7 @@ function mount(root, options) {
         notice.replaceChildren();
         take(got, editor.getText() === sent.body ? got.body : undefined);
         say(dirty.body || dirty.props ? "Not saved yet" : "Saved");
-        if (dirty.body || dirty.props) schedule(); else findRelated();
+        if (dirty.body || dirty.props) schedule(); else { findRelated(); loadQuestions(); }
         return got;
       } catch (e) {
         if (dead || closed) return null;

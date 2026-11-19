@@ -2,7 +2,7 @@
 
 This is the working plan for the knowledge system, agreed with the project owner in a six-round interview on 2026-11-18. It is written for whoever builds it, so that the work can start from this file alone. It holds what was decided, the phases, a design for each phase, and the questions that are still open. Keep it up to date as phases are finished: mark what is done, and move what was passed over to `DEFERRED.md`.
 
-**Status: Phases 1 to 4 are on `main`. Phase 5 (the model: connections, answers, questions from notes) is being built in the order of section 6f.**
+**Status: Phases 1 to 4 are on `main`. Phase 5 (the model: connections, answers, questions from notes) is built and on the development branch (section 6f); it goes to `main` when the owner says. With it the plan is complete; what was passed over in each phase is in `DEFERRED.md`.**
 
 ## 1. What it is for
 
@@ -330,10 +330,10 @@ Builder's choices: `assist.py` holds the three kinds of call, each with instruct
 
 Order of work:
 
-1. [ ] `assist.py` and its instructions: connections, answers, a note's questions and their check. Tests with a scripted model.
-2. [ ] Server: the routes, the notes' deck in Practice. Tests over HTTP.
-3. [ ] The pages: "Find connections" and "Questions" on a note, the Ask page, a note's card in Practice.
-4. [ ] Browser tests, a few real calls, README, `DEFERRED.md`.
+1. [x] `assist.py` and its instructions: connections, answers, a note's questions and their check. Tests with a scripted model.
+2. [x] Server: the routes, the notes' deck in Practice. Tests over HTTP.
+3. [x] The pages: "Find connections" and "Questions" on a note, the Ask page, a note's card in Practice.
+4. [x] Browser tests, a few real calls, README, `DEFERRED.md`.
 
 ## 7. Record of progress
 
@@ -349,3 +349,4 @@ Order of work:
 | 2026-11-19 | Phase 3 pushed to `main` at `3598492` on the owner's word. Phase 4 interview done (two rounds); building starts |
 | 2026-11-19 | Phase 4 built: `graph`, `neighbourhood` and `revisit` in `vault.py`; `Jobs.timeline` and the routes in the server; `showGraph` (canvas, its own force layout), `showRevisit` and `showTimeline` in `index.html`; the neighbourhood diagram (SVG) in `notes.js` |
 | 2026-11-19 | Phase 4 pushed to `main` at `a0862d6` on the owner's word. Phase 5 interview done (two rounds); building starts |
+| 2026-11-19 | Phase 5 built: `assist.py` with four instruction files; routes under `/api/assist/`; the notes' deck in `Jobs.practice` (`notes-practice/` in the data folder); connections and questions in `notes.js`, the Ask page in `index.html`. Six real calls made, described in `DEFERRED.md` under "To verify" |

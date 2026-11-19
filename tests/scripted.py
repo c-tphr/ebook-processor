@@ -84,9 +84,49 @@ class Script:
 
     def reply(self, role: str, system: str, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
         self.schema = schema
-        if "question" in schema.get("required", []):
-            return self.question(prompt)
+        need = schema.get("required", [])
+        if "connections" in need:
+            return self.connections(prompt)
+        if "covered" in need:
+            return self.answer(prompt)
+        if "supported_by_note" in need:
+            return {**{c: "FAIL" not in prompt for c in need if c != "problem"}, "problem": "The stand-in was told to fail it." if "FAIL" in prompt else ""}
+        if "question" in need:
+            return self.note_question(prompt) if prompt.startswith("THE NOTE") else self.question(prompt)
         return getattr(self, role)(prompt)
+
+    # ---- the notes folder (assist.py): each reply is read off the message, as a careful model's would be
+
+    @staticmethod
+    def _sentence(text: str) -> str:
+        first = " ".join(text.strip().split("\n\n")[0].split())
+        return first.split(". ")[0].rstrip(".") + "." if first else ""
+
+    def connections(self, prompt: str) -> dict[str, Any]:
+        """The first note shown in full is connected; so is the first passage, when there is one."""
+        mine = self._sentence(prompt.split("\n\n", 2)[1] if prompt.count("\n\n") > 1 else "")
+        found = []
+        for part in prompt.split("\n\nNOTE ")[1:2]:
+            ref, rest = part.split(" IN FULL: ", 1)
+            title, text = rest.split("\n", 1)
+            found.append({"to": ref, "reason": f"Stand-in: \"{title}\" bears on this note.", "mine": mine, "theirs": self._sentence(text.split("\n\nNOTE ")[0].split("\n\nPASSAGE ")[0])})
+        if "\n\nPASSAGE P1 " in prompt:
+            found.append({"to": "P1", "reason": "Stand-in: the passage is where this comes from.", "mine": "", "theirs": ""})
+        return {"connections": found}
+
+    def answer(self, prompt: str) -> dict[str, Any]:
+        """Answers with the first sentence of the first note it was given; without a note, the notes do not answer."""
+        if "\n\nN1: " not in prompt or "UNANSWERABLE" in prompt:
+            return {"covered": False, "answer": "", "missing": "Stand-in: your notes do not say."}
+        text = prompt.split("\n\nN1: ", 1)[1].split("\n", 1)[1]
+        return {"covered": True, "answer": f"Your note says: {self._sentence(text).rstrip('.')} [N1].", "missing": ""}
+
+    def note_question(self, prompt: str) -> dict[str, Any]:
+        title = prompt.split("\nTitle: ", 1)[1].split("\n", 1)[0]
+        text = prompt.split("\n\n", 2)[1]
+        again = prompt.count("\n- ") if "\nALREADY ASKED\n" in prompt else 0
+        wish = " FAIL" if "THE READER ASKS OF THIS QUESTION\nfail" in prompt else ""
+        return {"question": f"What is claimed under \"{title}\"?" + (f" ({again + 1})" if again else "") + wish, "answer": self._sentence(text)}
 
     def question(self, prompt: str) -> dict[str, Any]:
         """A question for a highlight: about its first words, and each one for the same highlight different."""

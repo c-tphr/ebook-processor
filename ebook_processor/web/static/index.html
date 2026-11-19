@@ -271,6 +271,13 @@ body.dragging { cursor: col-resize; user-select: none; } body.dragging .side ifr
 .tl-group a.n { display: block; padding: 3px 0; text-decoration: none; font: 500 17px/1.3 var(--grot); letter-spacing: -0.01em; } .tl-group a.n:hover { color: var(--blue); }
 .tl-group q { display: block; quotes: none; font: 15px/1.45 Georgia, "Iowan Old Style", serif; color: var(--mute); margin: 3px 0; padding-left: 10px; border-left: 3px solid var(--ghost); }
 @media (max-width: 760px) { .tl-day { grid-template-columns: minmax(0, 1fr); } }
+.az-answer { font: 19px/1.6 Georgia, "Iowan Old Style", serif; max-width: 70ch; margin: 0; white-space: pre-wrap; }
+.az-answer a.cite { font: 11px/1 var(--mono); vertical-align: super; color: var(--blue); text-decoration: none; margin-left: 1px; padding: 0 2px; }
+.az-answer a.cite:hover { text-decoration: underline; }
+.az-src { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 0 8px; padding: 12px 0; border-bottom: 1px solid var(--ghost); scroll-margin-top: 100px; }
+.az-src > .m { color: var(--blue); } .az-src b { font: 500 17px/1.3 var(--grot); letter-spacing: -0.01em; } .az-src b a { text-decoration: none; } .az-src b a:hover { color: var(--blue); }
+.az-src q { display: block; quotes: none; font: 16px/1.5 Georgia, "Iowan Old Style", serif; color: var(--mute); margin-top: 3px; }
+.az-src .by { font-size: 14px; color: var(--mute); margin-top: 4px; display: flex; gap: 6px 14px; flex-wrap: wrap; }
 .pz-bar { display: flex; gap: 10px 18px; flex-wrap: wrap; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--ghost); }
 .pz-bar input[type=search] { font: 15px/1.2 var(--grot); color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 9px 10px; }
 .pz-bar select { width: auto; padding: 8px 9px; font-size: 14px; max-width: min(100%, 36ch); }
@@ -370,6 +377,7 @@ function route() {
   if (notes) {
     const part = decodeURIComponent(notes[1] || ""), params = new URLSearchParams(notes[2] || "");
     if (part === "graph") return showGraph(params);
+    if (part === "ask") return showAsk(params);
     if (part === "revisit") return showRevisit();
     if (part === "timeline") return showTimeline();
     return part === "trash" ? showTrash() : part === "process" ? showProcess(params) : part === "new" ? showNote(null, params) : part ? showNote(part, params) : showNotes(params);
@@ -916,7 +924,9 @@ async function showNotes(params) {
   const find = h("input", { type: "search", id: "nz-q", "aria-label": "Search notes and highlights", placeholder: "Search notes and highlights", value: state.q, autocomplete: "off" });
   const filters = h("div", { class: "nz-filters" }), body = h("div");
   put(app, h("div", { class: "title" }, h("h1", {}, "Notes"),
-    h("div", { class: "nz-find" }, find, h("a", { class: "btn primary", href: "#/notes/new" }, "New note"))), filters, body);
+    h("div", { class: "nz-find" }, find, h("a", { class: "btn", id: "nz-ask", href: "#/notes/ask", title: "Ask a question and have it answered from your notes and highlights, by a model",
+      onclick: (e) => { if (find.value.trim()) { e.preventDefault(); location.hash = "#/notes/ask?" + new URLSearchParams({ q: find.value.trim() }); } } }, "Ask"),
+      h("a", { class: "btn primary", href: "#/notes/new" }, "New note"))), filters, body);
   let home = null, typing = null, turn = 0;
   const go = () => { history.replaceState(null, "", notesAt(state)); load(); };
   find.addEventListener("input", () => { state.q = find.value; clearTimeout(typing); typing = setTimeout(go, 220); });
@@ -1017,6 +1027,53 @@ async function showNotes(params) {
   notesReload = () => { home = null; load(); };
   load();
 }
+/* ---------- notes: a question answered from your own notes ---------- */
+// The question, and the notes and highlighted passages that share most with it, go to a model, which answers from
+// them alone and names its source after each statement. A source that was not sent is not accepted as one. The
+// answer is kept only when asked for, as a quick note that says who wrote it.
+async function showAsk(params) {
+  const app = $("app"), out = h("div", { id: "az-out" });
+  const box = h("input", { type: "text", id: "az-q", "aria-label": "Your question", placeholder: "What do my notes say about ...?", maxlength: "600", value: params.get("q") || "", autocomplete: "off", style: "flex:1 1 320px;min-width:0;font-size:17px;padding:12px 13px" });
+  const button = h("button", { type: "button", class: "primary", onclick: () => ask() }, "Ask");
+  put(app, h("a", { class: "back m", href: "#/notes" }, "← Notes"), h("div", { class: "title" }, h("h1", {}, "Ask"),
+    h("p", { style: "margin:0;max-width:46ch" }, "A question answered from your own notes and highlights, with its sources. When they do not hold the answer, you are told so; nothing is added from elsewhere.")),
+    h("div", { class: "row", style: "padding:22px 0 8px" }, box, button),
+    h("p", { class: "note", style: "margin-top:0" }, "Your question is sent to a model with the notes and highlighted passages that share most with it: up to 16 notes and 10 passages, in full."), out);
+  box.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); ask(); } });
+  const openSource = (s) => (s.kind === "note" ? { href: "#/notes/" + encodeURIComponent(s.id) } : s.job && s.go ? { href: `/read/${s.job}?go=${s.go.chapter}:${s.go.word}`, onclick: (e) => openPlace(s, e) } : { href: "#/notes/" + encodeURIComponent(s.id) });
+  const sourceRow = (s, n) => h("div", { class: "az-src", id: "az-s" + n }, h("span", { class: "m" }, String(n)), h("div", {},
+    h("b", {}, h("a", openSource(s), s.kind === "note" ? (s.untitled ? "A note without a title" : s.title) : s.title)), h("q", {}, s.text),
+    h("div", { class: "by" }, h("span", {}, s.kind === "note" ? "Your note" : "A passage you highlighted"))));
+  async function ask() {
+    const question = box.value.trim();
+    if (!question) return box.focus();
+    history.replaceState(null, "", "#/notes/ask?" + new URLSearchParams({ q: question }));
+    button.disabled = true;
+    put(out, h("p", { class: "m mute", id: "az-busy", style: "padding:26px 0" }, "The model is reading your notes"));
+    let got;
+    try { got = await api("/assist/answer", { method: "POST", json: { question } }); }
+    catch (e) { button.disabled = false; return put(out, h("p", { class: "msg err" }, e.message)); }
+    button.disabled = false;
+    if (!got.covered) {
+      return put(out, h("section", { class: "nz-part", id: "az-none" }, h("h2", {}, "Your notes do not answer this"), h("p", { class: "lede" }, got.missing),
+        got.closest.length ? [h("p", { class: "m mute" }, "What comes closest"), h("div", { class: "nz-list" }, got.closest.map((s, i) => sourceRow(s, i + 1)))] : null));
+    }
+    const number = new Map(got.sources.map((s, i) => [s.ref, i + 1]));
+    const text = got.answer.split(/(\[[NP]\d+\])/).map((part) => { const n = number.get(part.slice(1, -1)); return n ? h("a", { class: "cite", href: "#/notes/ask", title: got.sources[n - 1].title,
+      onclick: (e) => { e.preventDefault(); const row = document.getElementById("az-s" + n); row.scrollIntoView({ block: "center" }); row.classList.remove("flash"); void row.offsetWidth; row.classList.add("flash"); } }, String(n)) : part; });
+    const keep = h("button", { type: "button", onclick: async () => {
+      keep.disabled = true;
+      try { const made = await api("/vault/notes", { method: "POST", json: { kind: "quick", body: got.keep, by: "model" } }); Notes.toast("Kept as a quick note in the inbox, marked as written by the model.", "Open", () => { location.hash = "#/notes/" + encodeURIComponent(made.id); }); }
+      catch (e) { keep.disabled = false; alert(e.message); }
+    } }, "Keep as a quick note");
+    put(out, h("section", { class: "nz-part nb" }, h("h2", {}, "From your notes"), h("p", { class: "az-answer", id: "az-answer" }, text),
+      got.missing ? h("p", { class: "note" }, "Left open by your notes: " + got.missing) : null,
+      h("div", { class: "actions", style: "margin-top:18px" }, keep, h("span", { class: "m mute" }, got.model ? "Answered by " + got.model : ""))),
+      h("section", { class: "nz-part" }, h("h2", {}, "Sources", h("small", {}, String(got.sources.length))), h("div", { class: "nz-list nb", id: "az-sources" }, got.sources.map((s, i) => sourceRow(s, i + 1)))));
+  }
+  if (box.value.trim()) ask(); else box.focus();
+}
+
 /* ---------- notes: the graph ---------- */
 // Every note and every book is a point; two are joined when one links to or cites the other. The layout is a
 // small force simulation written for this page: joined points pull together, all points push apart, and the
@@ -1399,6 +1456,9 @@ async function showPractice(only) {
     if (change.restarted || change.deleted || !data.card || data.card.id !== same) { revealed = false; text = ""; given = null; order = null; }
     draw();
   } }) }, "Edit question") : null);
+  // where a card comes from, to go back to: its section in the book, or the note it was made from
+  const source = (c) => (c.note ? h("a", { class: "btn", href: "#/notes/" + encodeURIComponent(c.note) }, "Open the note")
+    : h("a", { class: "btn", href: `/read/${c.job}?go=${encodeURIComponent(c.go)}` }, "Reread the section"));
   function draw() {
     const c = data.card, n = data.counts;
     const tally = [n.due ? `${n.due} due` : null, n.new ? `${n.new} new` : null, n.again ? `${n.again} to see again` : null].filter(Boolean).join(" / ");
@@ -1414,7 +1474,7 @@ async function showPractice(only) {
     area.value = text;
     const head = h("div", { class: "head" }, h("span", { class: "m" }, [c.book, c.chapter, c.section !== c.chapter ? c.section : null].filter(Boolean).join(" / ")), h("span", { class: "m" }, tally));
     const standing = h("span", { class: "m mute" }, c.state === "new" ? "New card" : c.again ? "Forgotten earlier today" : c.first ? "Learned today" : `Interval ${c.interval} days`);
-    const passage = c.passage.length ? h("details", {}, h("summary", { class: "m", style: "margin-top:16px;cursor:pointer" }, "From the book"), h("div", { class: "passage" }, c.passage.map((runs) => h("p", {}, runs.flatMap((r, n) => [n ? " " : null, r.h ? h("mark", {}, r.t) : r.t]))))) : null;
+    const passage = c.passage.length ? h("details", {}, h("summary", { class: "m", style: "margin-top:16px;cursor:pointer" }, c.note ? "From your note" : "From the book"), h("div", { class: "passage" }, c.passage.map((runs) => h("p", {}, runs.flatMap((r, n) => [n ? " " : null, r.h ? h("mark", {}, r.t) : r.t]))))) : null;
     asking = null;
     if (QForms.form(c) !== "open") {    // graded by the app: answered once, then the verdict and what it does to the card
       const kind = h("span", { class: "m", style: "display:block;color:var(--blue);margin:0 0 10px" }, QForms.label(c) + (QForms.form(c) === "truefalse" ? "?" : ""));
@@ -1432,7 +1492,7 @@ async function showPractice(only) {
             h("button", { class: "primary", id: "pr-next", onclick: () => answer(given.correct) }, "Continue", h("kbd", {}, "↵"), h("small", { style: "display:block;margin-top:4px;opacity:0.75" }, given.correct ? c.preview.remembered : c.preview.forgot)),
             !given.correct && QForms.form(c) === "cloze" ? h("button", { class: "text", id: "pr-right", onclick: () => { given = { ...given, correct: true, overruled: true }; draw(); } }, "I was right") : null,
             editCard(c)),
-          h("a", { class: "btn", href: `/read/${c.job}?go=${encodeURIComponent(c.go)}` }, "Reread the section")));
+          source(c)));
       box.querySelector("#pr-next").focus();
       return;
     }
@@ -1442,12 +1502,12 @@ async function showPractice(only) {
       !revealed ? [area, h("div", { class: "acts" }, h("button", { class: "primary", onclick: () => { revealed = true; draw(); } }, "Reveal answer", h("kbd", {}, "ctrl ↵")),
           h("span", { class: "m mute" }, c.state === "new" ? "New card" : c.again ? "Forgotten earlier today" : c.first ? "Learned today" : `Interval ${c.interval} days`))]
       : [h("div", { class: "two" }, h("div", {}, h("span", { class: "m" }, "Your recall"), h("p", {}, text || "Nothing typed.")), h("div", {}, h("span", { class: "m" }, "Reference answer"), h("p", {}, c.answer))),
-        c.passage.length ? h("details", {}, h("summary", { class: "m", style: "margin-top:16px;cursor:pointer" }, "From the book"), h("div", { class: "passage" }, c.passage.map((runs) => h("p", {}, runs.flatMap((r, n) => [n ? " " : null, r.h ? h("mark", {}, r.t) : r.t]))))) : null,
+        c.passage.length ? h("details", {}, h("summary", { class: "m", style: "margin-top:16px;cursor:pointer" }, c.note ? "From your note" : "From the book"), h("div", { class: "passage" }, c.passage.map((runs) => h("p", {}, runs.flatMap((r, n) => [n ? " " : null, r.h ? h("mark", {}, r.t) : r.t]))))) : null,
         h("div", { class: "acts" },
           h("div", { class: "ans" },
             h("button", { onclick: () => answer(false) }, "Forgot", h("kbd", {}, "1"), h("small", {}, c.preview.forgot)),
             h("button", { class: "primary", onclick: () => answer(true) }, "Remembered", h("kbd", {}, "2"), h("small", {}, c.preview.remembered))),
-          h("span", { class: "row" }, editCard(c), h("a", { class: "btn", href: `/read/${c.job}?go=${encodeURIComponent(c.go)}` }, "Reread the section")))]);
+          h("span", { class: "row" }, editCard(c), source(c)))]);
     (box.querySelector("textarea") || box.querySelector("button.primary"))?.focus();
   }
   practiceKeys = (e) => {

@@ -348,9 +348,15 @@ Gathering a highlight for a project does not process it: it keeps waiting in Pro
 
 On any note, **Neighbourhood** opens a diagram of where it sits: the note in the middle, what it is joined to around it, and what those are joined to further out. Every point opens its note. A book is shown and not passed through, since it would bring in every note that cites it.
 
+**Help from a model.** Three things ask a model, each only when you press its button, and each says first what it sends. The models are those chosen on the Add a book tab of Settings. The model never writes into a note.
+
+- **Find connections**, beside a note. The model reads the note next to your others and proposes at most six that really belong with it: the same idea from another side, a cause, an example, a contradiction. For each it gives its reason and the sentence of each note that it rests on. **Link** puts the link where your cursor is; what you write about the connection is yours. Sent: the note, the title and first line of your other notes (the newest 400), the full text of the 16 the app finds likeliest, and up to 10 highlighted passages. A proposal that names something the model was not shown is dropped, and a quoted sentence is shown only when it is really in its text.
+- **Ask**, on the Notes front page. Type a question; it is answered from your own notes and highlights alone, with a number after each statement that leads to its source. When your notes do not hold the answer, it says so, says what is missing, and lists what comes closest; nothing is filled in from what the model knows otherwise. Sent: the question, and the notes and passages that share most with it (up to 16 and 10, in full). If nothing of yours shares a word with the question, no call is made. **Keep as a quick note** puts the answer in the inbox, marked in its properties and in its text as written by a model; otherwise nothing is kept.
+- **Questions**, beside a note. **Make a question** has the model write one question about the note's idea, in the kinds you ticked in Settings, and an independent check judges it against the note: the answer must be in your note, and the question must stand without the note in view. You accept, reword or discard it; one that fails its check is held back with the reason. **Write my own** needs no model. An accepted question is a card in **Practice**, in the same queue and on the same schedule as the cards of your books, with the note as its source. When you later change the note, its questions are marked as made before the change, and **Check it again** asks whether they still hold.
+
 **Edits made in another program** are seen: the app looks at the files again whenever Notes asks for something. A note that is open reloads when its file changes. If you have also changed it in the app, the app does not write over the file: it asks which version to keep.
 
-These are the first four parts of a plan of five (`docs/KNOWLEDGE-PLAN.md`). Help from the model, in finding connections and in answering a question from your notes, is still to come.
+How this was planned, in five parts, and what was decided along the way is in `docs/KNOWLEDGE-PLAN.md`.
 
 ### Practice (spaced repetition)
 
@@ -483,6 +489,7 @@ After every push GitHub runs both (`.github/workflows/tests.yml`): the test suit
 | `ebook_processor/vault.py` | The notes folder: files and their names, the properties at the top of a file (read and written without a YAML library), links, tags and block ids, the index kept in memory, saving that does not write over a change made on disk, renaming with links rewritten, the trash, search, which notes cite which passage, related notes, projects (what they gathered, their outline and its export), the graph, a note's neighbourhood, and the notes to revisit |
 | `ebook_processor/bookfile.py` | A book's file in the notes folder, made from its highlights and notes |
 | `ebook_processor/process.py` | A book's highlights and notes as items to process, and which were set aside |
+| `ebook_processor/assist.py`, `instructions/connections.md`, `answer.md`, `note_question.md`, `note_check.md` | The model's help in the notes folder: what is sent for a connection, an answer or a note's question, the reply shapes, and the checks made on each reply |
 | `editor/` | The source of the note editor: CodeMirror 6 with the additions a notes folder needs (see below) |
 | `ebook_processor/reading.py` | A prepared EPUB as the reader needs it (clean chapter HTML with word positions, sections, search) and the saved reading state |
 | `ebook_processor/update.py` | `ebook-processor update`: find and stop the running app, fast-forward the checkout, install, start again |

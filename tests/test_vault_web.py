@@ -318,3 +318,98 @@ def test_the_graph_a_neighbourhood_what_to_revisit_and_the_timeline(app):
     assert b["id"] in {n["id"] for n in line["days"][0]["edited"]} and b["id"] not in {n["id"] for n in line["days"][0]["written"]}
     assert [d["day"] for d in app("GET", "/api/timeline?before=2026-03-09")[1]["days"]] == ["2026-01-05"]
     assert app("GET", "/api/timeline?before=yesterday")[0] == 400
+
+
+@pytest.fixture
+def helped(tmp_path):
+    """The app with a stand-in for the model that answers each kind of call of the notes folder."""
+    from ebook_processor import assist
+    from ebook_processor.llm import ScriptedBackend
+    calls: list[dict] = []
+
+    def reply(role, system, prompt, schema):
+        calls.append({"role": role, "prompt": prompt})
+        need = schema.get("required", [])
+        if "connections" in need:
+            ref = next(line.split()[0] for line in prompt.split("\n") if "  Decide once  |" in line)
+            return {"connections": [{"to": ref, "reason": "The other note is the general rule.", "mine": "A rule removes the daily decision.", "theirs": "nothing it says"}]}
+        if "covered" in need:
+            return {"covered": True, "answer": "A rule removes the daily decision [N1].", "missing": ""} if "lamp" in prompt.split("SOURCES")[0] \
+                else {"covered": False, "answer": "", "missing": "Your notes do not say."}
+        if "question" in need:
+            return {"question": "Why does a fixed rule make a daily duty easier to keep?" if "ALREADY ASKED" not in prompt else "According to the note, why?",
+                    "answer": "It removes the decision that would otherwise be made each day."}
+        return {**{c: True for c in assist.CHECKS}, "stands_alone": "According to the note" not in prompt, "problem": "It refers to the note."}
+
+    server = web.make_server(tmp_path / "data", "127.0.0.1", 0, backend_factory=lambda settings: ScriptedBackend(reply),
+                             claude={"ok": True, "version": "test"}, models=[])
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+
+    def call(method: str, path: str, json_body=None):
+        body = json.dumps(json_body).encode() if json_body is not None else None
+        request = urllib.request.Request(base + path, data=body, method=method, headers={"X-Ebook-Processor": "1"})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return response.status, json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read())
+
+    call.calls, call.data = calls, tmp_path / "data"
+    yield call
+    server.shutdown()
+    server.server_close()
+
+
+def test_the_model_finds_connections_answers_from_the_notes_and_writes_a_notes_question(helped):
+    note = helped("POST", "/api/vault/notes", json_body={"title": "A duty is kept by rule", "body": "The keeper lights the lamp whatever the weather. A rule removes the daily decision.\n"})[1]
+    other = helped("POST", "/api/vault/notes", json_body={"title": "Decide once", "body": "A decision made in advance is cheaper. The lamp is one such rule.\n"})[1]
+    # connections: what would be sent is told first; then the call, and its reply checked
+    told = helped("GET", f"/api/assist/connections?note={note['id']}")[1]
+    assert told["sent"] == {"listed": 1, "full": 1, "passages": 0, "total": 1} and told["model"] and helped.calls == []
+    found = helped("POST", "/api/assist/connections", json_body={"note": note["id"]})[1]
+    assert [(c["id"], c["link"], c["reason"], c["mine"], c["theirs"]) for c in found["connections"]] == [
+        (other["id"], "Decide once", "The other note is the general rule.", "A rule removes the daily decision.", "")]   # a quotation that is not there is dropped
+    assert helped("POST", "/api/assist/connections", json_body={"note": "n00000000"})[0] == 404
+    # an answer, with its sources and the text a kept answer would have
+    got = helped("POST", "/api/assist/answer", json_body={"question": "Why does the keeper light the lamp whatever the weather?"})[1]
+    assert got["covered"] and got["answer"] == "A rule removes the daily decision [N1]." and [s["id"] for s in got["sources"]] == [note["id"]]
+    assert got["keep"].startswith("**Question:** Why does the keeper light the lamp whatever the weather?\n\nA rule removes the daily decision [[A duty is kept by rule]].")
+    kept = helped("POST", "/api/vault/notes", json_body={"kind": "quick", "body": got["keep"], "by": "model"})[1]
+    assert {"key": "by", "value": "model"} in kept["props"] and kept["inbox"] and kept["links"][0]["to"]["id"] == note["id"]
+    gap = helped("POST", "/api/assist/answer", json_body={"question": "What does a rule cost in the weather?"})[1]
+    assert not gap["covered"] and gap["missing"] == "Your notes do not say." and gap["closest"] and "keep" not in gap
+    assert helped("POST", "/api/assist/answer", json_body={"question": ""})[0] == 400
+    # a question from the note: proposed and checked, accepted into Practice, and marked when the note changes
+    helped.calls.clear()
+    made = helped("POST", "/api/assist/questions", json_body={"note": note["id"]})[1]
+    q = made["questions"][0]
+    assert [c["role"] for c in helped.calls] == ["draft", "check"] and made["forms"] == ["open"]
+    assert q["status"] == "proposed" and q["by"] == "model" and q["checked"]["passed"] and not q["stale"] and q["card"] is None
+    assert helped("GET", "/api/practice")[1]["card"] is None and helped("GET", "/api/jobs")[1]["notes_practice"] is None
+    accepted = helped("PUT", f"/api/assist/questions/{q['id']}", json_body={"accept": True})[1]["questions"][0]
+    assert accepted["status"] == "accepted" and accepted["card"] == {"state": "new", "times": 0}
+    held = helped("POST", "/api/assist/questions", json_body={"note": note["id"]})[1]["questions"][1]       # the second proposal fails its check
+    assert held["status"] == "held" and held["problem"] == "It refers to the note."
+    assert helped("PUT", f"/api/assist/questions/{held['id']}", json_body={"question": "What does a fixed rule remove from a daily duty?"})[1]["questions"][1]["status"] == "proposed"
+    assert helped("DELETE", f"/api/assist/questions/{held['id']}")[1]["questions"][0]["id"] == q["id"]
+    own = helped("POST", "/api/assist/questions", json_body={"note": note["id"], "question": "What does the keeper do at sunset?", "answer": "Lights the lamp."})[1]["questions"][1]
+    assert own["by"] == "you" and own["status"] == "accepted" and own["card"]["state"] == "new"
+    assert helped("POST", "/api/assist/questions", json_body={"note": note["id"], "question": "", "answer": "x"})[0] == 400
+    card = helped("GET", "/api/practice")[1]
+    assert card["counts"]["cards"] == 2 and card["card"]["job"] == "notes" and card["card"]["note"] == note["id"] and card["card"]["book"] == "Your notes"
+    assert card["card"]["section"] == "A duty is kept by rule" and card["card"]["passage"][0][0]["t"].startswith("The keeper lights the lamp")
+    assert helped("GET", "/api/jobs")[1]["notes_practice"]["cards"] == 2
+    after = helped("POST", "/api/practice/answer", json_body={"job": "notes", "id": card["card"]["id"], "remembered": True, "text": ""})[1]
+    assert after["card"]["id"] != card["card"]["id"] and json.loads((helped.data / "notes-practice" / "srs.json").read_text())["cards"][card["card"]["id"]]["reviews"]
+    now = helped("GET", f"/api/vault/notes/{note['id']}")[1]
+    helped("PUT", f"/api/vault/notes/{note['id']}", json_body={"body": now["body"] + "\nAnd more.", "token": now["token"]})
+    stale = helped("GET", f"/api/assist/questions?note={note['id']}")[1]["questions"]
+    assert [x["stale"] for x in stale] == [True, True]
+    again = helped("PUT", f"/api/assist/questions/{q['id']}", json_body={"check": True})[1]["questions"][0]
+    assert not again["stale"] and again["checked"]["passed"] and again["status"] == "accepted"
+    # the note goes to the trash: its cards rest; the question of a note that is gone can still be removed
+    helped("DELETE", f"/api/vault/notes/{note['id']}")
+    assert helped("GET", "/api/practice")[1]["card"] is None
+    assert helped("PUT", f"/api/assist/questions/{q['id']}", json_body={"accept": True})[0] == 404
+    assert helped("DELETE", f"/api/assist/questions/{q['id']}")[1]["questions"] == [] and helped("DELETE", "/api/assist/questions/nq00000000")[0] == 400

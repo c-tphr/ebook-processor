@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from .. import __version__, bookfile, editing, notes, process, reading, srs
+from .. import __version__, assist, bookfile, editing, notes, process, reading, srs
 from .. import forms as qforms
 from .. import highlight_questions as hq
 from .. import steer as steering
@@ -64,6 +64,10 @@ class ApiError(Exception):
     def __init__(self, status: HTTPStatus, message: str):
         super().__init__(message)
         self.status = status
+
+
+def void(_: Any) -> None:
+    return None
 
 
 def _slug(name: str) -> str:
@@ -192,6 +196,7 @@ class Jobs:
         total = {"due": 0, "again": 0, "new": 0, "cards": 0, "next_due": None, "next_count": 0}
         stores, lists = {}, {"due": [], "new": [], "again": [], "first": [], "later": []}
         new_done = 0
+        decks: list[tuple[str, dict[str, Any], Any, dict[str, Any]]] = []
         for job_id in ids:
             store = self.cards(job_id)
             if not store["cards"]:
@@ -202,6 +207,15 @@ class Jobs:
                 continue
             prompts = {p["id"]: (s, p) for s in manifest["sections"] for p in s["prompts"]}
             prompts.update(hq.practice_prompts(manifest, notes.load(self.folder(job_id))))  # cards from highlights
+            decks.append((job_id, store, manifest, prompts))
+        if only is None:  # the cards made from notes are practised with those of the books
+            store = srs.load(self.data / assist.FOLDER)
+            if store["cards"]:
+                vault = self.vault()
+                vault.refresh()
+                with vault.lock:
+                    decks.append((assist.DECK, store, None, assist.practice_prompts(vault, assist.load(self.data))))
+        for job_id, store, manifest, prompts in decks:
             order = {pid: n for n, pid in enumerate(prompts)}
             stores[job_id] = (store, manifest, prompts)
             new_done += srs.new_today(store, today)
@@ -229,6 +243,15 @@ class Jobs:
             store, manifest, prompts = stores[job_id]
             section, prompt = prompts[pid]
             state = store["cards"][pid]
+            if job_id == assist.DECK:  # a card from a note: the note is its passage, and where it leads
+                note = section
+                card = {"job": job_id, "id": pid, "book": "Your notes", "chapter": "", "section": "A note without a title" if note.untitled else note.title,
+                        "question": prompt["prompt"], "answer": prompt["answer"], **qforms.members(prompt), "editable": False, "note": note.id,
+                        "passage": [[{"t": " ".join(part.split()), "h": False}] for part in note.body.split("\n\n") if part.strip()][:12],
+                        "state": state["state"], "again": state["again"], "interval": round(state["interval"], 1),
+                        "first": srs.kind_of(state, today) == "first", "times": len(state["reviews"]), "go": None,
+                        "preview": srs.preview(state, today, settings)}
+                return {"counts": total, "left": len(line), "card": card, "settings": settings, "today": srs.day(today)}
             chapter = next((c["title"] for c in manifest["chapters"] if c["index"] == section["chapter"]), "")
             card = {"job": job_id, "id": pid, "book": manifest["title"], "chapter": chapter, "section": section["label"],
                     "question": prompt["prompt"], "answer": prompt["answer"], **qforms.members(prompt),
@@ -964,6 +987,172 @@ class Jobs:
                 p["job"], p["go"] = job_id, self._place(job_id, p["block"])
         return found
 
+    # ---- the model's help in the notes folder (see assist.py)
+
+    def _helper(self, roles: list[str]) -> tuple[Settings, Any]:
+        """The settings and a backend for a call the reader asked for: the models of the Add a book tab."""
+        settings = self.question_settings()
+        if self.backend_factory:
+            return settings, self.backend_factory(settings)
+        try:
+            backend = default_backend(settings)
+            backend.check_available([settings.checker_model or settings.model if r == "check" else settings.model for r in roles])
+        except BackendError as exc:
+            raise ApiError(HTTPStatus.BAD_GATEWAY, f"The model could not be asked: {exc}") from exc
+        return settings, backend
+
+    def _helped(self, call: Any) -> Any:
+        try:
+            return self._asked("", lambda: self._vaulted(call))
+        except (assist.AssistError, hq.QuestionError) as exc:
+            raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+
+    def assist_sent(self, note_id: str) -> dict[str, Any]:
+        """What "Find connections" would send for a note, and to which model, before anything is sent."""
+        vault = self.vault()
+
+        def count() -> dict[str, Any]:
+            with vault.lock:
+                return assist.connection_material(vault, vault.get(note_id))["sent"]
+        settings = self.question_settings()
+        return {"sent": self._vaulted(count), "model": settings.model or "the default model"}
+
+    def assist_connections(self, note_id: str) -> dict[str, Any]:
+        settings, backend = self._helper(["draft"])
+        vault = self.vault()
+        got = self._helped(lambda: assist.connections(backend, vault, note_id, settings))
+        for c in got["connections"]:
+            if c["kind"] == "passage":
+                job_id = bookfile.job_of(c["id"])
+                if self._readable(job_id or ""):
+                    c["job"], c["go"] = job_id, self._place(job_id, c["block"])
+        return got
+
+    def assist_answer(self, r: dict[str, Any]) -> dict[str, Any]:
+        settings, backend = self._helper(["draft"])
+        vault = self.vault()
+        got = self._helped(lambda: assist.answer(backend, vault, r.get("question"), settings))
+        for s in got["sources"] + got["closest"]:
+            job_id = bookfile.job_of(s["id"]) if s["kind"] == "passage" else None
+            if job_id and self._readable(job_id):
+                s["job"], s["go"] = job_id, self._place(job_id, s["block"])
+        if got["covered"]:  # the text of the quick note that "Keep" would make
+            got["keep"] = assist.answer_markdown(str(r.get("question")), got, srs.day(self.today()))
+        return got
+
+    def notes_practice(self) -> dict[str, Any] | None:
+        """The counts of the cards made from notes, for the library's Practice button; None when there are none."""
+        store = srs.load(self.data / assist.FOLDER)
+        if not store["cards"]:
+            return None
+        vault = self.vault()
+        vault.refresh()
+        with vault.lock:
+            known = set(assist.practice_prompts(vault, assist.load(self.data)))
+        return srs.counts(store, self.today(), known)
+
+    def _note_questions(self, change: Any = None) -> dict[str, Any]:
+        with self.lock:
+            store = assist.load(self.data)
+            if change is not None:
+                change(store)
+                write_json(self.data / assist.FOLDER / assist.FILE, store)
+        return store
+
+    def note_questions(self, note_id: str) -> dict[str, Any]:
+        vault = self.vault()
+        store = self._note_questions()
+        cards = srs.load(self.data / assist.FOLDER)["cards"]
+
+        def rows() -> list[dict[str, Any]]:
+            with vault.lock:
+                return assist.of_note(store, vault.get(note_id))
+        return {"questions": [{**q, "card": {"state": cards[q["id"]]["state"], "times": len(cards[q["id"]]["reviews"])} if q["id"] in cards else None}
+                              for q in self._vaulted(rows)], "forms": list(self.question_settings().forms)}
+
+    def _card_for(self, qid: str) -> None:
+        with self.lock:
+            cards = srs.load(self.data / assist.FOLDER)
+            if qid not in cards["cards"]:
+                cards["cards"][qid] = srs.new_card()
+                write_json(self.data / assist.FOLDER / srs.FILE, cards)
+
+    def note_question_propose(self, note_id: str, r: dict[str, Any]) -> dict[str, Any]:
+        """Ask the model for a question about a note, and check it. One that fails its check is held, with why."""
+        settings, backend = self._helper(["draft", "check"])
+        vault = self.vault()
+        instruction = _text(r.get("instruction"), steering.INSTRUCTION_MAX)
+
+        def work() -> None:
+            note = vault.get(note_id)
+            asked = [q["question"] for q in self._note_questions()["questions"] if q["note"] == note.id]
+            wording = assist.propose(backend, vault, note, asked, settings, instruction)
+            model = wording.pop("model")
+            verdict = assist.check(backend, vault, note, wording, settings)
+
+            def keep(store: dict[str, Any]) -> None:
+                q = assist.add(store, note, wording, "model", model, "proposed" if verdict["passed"] else "held")
+                q.update(checked=verdict, problem=verdict["problem"])
+            self._note_questions(keep)
+        self._helped(work)
+        return self.note_questions(note_id)
+
+    def note_question_write(self, note_id: str, r: dict[str, Any]) -> dict[str, Any]:
+        """A question the reader wrote themselves: accepted as it is, and a card from now on."""
+        vault = self.vault()
+        made: dict[str, Any] = {}
+
+        def work() -> None:
+            note = vault.get(note_id)
+            wording = hq.formed(r.get("question"), r.get("answer"), r.get("form"))
+            self._note_questions(lambda store: made.update(assist.add(store, note, wording, "you", None, "accepted")))
+        self._helped(work)
+        self._card_for(made["id"])
+        return self.note_questions(note_id)
+
+    def note_question_change(self, qid: str, r: dict[str, Any]) -> dict[str, Any]:
+        """Accept a question, reword it, or have it checked again against the note as it now is."""
+        vault = self.vault()
+        found: dict[str, Any] = {}
+
+        def work() -> None:
+            q = assist.find(self._note_questions(), qid)
+            note = vault.get(q["note"])
+            found["note"] = note.id
+            if r.get("check") is True:
+                settings, backend = self._helper(["check"])
+                verdict = assist.check(backend, vault, note, q, settings)
+
+                def checked(store: dict[str, Any]) -> None:
+                    mine = assist.find(store, qid)
+                    mine.update(checked=verdict, problem=verdict["problem"], made_from=assist.mark_of(note))
+                    if mine["status"] == "held" and verdict["passed"]:
+                        mine["status"] = "proposed"
+                return void(self._note_questions(checked))
+            if any(k in r for k in ("question", "answer", "form")):
+                self._note_questions(lambda store: assist.reword(store, note, qid, r.get("question"), r.get("answer"), r.get("form")))
+            if r.get("accept") is True:
+                self._note_questions(lambda store: assist.find(store, qid).update(status="accepted"))
+                self._card_for(qid)
+        self._helped(work)
+        return self.note_questions(found["note"])
+
+    def note_question_delete(self, qid: str) -> dict[str, Any]:
+        found: dict[str, Any] = {}
+
+        def drop(store: dict[str, Any]) -> None:
+            found["note"] = assist.find(store, qid)["note"]
+            store["questions"] = [q for q in store["questions"] if q["id"] != qid]
+        self._helped(lambda: self._note_questions(drop))
+        with self.lock:
+            cards = srs.load(self.data / assist.FOLDER)
+            if cards["cards"].pop(qid, None) is not None:
+                write_json(self.data / assist.FOLDER / srs.FILE, cards)
+        try:
+            return self.note_questions(found["note"])
+        except ApiError:
+            return {"questions": [], "forms": list(self.question_settings().forms)}
+
     def timeline(self, before: str | None = None, most: int = 30) -> dict[str, Any]:
         """What was written and marked, day by day, the newest day first: notes on the day they were made (quick
         notes apart), notes on the day of their last change when that is another day, and for each book what
@@ -1062,6 +1251,8 @@ class Jobs:
                 if isinstance(where.get("chapter"), int) and isinstance(where.get("word"), int):
                     props["place"] = f"{where['chapter']}:{where['word']}"
         kind = r.get("kind") if isinstance(r.get("kind"), str) else "idea"
+        if r.get("by") == "model":  # an answer kept from "Ask": the file says that its words are not the reader's
+            props["by"] = "model"
         if kind == "project":  # a project has a name, and its file the two sections the app works on
             if not isinstance(r.get("title"), str) or not r["title"].strip():
                 raise ApiError(HTTPStatus.BAD_REQUEST, "A project needs a name.")
@@ -1125,16 +1316,16 @@ class Jobs:
         return self._vaulted(work)
 
     def practice_answer(self, job_id: str, pid: str, remembered: bool, text: str) -> None:
-        self.get(job_id)
+        folder = self.data / assist.FOLDER if job_id == assist.DECK else self.folder(self.get(job_id)["id"])
         with self.lock:
-            store = self.cards(job_id)
+            store = srs.load(folder) if job_id == assist.DECK else self.cards(job_id)
             card = store["cards"].get(pid)
             if card is None:
                 raise ApiError(HTTPStatus.NOT_FOUND, "no such card")
             today = self.today()  # the stamp carries the same local day the schedule is counted in
             at = f"{srs.day(today)}T{_dt.datetime.now().strftime('%H:%M:%S')}"
             srs.answer(card, remembered, today, self.srs_settings(), at, "review", text)
-            write_json(self.folder(job_id) / srs.FILE, store)
+            write_json(folder / srs.FILE, store)
 
     # ---- reading
 
@@ -1676,7 +1867,7 @@ class Handler(BaseHTTPRequestHandler):
                                        "limits": {"text": steering.TEXT_MAX, "instruction": steering.INSTRUCTION_MAX},
                                        "models": self.models})
             case ("GET", ["jobs"]):
-                return self.send_json({"jobs": jobs.listing()})
+                return self.send_json({"jobs": jobs.listing(), "notes_practice": jobs.notes_practice()})
             case ("POST", ["jobs"]):
                 name = (query.get("name") or ["book.epub"])[0]
                 try:
@@ -1785,6 +1976,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(jobs.vault_create(self.json_body()), HTTPStatus.CREATED)
             case ("GET", ["vault", "notes", note_id]):
                 return self.send_json(jobs.vault_note(note_id))
+            case ("GET", ["assist", "connections"]):
+                return self.send_json(jobs.assist_sent((query.get("note") or [""])[0]))
+            case ("POST", ["assist", "connections"]):
+                return self.send_json(jobs.assist_connections(str(self.json_body().get("note") or "")))
+            case ("POST", ["assist", "answer"]):
+                return self.send_json(jobs.assist_answer(self.json_body()))
+            case ("GET", ["assist", "questions"]):
+                return self.send_json(jobs.note_questions((query.get("note") or [""])[0]))
+            case ("POST", ["assist", "questions"]):
+                r = self.json_body()
+                note_id = str(r.get("note") or "")
+                return self.send_json(jobs.note_question_write(note_id, r) if "question" in r else jobs.note_question_propose(note_id, r))
+            case ("PUT", ["assist", "questions", qid]):
+                return self.send_json(jobs.note_question_change(qid, self.json_body()))
+            case ("DELETE", ["assist", "questions", qid]):
+                return self.send_json(jobs.note_question_delete(qid))
             case ("GET", ["vault", "graph"]):
                 return self.send_json(jobs.vault().graph())
             case ("GET", ["vault", "revisit"]):

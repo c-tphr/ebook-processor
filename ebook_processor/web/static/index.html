@@ -577,8 +577,8 @@ function showLibrary() {
   const strip = h("div", { class: "map big", role: "img", "aria-label": "A book as a row of sections, with a checkpoint at the end of each" },
     widths.map((w) => h("div", { class: "col", style: `--w:${w}` }, h("span", { class: "sec" }), h("i"))));
   async function refresh() {
-    let jobs;
-    try { ({ jobs } = await api("/jobs")); } catch (e) { return put(runs, h("p", { class: "msg err" }, e.message)); }
+    let jobs, ofNotes;
+    try { ({ jobs, notes_practice: ofNotes } = await api("/jobs")); } catch (e) { return put(runs, h("p", { class: "msg err" }, e.message)); }
     const last = jobs.filter((j) => j.reading).sort((a, b) => (b.reading.last_read || "").localeCompare(a.reading.last_read || ""))[0];
     if (last) {
       const r = last.reading;
@@ -598,8 +598,9 @@ function showLibrary() {
           strip, h("div", { class: "legend m" }, h("span", {}, "Section"), h("span", { class: "cp" }, "Checkpoint")),
           jobs.length ? null : h("div", { class: "actions" }, h("a", { class: "btn primary", href: "#/add" }, "Add your first book"))));
     }
-    const waiting = jobs.reduce((n, j) => n + (j.practice ? j.practice.due + j.practice.again + j.practice.new : 0), 0);
-    const cards = jobs.reduce((n, j) => n + (j.practice ? j.practice.cards : 0), 0);
+    // the cards made from notes are practised with those of the books
+    const waiting = jobs.reduce((n, j) => n + (j.practice ? j.practice.due + j.practice.again + j.practice.new : 0), ofNotes ? ofNotes.due + ofNotes.again + ofNotes.new : 0);
+    const cards = jobs.reduce((n, j) => n + (j.practice ? j.practice.cards : 0), ofNotes ? ofNotes.cards : 0);
     put(tools, cards ? h("a", { class: "btn" + (waiting ? " primary" : ""), href: "#/practice" }, waiting ? `Practice ${waiting}` : "Practice") : null,
       h("a", { class: "btn", href: "#/add" }, "Add book"));
     put(runs, jobs.length ? jobs.map(runRow) : h("p", { class: "empty" }, "No books yet."));

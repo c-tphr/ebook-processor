@@ -163,11 +163,11 @@ def _target(book: Book, sd: SpineDoc, href: str) -> str | None:
     return f"{doc.index}:{urllib.parse.unquote(fragment)}" if doc is not None else None
 
 
-def _image(sd: SpineDoc, src: str | None, alt: str | None) -> str:
+def _image(sd: SpineDoc, src: str | None, alt: str | None, marks: str = "") -> str:
     if not src or EXTERNAL.match(src) or src.startswith("data:"):
         return ""
     path = posixpath.normpath(posixpath.join(posixpath.dirname(sd.zip_path), urllib.parse.unquote(src.split("#")[0])))
-    return f'<img data-src="{escape(path)}" alt="{escape(alt or "")}"/>'
+    return f'<img{marks} data-src="{escape(path)}" alt="{escape(alt or "")}"/>'
 
 
 def render_chapter(book: Book, sd: SpineDoc) -> str:
@@ -175,19 +175,30 @@ def render_chapter(book: Book, sd: SpineDoc) -> str:
     blocks = {id(b.element): b for b in sd.blocks + sd.notes}
     out: list[str] = []
 
+    def marks(el: Element) -> str:
+        """Where a block lies in the chapter's words. Every block carries it, so that each view finds it."""
+        block = blocks.get(id(el))
+        if block is None:
+            return ""
+        return f' data-w="{block.start}" data-n="{block.end - block.start}" data-ref="{block.ref}" data-kind="{block.kind}"'
+
     def walk(el: Element, in_sup: bool, in_link: bool) -> None:
         name = el.local.lower()
         if name in DROP or is_invisible(el):
             return
+        # A picture or a formula that stands by itself is a block of its own, as one inside a figure is the
+        # figure's: it says where it lies too, or the views that go by position could not show it.
         if name == "svg":  # a cover or figure wrapped in SVG: keep its picture
+            mine = marks(el)
             for image in (e for e in el.iter() if e.local == "image"):
-                out.append(_image(sd, image.get(XLINK_HREF) or image.get("href"), el.get("aria-label")))
+                out.append(_image(sd, image.get(XLINK_HREF) or image.get("href"), el.get("aria-label"), mine))
+                mine = ""
             return
         if name == "math":
-            out.append(f'<span class="math">{escape(el.get("alttext") or " ".join(el.text().split()))}</span>')
+            out.append(f'<span class="math"{marks(el)}>{escape(el.get("alttext") or " ".join(el.text().split()))}</span>')
             return
         if name == "img":
-            out.append(_image(sd, el.get("src"), el.get("alt")))
+            out.append(_image(sd, el.get("src"), el.get("alt"), marks(el)))
             return
         anchor = el.get("id") or ""
         if anchor.startswith("rsvp-") and name == "span":
@@ -196,10 +207,8 @@ def render_chapter(book: Book, sd: SpineDoc) -> str:
         keep = name in KEEP
         if keep:
             attrs = []
-            block = blocks.get(id(el))
-            if block is not None:
-                attrs.append(f'data-w="{block.start}" data-n="{block.end - block.start}" data-ref="{block.ref}"'
-                             f' data-kind="{block.kind}"')
+            if id(el) in blocks:
+                attrs.append(marks(el).strip())
             if anchor:
                 attrs.append(f'data-id="{escape(anchor)}"')
             if is_footnote_container(el):

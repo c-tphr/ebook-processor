@@ -59,6 +59,21 @@ def test_markup_that_could_run_is_dropped(tmp_path):
     assert 'href="https://example.org/a?b=1&amp;c=2" target="_blank" rel="noopener noreferrer"' in html
 
 
+def test_a_picture_or_a_formula_that_stands_alone_says_where_it_lies(tmp_path):
+    """Outside a figure, the picture is itself the block. Without its place in the words, the speed reader stopped
+    at it and had nothing to show."""
+    from tests.prep.bookmaker import make_epub, xhtml
+    from ebook_processor.prep.epub import load_book
+    body = ('<p>One two three.</p><img src="../images/pic.png" alt="The light"/><p>Four five.</p>'
+            '<math xmlns="http://www.w3.org/1998/Math/MathML" alttext="a = b"><mi>a</mi></math><p>Six.</p>')
+    book = load_book(make_epub(tmp_path / "b.epub", [("text/a.xhtml", xhtml(body))], with_image=True))
+    kinds = {b.kind: b for b in book.spine[0].blocks}
+    assert kinds["image"].element.local == "img" and kinds["math"].element.local == "math"
+    html = reading.render_chapter(book, book.spine[0])
+    assert f'<img data-w="3" data-n="0" data-ref="{kinds["image"].ref}" data-kind="image" data-src="OEBPS/images/pic.png" alt="The light"/>' in html
+    assert f'<span class="math" data-w="{kinds["math"].start}"' in html and 'data-kind="math">a = b</span>' in html
+
+
 def test_search_and_images():
     book = reading.open_reading_book(PREPARED)
     hits = book.search("  White FLASH ")

@@ -288,6 +288,38 @@ def test_accepted_without_review_a_question_is_checked_first_and_held_when_it_fa
     assert jobs.questions_state(jid)["questions"][1]["status"] == "accepted"
 
 
+def test_the_notebook_never_shows_a_question_as_neither_written_nor_being_written(app):
+    """The notebook page stops looking for a question when none is pending, so what is pending comes with the
+    entries, as of the same moment. Read apart, a question finished in between was missing from both."""
+    jobs, jid, stand = app
+    section = next(s for s in jobs.manifest(jid)["sections"] if s["prompts"])
+    h = highlight(jobs, jid, section["chapter"], section["start"] + 3, section["start"] + 9)
+    asked, lost, done = [0], [], threading.Event()
+
+    def look() -> None:
+        while not done.is_set() and not lost:
+            wanted = asked[0]               # every one of these is pending or written by now
+            try:
+                seen = jobs.notebook(jid)
+                shown = next(i for c in seen["chapters"] for s in c["sections"] for i in s["items"] if i["type"] == "highlight")
+                if not seen["asking"]["pending"] and len(shown["questions"]) < wanted:
+                    lost.append((wanted, len(shown["questions"])))
+            except Exception as exc:        # a fault here must fail the test, not end the thread unseen
+                lost.append(repr(exc))
+
+    watcher = threading.Thread(target=look)
+    watcher.start()
+    try:
+        for _ in range(25):
+            jobs.propose(jid, [h["id"]])
+            asked[0] += 1
+            settle(jobs, jid)
+    finally:
+        done.set()
+        watcher.join()
+    assert not lost and len(jobs.questions_state(jid)["questions"]) == 25
+
+
 def test_questions_for_every_highlight_that_has_none_and_a_failure_is_said(app):
     jobs, jid, stand = app
     section = next(s for s in jobs.manifest(jid)["sections"] if s["prompts"])

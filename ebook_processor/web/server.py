@@ -498,14 +498,20 @@ class Jobs:
     def _asking(self, job_id: str) -> dict[str, Any]:
         return self.asks.setdefault(job_id, {"pending": {}, "failed": {}, "batch": None, "cancel": threading.Event()})
 
+    def _writing(self, job_id: str) -> dict[str, Any]:
+        """What is being written right now (the caller holds the lock). A page stops looking for a question when
+        this says none is pending, so it must be read under the same lock as the store the page draws from: read
+        apart, a question finished between the two is in neither."""
+        asking = self._asking(job_id)
+        return {"pending": sorted(asking["pending"]), "failed": dict(asking["failed"]),
+                "batch": dict(asking["batch"]) if asking["batch"] else None}
+
     def questions_state(self, job_id: str) -> dict[str, Any]:
         """The book's questions from highlights, and what is being written right now."""
         self.get(job_id)
         with self.lock:
             store = notes.load(self.folder(job_id))
-            asking = self._asking(job_id)
-            return {"questions": hq.questions(store), "pending": sorted(asking["pending"]), "failed": dict(asking["failed"]),
-                    "batch": dict(asking["batch"]) if asking["batch"] else None}
+            return {"questions": hq.questions(store), **self._writing(job_id)}
 
     def propose(self, job_id: str, highlights: list[str] | None, auto: bool = False, chapter: int | None = None,
                 instruction: str = "") -> dict[str, Any]:
@@ -687,9 +693,13 @@ class Jobs:
         return self.notes_do(job_id, change)
 
     def notebook(self, job_id: str) -> dict[str, Any]:
-        made = notes.notebook(self.book(job_id), self.notes_do(job_id), reading.load_state(self.folder(job_id)),
-                              self.sources(job_id))
-        return {**made, "editable": self.editable(job_id)}
+        """The notebook's entries, and under ``asking`` what is being written for them at the same moment."""
+        book = self.book(job_id)
+        with self.lock:
+            store = self.notes_do(job_id)
+            asking = self._writing(job_id)
+        made = notes.notebook(book, store, reading.load_state(self.folder(job_id)), self.sources(job_id))
+        return {**made, "editable": self.editable(job_id), "asking": asking}
 
     # ---- what the settings window keeps
 

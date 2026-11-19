@@ -750,7 +750,9 @@ async function showNotebook(id) {
   const ask = async (path, options) => { try { await api(`/jobs/${id}/questions${path}`, options); } catch (e) { alert(e.message); } await load(); };
   async function load() {
     const y = window.scrollY;
-    try { [data, asks] = await Promise.all([api(`/jobs/${id}/notebook`), api(`/jobs/${id}/questions`)]); }
+    // One request for the entries and for what is being written. Two could disagree: a question finished between
+    // them was in neither, and the page stopped looking for it.
+    try { data = await api(`/jobs/${id}/notebook`); asks = data.asking; }
     catch (e) { return put(body, h("p", { class: "msg err" }, e.message)); }
     draw(); window.scrollTo(0, y);
     if (wanted) show(wanted);
@@ -759,7 +761,7 @@ async function showNotebook(id) {
   function watch() {                    // while questions are being written, look again; never over something being typed
     clearTimeout(timer);
     if (!asks.pending.length && !(asks.batch && asks.batch.running)) return;
-    timer = setTimeout(() => { if (body.querySelector("textarea")) watch(); else load(); }, 1500);
+    timer = setTimeout(() => { if (body.querySelector("textarea, #nb-wish")) watch(); else load(); }, 1500);   // a note, a question or a wish
   }
   function show(itemId) {               // the reader beside asks for an entry: bring it into view and light it
     const entry = document.getElementById("nb-" + itemId);

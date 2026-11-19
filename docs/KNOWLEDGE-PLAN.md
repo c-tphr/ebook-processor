@@ -2,7 +2,7 @@
 
 This is the working plan for the knowledge system, agreed with the project owner in a six-round interview on 2026-11-18. It is written for whoever builds it, so that the work can start from this file alone. It holds what was decided, the phases, a design for each phase, and the questions that are still open. Keep it up to date as phases are finished: mark what is done, and move what was passed over to `DEFERRED.md`.
 
-**Status: Phase 1 is on `main`. Phase 2 (the Process view) is built and on the development branch (section 6c); it goes to `main` when the owner says. Phase 3 starts with its interview.**
+**Status: Phases 1 and 2 are on `main`. Phase 3 (index notes, projects, more of Markdown in the editor) is being built in the order of section 6d.**
 
 ## 1. What it is for
 
@@ -263,6 +263,33 @@ Order of work:
 3. [x] The Process view in `index.html` (`#/notes/process`), its entry on the Notes front page and on a book's page; related notes in `notes.js`.
 4. [x] Browser tests, README, `DEFERRED.md`.
 
+## 6d. Phase 3: answers of the interview, and the order of work
+
+Asked on 2026-11-19, after Phase 2 went to `main` (`dcf0eda`).
+
+| Question | Answer |
+| --- | --- |
+| Writing an index note | Free text with links: an ordinary note of the kind "Index note" |
+| Adding to an index, and where indexes show | Only by writing in the index (no "Add to an index" button). Index notes are listed on the Notes front page |
+| What a project has gathered | It is in the project's own file, as links. A gathered note is not changed |
+| The outline | A nested list under "Outline" in the project's file; entries are a note, a passage, or a line of the owner's. Arranged on the project's page, and editable as text |
+| Export | The outline with the notes' text: headings of the outline as headings, each note's text under its entry, passages quoted with their book, links as plain words |
+| Project notes | Ordinary files at the top of the folder, of the kind "Project note", tied to their project by a property. Listed on the project's page; kept out of the front page's recent notes |
+| "Add to a project" | On a note's page only. Passages are gathered by writing their link in the project's file |
+| A highlight gathered for a project | It is not processed by that: it keeps waiting until a note of the owner's own cites it |
+| Where projects are found | A section of the Notes front page: the active ones, "New project", and a link to the finished ones |
+| Finished | The project leaves the active list and the "Add to a project" menu; its page and notes stay as they are and it can be reopened |
+| Tables | Shown as a table while the cursor is elsewhere; edited as Markdown text |
+
+Builder's choices: a project is a note of the kind `project` with the property `status` (`active` or `finished`); its file has the sections `## Gathered` (a list of links) and `## Outline` (a nested list), which the app finds by their headings. A project note carries `project: "[[Project]]"`. The outline is arranged on the page by working on the editor's text, so it is saved like anything typed. Embeds show the embedded text in a box under their line; callouts get a label and a rule; footnotes show as raised marks with their text on hover; task boxes can be ticked.
+
+Order of work:
+
+1. [ ] `vault.py`: sections of a file, gathering into a project, a project's export, what a link embeds. Server: projects and index notes on the front page, `gather`, `export.md`, project notes. Tests.
+2. [ ] The editor: embeds, callouts, footnotes, tables, task lists.
+3. [ ] `notes.js` and `index.html`: index notes, the project page (status, gathered, outline, project notes, export), "Add to a project", the front page.
+4. [ ] Browser tests, README, `DEFERRED.md`.
+
 ## 7. Record of progress
 
 | Date | What |
@@ -272,3 +299,4 @@ Order of work:
 | 2026-11-18 | Phase 1 built in the order of section 6b and pushed to the development branch: `vault.py`, `bookfile.py`, the server routes, the editor, `notes.js`, the Notes area, capture, and the reader's Idea note |
 | 2026-11-18 | Phase 1 pushed to `main` at `6cb78e6` on the owner's word. Phase 2 interview done (three rounds); building starts |
 | 2026-11-18 | Phase 2 built: `process.py`, citing and related notes in `vault.py`, `/api/process`, the Process view (`showProcess` in `index.html`), related notes in `notes.js`. The Process status is per book in `process.json` (set aside only); for a quick note it is the property `aside` |
+| 2026-11-19 | Phase 2 pushed to `main` at `dcf0eda` on the owner's word. Phase 3 interview done (three rounds); building starts |

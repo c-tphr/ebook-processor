@@ -19,8 +19,10 @@ import json
 import mimetypes
 import os
 import re
+import secrets
 import shutil
 import threading
+import time
 import traceback
 import webbrowser
 from http import HTTPStatus
@@ -30,7 +32,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
-from .. import __version__, assist, bookfile, editing, notes, process, reading, srs
+from .. import __version__, assist, bookfile, editing, notes, process, reading, sources, srs
 from .. import forms as qforms
 from .. import highlight_questions as hq
 from .. import steer as steering
@@ -43,6 +45,7 @@ from ..runner import (Cancelled, PipelineError, change_run, default_backend, reb
                       try_chapter, work_dir)
 from ..settings import DENSITIES, MAX_QUESTIONS, Settings, SettingsError, from_options
 from ..steer import Steer, SteerError
+from ..vault import SOURCES as SOURCE_KINDS
 from ..vault import Conflict, Missing, Vault, VaultError, clean_title, compose
 
 STATIC = Path(__file__).resolve().parent / "static"
@@ -74,6 +77,11 @@ def _slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or "book"
 
 
+def _plain_name(name: str) -> str:
+    """A file name that is safe to write, with the ending it came with."""
+    return re.sub(r"[^\w .,()'&+-]", "_", Path(name.replace("\\", "/")).name).strip(" .") or "original"
+
+
 def _safe_name(name: str) -> str:
     name = Path(name.replace("\\", "/")).name
     name = re.sub(r"[^\w .,()'&+-]", "_", name).strip(" .") or "book.epub"
@@ -94,14 +102,27 @@ def suggested_chapter(chapters: list[dict[str, Any]]) -> int | None:
 
 
 def look(name: str, data: bytes) -> dict[str, Any]:
-    """What the Add a book form shows of a book before anything is run: its length and its chapters."""
+    """What the Add form shows of an EPUB before anything is run: its length and its chapters."""
     try:
         book = load_book_bytes(data, _safe_name(name))
     except EpubError as exc:
         raise ApiError(HTTPStatus.BAD_REQUEST, f"This file cannot be read as an EPUB: {exc}") from exc
+    return {**_looked(book, book.title or stem_of(name)), "type": "book"}
+
+
+def _looked(book: Any, title: str) -> dict[str, Any]:
     chapters = steering.chapter_list(book)
-    return {"title": book.title or stem_of(name), "words": sum(c["words"] for c in chapters), "chapters": chapters,
+    return {"title": title, "words": sum(c["words"] for c in chapters), "chapters": chapters,
             "suggested": suggested_chapter(chapters)}
+
+
+def _is_epub(name: str, data: bytes) -> bool:
+    """An EPUB by its name, or by its bytes when the name says nothing this app knows."""
+    return name.lower().endswith(".epub") or (not sources.is_source(name) and data[:2] == b"PK" and b"mimetypeapplication/epub+zip" in data[:100])
+
+
+def _split_how(value: Any) -> str:
+    return "none" if value == "none" else "auto"
 
 
 def estimate(words: Any, settings: Settings, steered: bool) -> dict[str, Any]:
@@ -131,6 +152,8 @@ class Jobs:
         self.backend_factory = backend_factory
         # questions being written from highlights: book id -> what is under way (see ``propose``)
         self.asks: dict[str, dict[str, Any]] = {}
+        # files that are no EPUB, converted for the Add form and waiting for "Process": token -> what was sent
+        self.held: dict[str, dict[str, Any]] = {}
         self.writers = ThreadPoolExecutor(max_workers=2, thread_name_prefix="questions")
         for path in sorted(self.data.glob("*/job.json")):
             try:
@@ -155,7 +178,8 @@ class Jobs:
 
     def summary(self, job: dict[str, Any]) -> dict[str, Any]:
         out = {k: job.get(k) for k in ("id", "file", "title", "created", "updated", "status", "message", "stage",
-                                       "done", "total", "counts", "words", "kind")}
+                                       "done", "total", "counts", "words", "kind", "origin")}
+        out["type"] = self.type_of(job)
         out["can_read"] = job["status"] == "done" and self.prepared(job["id"]).is_file()
         out["reading"] = reading.summary(reading.load_state(self.folder(job["id"]))) if out["can_read"] else None
         out["practice"] = srs.counts(self.cards(job["id"]), self.today()) if out["can_read"] else None
@@ -770,8 +794,10 @@ class Jobs:
             marks = self.folder(job_id) / notes.FILE
             made_from = (self.prepared(job_id).stat().st_mtime_ns, marks.stat().st_mtime_ns if marks.is_file() else 0)
             store = notes.load(self.folder(job_id))
-            vault.put_book(bookfile.book_id(job_id), self.jobs[job_id].get("title") or stem_of(self.jobs[job_id]["file"]),
-                           lambda name: bookfile.text(name, job_id, book, store))
+            job = self.jobs[job_id]
+            kind = self.type_of(job)
+            vault.put_book(bookfile.book_id(job_id), job.get("title") or stem_of(job["file"]),
+                           lambda name: bookfile.text(name, job_id, book, store, kind, job.get("origin")), kind)
             self.filed[job_id] = made_from
         except (ApiError, VaultError, OSError) as exc:
             if not quiet:
@@ -804,7 +830,7 @@ class Jobs:
 
     def _cited(self, to: dict[str, Any]) -> dict[str, Any]:
         """What a link into a book's file leads to, with the way to open the reader there."""
-        job_id = bookfile.job_of(to.get("id") or "") if to.get("kind") == "book" else None
+        job_id = bookfile.job_of(to.get("id") or "") if to.get("kind") in SOURCE_KINDS else None
         if job_id is None:
             return to
         out = {**to, "in_library": self._readable(job_id)}
@@ -829,11 +855,11 @@ class Jobs:
         detail["sources"] = []
         for link in detail["links"]:
             to = link["to"]
-            if to.get("kind") == "book" and to.get("block") and (to["id"], to["block"]) not in seen:
+            if to.get("kind") in SOURCE_KINDS and to.get("block") and (to["id"], to["block"]) not in seen:
                 seen.add((to["id"], to["block"]))
                 detail["sources"].append({k: to.get(k) for k in ("id", "title", "block", "text", "found", "job", "go", "in_library")})
         held = {p["key"]: p.get("value") for p in detail["props"]}
-        where = next((k["to"] for k in detail["links"] if not k["anchor"] and k["to"].get("kind") == "book"
+        where = next((k["to"] for k in detail["links"] if not k["anchor"] and k["to"].get("kind") in SOURCE_KINDS
                       and held.get("book") == f"[[{k['target']}]]"), None)
         if where is not None:  # a quick note written in the reader: the book, and the place it was written at
             at = re.fullmatch(r"(\d+):(\d+)", str(held.get("place") or ""))
@@ -845,13 +871,13 @@ class Jobs:
             if mine is not None and detail["kind"] == "project":
                 detail["project"] = {"status": "finished" if held.get("status") == "finished" else "active",
                                      "notes": [vault.brief(n) for n in vault.project_notes(mine)]}
-            elif mine is not None and detail["kind"] != "book":
+            elif mine is not None and detail["kind"] not in SOURCE_KINDS:
                 named = next((k["to"] for k in detail["links"] if held.get("project") == f"[[{k['target']}]]" and k["to"].get("kind") == "project"), None)
                 if detail["kind"] == "project-note" and named is not None:
                     detail["of"] = {"id": named["id"], "title": named["title"]}
                 detail["gathered_for"] = [{"id": o.id, "title": o.title} for o in {o.id: o for o, _ in vault.backlinks(mine)}.values()
                                           if o.kind == "project"]
-        if detail["kind"] == "book":
+        if detail["kind"] in SOURCE_KINDS:
             detail["in_library"] = self._readable(bookfile.job_of(detail["id"]) or "")
             detail["job"] = bookfile.job_of(detail["id"]) if detail["in_library"] else None
         return detail
@@ -871,13 +897,13 @@ class Jobs:
         vault = self.vault(make=True)
         rows = vault.listing()
         books = [{**r, "job": bookfile.job_of(r["id"]), "in_library": self._readable(bookfile.job_of(r["id"]) or ""),
-                  "entries": len(vault.get(r["id"]).blocks)} for r in rows if r["kind"] == "book"]
+                  "entries": len(vault.get(r["id"]).blocks)} for r in rows if r["kind"] in SOURCE_KINDS]
         aside = {r["id"] for r in rows if r["kind"] == "quick" and vault.prop_of(r["id"], "aside") is True}
         return {"folder": str(vault.root), "inbox": [r for r in rows if r["inbox"] and r["id"] not in aside],
                 "waiting": self.process_view()["counts"]["waiting"], "revisit": vault.revisit(self.today())["today"],
                 "recent": [r for r in rows if not r["inbox"] and r["kind"] in ("idea", "quick")][:40],
                 "indexes": [r for r in rows if r["kind"] == "index" and not r["inbox"]], "projects": vault.projects(),
-                "notes": sum(1 for r in rows if r["kind"] != "book"), "tags": vault.tags(),
+                "notes": sum(1 for r in rows if r["kind"] not in SOURCE_KINDS), "tags": vault.tags(),
                 "books": sorted(books, key=lambda b: b["title"].casefold()), "trash": len(vault.trash())}
 
     # ---- processing: making something of what was marked (see process.py)
@@ -1171,7 +1197,7 @@ class Jobs:
         vault.refresh()
         with vault.lock:
             for note in vault.notes.values():
-                if note.kind == "book":
+                if note.source:
                     continue
                 made, changed = day(note.created) or day(note.modified), day(note.modified)
                 if made:
@@ -1291,7 +1317,7 @@ class Jobs:
         def work() -> dict[str, Any]:
             with vault.lock:
                 note = vault.get(note_id)
-                if note.kind == "book" and bookfile.job_of(note.id):
+                if note.source and bookfile.job_of(note.id):
                     raise VaultError("A book's file is kept by the app. Change the highlight or the note in the book.")
                 title = r.get("title")
                 if isinstance(title, str) and title.strip():
@@ -1310,7 +1336,7 @@ class Jobs:
 
         def work() -> dict[str, Any]:
             note = vault.get(note_id)
-            if note.kind == "book" and self._readable(bookfile.job_of(note.id) or ""):
+            if note.source and self._readable(bookfile.job_of(note.id) or ""):
                 raise VaultError("This book is in your library, so its file is kept. Remove the book first.")
             return vault.delete(note_id)
         return self._vaulted(work)
@@ -1419,7 +1445,7 @@ class Jobs:
             job["report"] = {k: report.get(k) for k in ("counts", "files", "firmware_format_ok", "notes", "warnings",
                                                         "usage", "complete", "doubted_breaks", "excluded", "cards")}
             job["report"]["preview"] = bool((report.get("settings") or {}).get("preview"))
-        job.update({k: v for k, v in self.summary(self.jobs[job_id]).items() if k in ("can_read", "reading", "practice", "notes")})
+        job.update({k: v for k, v in self.summary(self.jobs[job_id]).items() if k in ("can_read", "reading", "practice", "notes", "type")})
         if job["can_read"]:
             job["results"] = reading.results(reading.load_state(self.folder(job_id)))
             job["waiting"] = self.process_waiting(job_id)
@@ -1568,14 +1594,115 @@ class Jobs:
         job["updated"] = now()
         write_json(self.folder(job["id"]) / "job.json", {k: v for k, v in job.items() if k != "report"})
 
-    def create(self, name: str, data: bytes, settings: Settings, plan: Any = None) -> dict[str, Any]:
-        """Add a book and start its run. ``plan`` holds what the reader wants from it: ``purpose``, whether their
-        interests from the settings apply (``interests``), and ``trial``, a chapter to try before the whole book."""
-        name = _safe_name(name)
+    # ---- other sources than EPUB (docs/SOURCES-PLAN.md)
+
+    HELD, HELD_SECONDS = 4, 30 * 60
+
+    @staticmethod
+    def type_of(job: dict[str, Any]) -> str:
+        """What an entry of the library is: a book or an article."""
+        return job["type"] if job.get("type") in sources.TYPES else "book"
+
+    def _convert(self, entry: dict[str, Any], split_how: str, title: str | None = None, author: str | None = None) -> sources.Made:
+        """``entry`` is a held file. Its pictures are fetched once, however often it is converted."""
+        cache = entry["pictures"]
+
+        def remember(get: Any) -> Any:
+            def cached(address: str) -> bytes | None:
+                if address not in cache:
+                    cache[address] = get(address)
+                return cache[address]
+            return cached
+
         try:
-            book = load_book_bytes(data, name)
-        except EpubError as exc:
-            raise ApiError(HTTPStatus.BAD_REQUEST, f"This file cannot be read as an EPUB: {exc}") from exc
+            return sources.convert(entry["name"], entry["data"], url=entry["url"], folder=entry["folder"], split_how=split_how,
+                                   title=title, author=author, pictures=remember)
+        except sources.SourceError as exc:
+            raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+
+    def look_source(self, name: str, data: bytes, split_how: str = "auto", folder: Path | None = None,
+                    url: str | None = None) -> dict[str, Any]:
+        """What the Add form shows of a file that is no EPUB. The file is converted and held, so that "Process"
+        does not send it again."""
+        entry = {"name": Path(name.replace("\\", "/")).name, "data": data, "folder": folder, "url": url, "pictures": {},
+                 "time": time.monotonic()}
+        made = self._convert(entry, split_how)
+        token = secrets.token_urlsafe(12)
+        with self.lock:
+            self.held[token] = entry
+            for old in sorted(self.held, key=lambda t: self.held[t]["time"])[:-self.HELD]:
+                del self.held[old]
+        return self._seen(token, entry, made, split_how)
+
+    def _held(self, token: Any) -> dict[str, Any]:
+        with self.lock:
+            entry = self.held.get(token) if isinstance(token, str) else None
+            if entry is None or time.monotonic() - entry["time"] > self.HELD_SECONDS:
+                if entry is not None:
+                    del self.held[token]
+                raise ApiError(HTTPStatus.GONE, "the app no longer holds this file; choose it again")
+            return entry
+
+    def look_held(self, token: Any, split_how: str) -> dict[str, Any]:
+        """A held file converted again, with another choice for its chapters."""
+        entry = self._held(token)
+        return self._seen(token, entry, self._convert(entry, split_how), split_how)
+
+    def _seen(self, token: str, entry: dict[str, Any], made: sources.Made, split_how: str) -> dict[str, Any]:
+        origin = made.origin
+        with self.lock:
+            same = [j for j in self.jobs.values() if isinstance(j.get("origin"), dict)
+                    and (j["origin"].get("sha256") == origin["sha256"] or (origin["url"] and j["origin"].get("url") == origin["url"]))]
+        return {**_looked(made.book, made.title), "type": made.type, "author": made.author, "origin": origin,
+                "found": made.found, "split": split_how, "pictures": made.pictures, "warnings": made.warnings, "held": token,
+                "seen_before": max((j["created"] for j in same), default=None)}
+
+    def create_held(self, token: Any, settings: Settings, plan: Any = None) -> dict[str, Any]:
+        """Add what the form holds and start its run. ``plan`` may also say how the reader set it: ``title``,
+        ``author``, ``split`` and ``type``."""
+        entry = self._held(token)
+        plan = plan if isinstance(plan, dict) else {}
+        title, author = plan.get("title"), plan.get("author")
+        made = self._convert(entry, _split_how(plan.get("split")), _text(title, 300) if isinstance(title, str) else None,
+                             _text(author, 300) if isinstance(author, str) else None)
+        job = self.create(made.name, made.epub, settings, plan, made, entry)
+        with self.lock:
+            self.held.pop(token, None)
+        return job
+
+    def add(self, name: str, data: bytes, settings: Settings, plan: Any = None, folder: Path | None = None) -> dict[str, Any]:
+        """Add a file of any kind the app takes, and start its run."""
+        if _is_epub(name, data):
+            return self.create(name, data, settings, plan)
+        split_how = _split_how(plan.get("split") if isinstance(plan, dict) else None)
+        return self.create_held(self.look_source(name, data, split_how, folder)["held"], settings, plan)
+
+    def set_type(self, job_id: str, kind: Any) -> dict[str, Any]:
+        """Say that an entry is a book, or an article. Its file in the notes folder moves with it."""
+        if kind not in sources.TYPES:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "an entry is a book or an article")
+        with self.lock:
+            job = self.get(job_id)
+            job["type"] = kind
+            self._store(job)
+            self.filed.pop(job_id, None)
+        self.file_book(job_id, quiet=True)
+        return job
+
+    def create(self, name: str, data: bytes, settings: Settings, plan: Any = None, made: sources.Made | None = None,
+               original: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Add a book and start its run. ``plan`` holds what the reader wants from it: ``purpose``, whether their
+        interests from the settings apply (``interests``), ``trial``, a chapter to try before the whole book, and
+        ``type`` (book or article). ``made`` and ``original`` come with a file that was no EPUB: the EPUB made
+        from it is what is run, and the file as it was given is kept beside it."""
+        name = _safe_name(name)
+        if made is not None:
+            book = made.book
+        else:
+            try:
+                book = load_book_bytes(data, name)
+            except EpubError as exc:
+                raise ApiError(HTTPStatus.BAD_REQUEST, f"This file cannot be read as an EPUB: {exc}") from exc
         plan = plan if isinstance(plan, dict) else {}
         ui = self.ui_settings()
         interests = plan.get("interests") is not False
@@ -1594,7 +1721,12 @@ class Jobs:
             folder = self.folder(job_id)
             (folder / "input").mkdir(parents=True)
             (folder / "input" / name).write_bytes(data)
-            job = {"id": job_id, "file": name, "title": book.title or stem_of(name), "created": now(),
+            if made is not None and original is not None:
+                (folder / "input" / "original").mkdir()
+                (folder / "input" / "original" / _plain_name(original["name"])).write_bytes(original["data"])
+            kind = plan.get("type") if plan.get("type") in sources.TYPES else made.type if made is not None else "book"
+            job = {"id": job_id, "file": name, "title": book.title or stem_of(name), "created": now(), "type": kind,
+                   "origin": made.origin if made is not None else None,
                    "status": "queued", "message": "Waiting to start", "stage": None, "done": None, "total": None,
                    "words": sum(len(sd.words) for sd in book.spine), "settings": settings.as_json(), "events": [],
                    "counts": None, "steer": mine, "chapters": chapters, "read_as": None, "confirmed": None, "spent": [],
@@ -1882,7 +2014,12 @@ class Handler(BaseHTTPRequestHandler):
                 data = self.body()
                 if not data:
                     raise ApiError(HTTPStatus.BAD_REQUEST, "no file was sent")
-                return self.send_json(jobs.summary(jobs.create(name, data, settings, plan)), HTTPStatus.CREATED)
+                return self.send_json(jobs.summary(jobs.add(name, data, settings, plan)), HTTPStatus.CREATED)
+            case ("POST", ["jobs", "held"]):  # a file that is no EPUB, as the Add form holds it
+                request = self.json_body()
+                settings = self.settings(request.get("settings") or {})
+                return self.send_json(jobs.summary(jobs.create_held(request.get("held"), settings, request.get("plan"))),
+                                      HTTPStatus.CREATED)
             case ("POST", ["jobs", "local"]):
                 request = self.json_body()
                 path = Path(str(request.get("path", ""))).expanduser()
@@ -1891,20 +2028,30 @@ class Handler(BaseHTTPRequestHandler):
                 if path.stat().st_size > MAX_UPLOAD:
                     raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "the file is larger than 300 MB")
                 settings = self.settings(request.get("settings") or {})
-                return self.send_json(jobs.summary(jobs.create(path.name, path.read_bytes(), settings, request.get("plan"))),
-                                      HTTPStatus.CREATED)
+                return self.send_json(jobs.summary(jobs.add(path.name, path.read_bytes(), settings, request.get("plan"),
+                                                            path.parent)), HTTPStatus.CREATED)
             case ("POST", ["look"]):  # a book's length and chapters, before anything is run or kept
                 data = self.body()
                 if not data:
                     raise ApiError(HTTPStatus.BAD_REQUEST, "no file was sent")
-                return self.send_json(look((query.get("name") or ["book.epub"])[0], data))
+                name = (query.get("name") or ["book.epub"])[0]
+                if _is_epub(name, data):
+                    return self.send_json(look(name, data))
+                return self.send_json(jobs.look_source(name, data, _split_how((query.get("split") or [""])[0])))
             case ("POST", ["look", "local"]):
-                path = Path(str(self.json_body().get("path", ""))).expanduser()
+                request = self.json_body()
+                path = Path(str(request.get("path", ""))).expanduser()
                 if not path.is_file():
                     raise ApiError(HTTPStatus.BAD_REQUEST, f"There is no file at {path}")
                 if path.stat().st_size > MAX_UPLOAD:
                     raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "the file is larger than 300 MB")
-                return self.send_json(look(path.name, path.read_bytes()))
+                data = path.read_bytes()
+                if _is_epub(path.name, data):
+                    return self.send_json(look(path.name, data))
+                return self.send_json(jobs.look_source(path.name, data, _split_how(request.get("split")), folder=path.parent))
+            case ("POST", ["look", "held"]):
+                request = self.json_body()
+                return self.send_json(jobs.look_held(request.get("held"), _split_how(request.get("split"))))
             case ("POST", ["estimate"]):
                 request = self.json_body()
                 return self.send_json(estimate(request.get("words"), self.settings(request.get("settings") or {}),
@@ -2137,6 +2284,8 @@ class Handler(BaseHTTPRequestHandler):
             case ("DELETE", ["jobs", job_id]):
                 jobs.delete(job_id)
                 return self.send_json({"deleted": job_id})
+            case ("POST", ["jobs", job_id, "type"]):
+                return self.send_json(jobs.summary(jobs.set_type(job_id, self.json_body().get("type"))))
             case ("POST", ["jobs", job_id, "cancel"]):
                 jobs.cancel(job_id)
                 return self.send_json({"ok": True})

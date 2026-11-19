@@ -43,8 +43,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
-BOOKS, INBOX, TRASH = "Books", "Inbox", ".trash"
-KINDS = ("idea", "index", "quick", "project-note", "project", "book")
+BOOKS, ARTICLES, INBOX, TRASH = "Books", "Articles", "Inbox", ".trash"
+KINDS = ("idea", "index", "quick", "project-note", "project", "book", "article")
+# What was read, as the app keeps it: one file each, in its own folder. Everywhere else a note is the reader's.
+SOURCES = {"book": BOOKS, "article": ARTICLES}
 WRITABLE = ("idea", "index", "quick", "project-note", "project")  # the kinds a person's own note can have
 TITLE_MAX = 120
 BODY_MAX = 400_000  # characters
@@ -492,6 +494,11 @@ class Note:
     terms: frozenset[str] = frozenset()  # its words, for finding related notes
 
     @property
+    def source(self) -> bool:
+        """A book's or an article's file, which the app keeps."""
+        return self.kind in SOURCES
+
+    @property
     def inbox(self) -> bool:
         return self.path.startswith(INBOX + "/")
 
@@ -524,7 +531,8 @@ def read_text(text: str, path: str, stamp: tuple[int, int]) -> Note:
     stem = _nfc(path.rsplit("/", 1)[-1][:-3])
     note = Note(path=path, stamp=stamp, title=stem, props=props, body=body)
     kind = prop(props, "kind")
-    note.kind = kind if kind in KINDS else "book" if path.startswith(BOOKS + "/") else "quick" if note.inbox else "idea"
+    note.kind = (kind if kind in KINDS else "book" if path.startswith(BOOKS + "/") else "article" if path.startswith(ARTICLES + "/")
+                 else "quick" if note.inbox else "idea")
     masked = mask_code(body)
     lines, plain = masked.split("\n"), body.split("\n")
     tags = prop(props, "tags")
@@ -567,7 +575,7 @@ def read_text(text: str, path: str, stamp: tuple[int, int]) -> Note:
         else:
             words = unescape(words)
         before = words or before
-        if note.kind == "book":
+        if note.source:
             if words:
                 pending.append(Passage(m.group(1) if m else "", words, heading, quote))
             if m:  # the paragraphs before it that have no id of their own belong to the same entry
@@ -594,7 +602,7 @@ def read_text(text: str, path: str, stamp: tuple[int, int]) -> Note:
     note.created = created if isinstance(created, str) else ""
     note.modified = _dt.datetime.fromtimestamp(stamp[0] / 1e9, _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     note.fold = key(note.title + "\n" + body)
-    if note.kind == "book":
+    if note.source:
         for p in note.passages:
             p.terms = terms(p.text)
     else:
@@ -777,7 +785,7 @@ class Vault:
         highlight (``^id-note``) counts for the highlight."""
         out: dict[str, list[Note]] = {}
         for other, link in self.backlinks(book):
-            if other.kind == "book" or not link.anchor.startswith("^"):
+            if other.source or not link.anchor.startswith("^"):
                 continue
             block = link.anchor[1:]
             block = block[:-5] if block.endswith("-note") else block
@@ -796,11 +804,11 @@ class Vault:
             if self._df is None:
                 df: dict[str, int] = {}
                 for note in self.notes.values():
-                    for bag in ([p.terms for p in note.passages] if note.kind == "book" else [note.terms]):
+                    for bag in ([p.terms for p in note.passages] if note.source else [note.terms]):
                         for w in bag:
                             df[w] = df.get(w, 0) + 1
                 self._df = df
-            total = max(1, sum(len(n.passages) if n.kind == "book" else 1 for n in self.notes.values()))
+            total = max(1, sum(len(n.passages) if n.source else 1 for n in self.notes.values()))
             weight = lambda w: math.log(1 + total / (1 + self._df.get(w, 0)))
             mine, skip = {key(t) for t in tags or []}, but or set()
 
@@ -813,7 +821,7 @@ class Vault:
 
             notes, passages = [], []
             for note in self.notes.values():
-                if note.kind == "book":
+                if note.source:
                     for p in note.passages:
                         if f"{note.id}#{p.block}" in skip:
                             continue
@@ -898,7 +906,7 @@ class Vault:
             for n in range(1, steps + 1):
                 found = []
                 for path in ring:
-                    if n > 1 and self.notes[path].kind == "book":
+                    if n > 1 and self.notes[path].source:
                         continue
                     for other in sorted(joined[path], key=lambda p: (-len(joined[p]), p)):
                         if other not in step and len(step) < most:
@@ -909,7 +917,7 @@ class Vault:
                      for p, n in step.items()]
             edges = sorted({tuple(sorted((self.notes[a].id, self.notes[b].id))) for a in step for b in joined[a] if b in step})
             return {"centre": centre.id, "nodes": nodes, "edges": [list(e) for e in edges],
-                    "more": sum(1 for p in step for o in joined[p] if o not in step and not (self.notes[p].kind == "book" and step[p] > 0)) > 0}
+                    "more": sum(1 for p in step for o in joined[p] if o not in step and not (self.notes[p].source and step[p] > 0)) > 0}
 
     def revisit(self, today: _dt.date | None = None, old_days: int = 30, pick: int = 3) -> dict[str, Any]:
         """Notes to come back to: those joined to no other note (citing a book does not count), and those not
@@ -919,7 +927,7 @@ class Vault:
         with self.lock:
             joined = self._joined()
             mine = [n for n in self.notes.values() if n.kind in ("idea", "index") and not n.inbox]
-            alone = [n for n in mine if not any(self.notes[o].kind != "book" for o in joined[n.path])]
+            alone = [n for n in mine if not any(not self.notes[o].source for o in joined[n.path])]
             limit = (_dt.datetime.combine(today, _dt.time.min) - _dt.timedelta(days=old_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
             old = sorted((n for n in mine if n.modified < limit), key=lambda n: n.modified)
             seen: dict[str, Note] = {n.id: n for n in alone + old}
@@ -966,7 +974,7 @@ class Vault:
         with self.lock:
             self.refresh(force=True)
             project, note = self._project(project_id), self.get(note_id)
-            if note is project or note.kind in ("book", "project"):
+            if note is project or note.source or note.kind == "project":
                 raise VaultError("A project gathers notes.")
             if any(k.target and self.resolve(k.target) is note for k in project.links):
                 return {**self.detail(project), "added": False}
@@ -982,7 +990,7 @@ class Vault:
             if m.group(4):
                 return m.group(4).strip()
             to = self.resolve(m.group(2)) if m.group(2).strip() else None
-            name = (prop(to.props, "title") if to is not None and to.kind == "book" else None) or (to.title if to is not None else m.group(2).strip())
+            name = (prop(to.props, "title") if to is not None and to.source else None) or (to.title if to is not None else m.group(2).strip())
             part = (m.group(3) or "").strip()
             return str(name) if not part or part.startswith("^") else f"{name}, {part}" if name else part
         return BLOCK_RE.sub("", LINK_RE.sub(shown, text)).rstrip()
@@ -1000,13 +1008,13 @@ class Vault:
                 marks = "#" * min(6, item["depth"] + 2)
                 m = LINK_RE.fullmatch(item["text"])
                 to = self.resolve(m.group(2)) if m and m.group(2).strip() else None
-                if to is not None and to.kind == "book" and (m.group(3) or "").startswith("^"):
+                if to is not None and to.source and (m.group(3) or "").startswith("^"):
                     words = to.blocks.get(m.group(3)[1:])
                     if words:
                         out += ["> " + line if line else ">" for line in words.split("\n")]
                         out += [">", f"> ({prop(to.props, 'title') or to.title})", ""]
                     continue
-                if to is not None and to.kind != "book":
+                if to is not None and not to.source:
                     if parent:
                         out += [f"{marks} {to.title}", ""]
                     lines, masked = to.body.split("\n"), mask_code(to.body).split("\n")
@@ -1232,7 +1240,7 @@ class Vault:
         with self.lock:
             self.refresh(force=True)
             note = self.get(note_id)
-            if note.kind == "book":
+            if note.source:
                 raise VaultError("A book's file is kept by the app.")
             body, props = note.body.rstrip("\n"), [Prop(p.key, p.value, p.raw) for p in note.props]
             if words.strip():
@@ -1254,7 +1262,7 @@ class Vault:
         with self.lock:
             self.refresh(force=True)
             note = self.get(note_id)
-            if note.kind == "book" and note.path.startswith(BOOKS + "/"):
+            if note.source and note.path.startswith(SOURCES[note.kind] + "/"):
                 raise VaultError("A book's file is named by the app.")
             if note.provisional:  # a file made outside the app: it gets its id before it moves
                 saved = self.save(note.id, force=True)
@@ -1358,16 +1366,27 @@ class Vault:
         self.refresh()
         with self.lock:
             note = self.by_id.get(book_id)
-            return note if note is not None and note.kind == "book" else None
+            return note if note is not None and note.source else None
 
-    def put_book(self, book_id: str, title: str, write: Any) -> Note:
-        """Write a book's file. ``write(name)`` gives its text for the file name it has or is given. The file is
-        left alone when the text is what it already holds."""
+    def put_book(self, book_id: str, title: str, write: Any, kind: str = "book") -> Note:
+        """Write a book's or an article's file. ``write(name)`` gives its text for the file name it has or is
+        given. The file is left alone when the text is what it already holds, and moves to the other folder when
+        the reader says a book is an article, or the other way."""
         self.ensure()
+        folder = SOURCES[kind]
         with self.lock:
             self.refresh(force=True)
             note = self.book(book_id)
-            rel = note.path if note is not None else self._free(BOOKS, safe_title(title, "Book"))
+            if note is not None and note.path.startswith(tuple(f + "/" for f in SOURCES.values())) and not note.path.startswith(folder + "/"):
+                rel = f"{folder}/{note.path.rsplit('/', 1)[-1]}"
+                if (self.root / rel).exists():
+                    rel = self._free(folder, safe_title(title, "Article"))
+                self._inside(rel).parent.mkdir(parents=True, exist_ok=True)
+                self._move(self._inside(note.path), self._inside(rel))
+                self.refresh(force=True)
+                note = self.book(book_id)
+            rel = note.path if note is not None else self._free(folder, safe_title(title, "Book" if kind == "book" else "Article"))
+            self._inside(rel).parent.mkdir(parents=True, exist_ok=True)
             text = write(_nfc(rel.rsplit("/", 1)[-1][:-3]))
             path = self._inside(rel)
             if not path.is_file() or path.read_bytes().decode("utf-8", errors="replace") != text:
@@ -1392,12 +1411,12 @@ class Vault:
             notes: list[tuple[int, Note, str]] = []
             passages: list[dict[str, Any]] = []
             for note in self.notes.values():
-                if note.kind == "book":
-                    if kind not in (None, "book") or tagged or (cited is not None and note is not cited):
+                if note.source:
+                    if kind not in (None, note.kind) or tagged or (cited is not None and note is not cited):
                         continue
                     for p in note.passages:
                         fold = key(p.text)
-                        if all(w in fold for w in words) and (words or cited is not None or kind == "book"):
+                        if all(w in fold for w in words) and (words or cited is not None or kind == note.kind):
                             passages.append({"book": note.title, "book_id": note.id, "block": p.block, "heading": p.heading,
                                              "quote": p.quote, "text": _snippet(p.text, words, 320)})
                     continue

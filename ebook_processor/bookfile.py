@@ -74,12 +74,18 @@ def _entry(text: str, block: str) -> list[str]:
     return lines[:-1] + [f"{last.rstrip()} ^{block}", ""]
 
 
-def text(name: str, job_id: str, book: ReadingBook, store: dict[str, Any]) -> str:
-    """The file of one book. ``name`` is the file's name without ``.md``."""
+def text(name: str, job_id: str, book: ReadingBook, store: dict[str, Any], kind: str = "book",
+         origin: dict[str, Any] | None = None) -> str:
+    """The file of one book or article. ``name`` is the file's name without ``.md``. ``origin`` says where an
+    article came from; what is known of it goes into the file's properties."""
     data = notes.notebook(book, store, None)
-    props = [vault.Prop("id", book_id(job_id)), vault.Prop("kind", "book"), vault.Prop("title", _one_line(data["title"]))]
+    props = [vault.Prop("id", book_id(job_id)), vault.Prop("kind", kind), vault.Prop("title", _one_line(data["title"]))]
     if data["authors"]:
         props.append(vault.Prop("authors", [_one_line(a) for a in data["authors"]]))
+    for key in ("url", "site", "published", "fetched"):
+        value = (origin or {}).get(key)
+        if isinstance(value, str) and value.strip():
+            props.append(vault.Prop(key, _one_line(value)))
     lines = [KEPT, ""]
     if data["note"]:
         lines += _entry(data["note"]["text"], data["note"]["id"])

@@ -202,12 +202,34 @@ Passed over while Phase 1 was built. The later phases are in `docs/KNOWLEDGE-PLA
 | The notes' questions in the Anki deck | A book's exports hold the book's questions. Cards made from notes are practised in the app only |
 | Choosing the sources of an answer | The sources sent with a question are found by shared words and tags. A question phrased in words your notes do not use can miss them; the model is not asked to search |
 
+### Other sources than EPUB (step 1: Markdown, text and HTML files)
+
+Planned and not yet built, in `docs/SOURCES-PLAN.md`: web addresses, pages saved from the browser (with the article found in them), Word files. Left for later there: PDF, a browser extension, pasted text, several files at once, fetching a page again.
+
+| Item | What it means |
+| --- | --- |
+| Where an article came from, in the reader | The address and "open the original" are on the entry's page. The reader's top bar does not show them |
+| "Book" in the wording | The Add form, the entry's page and the library speak of an article. Settings, the help under options, the reader and the Process view still say "book" for both |
+| A setting of its own for articles' section length | Not built: the usual setting applies and can be changed per run |
+| Formulas | MathML in an HTML file is kept as its text, not as a formula |
+| Chapters at two levels | A text with parts and chapters is cut at one level only: the highest that appears twice or more. In a text file, parts and chapters are one flat list |
+| Small first document | What stands before the first chapter is a document of its own, however short |
+| SVG pictures | Not kept from a file that is no EPUB: only PNG, JPEG, GIF and WebP |
+| Tiny pictures | A picture one or two pixels wide or high is dropped as a counter or spacer. The plan said "under 2 KB", which would also drop small real pictures |
+| `--as book\|article` on the command line | Not built: the command line has no library. The kind is chosen in the app |
+| Tables that arrange a page | Opened into plain blocks by a guess (no header cells, and long text or blocks in the cells). A real table without header cells and with long cells would be opened too |
+| Text files: indented blocks | A block whose every line is indented is kept as it is (verse, code), unless most of the file is indented |
+
 ## To verify
 
 Things that work in tests but have not been confirmed in real use, and facts that are still unknown.
 
 | Item | What is missing |
 | --- | --- |
+| Real Markdown, text and HTML files | Tried on files written for the tests and on two pieces through the real model (320 and 1,370 words: one and two sections, two and five questions, all passing their check). Your own exports from writing tools, and text files of real books, have not been through it |
+| Chapter headings in text files | The rules were tried on made-up layouts. Real books vary more (a contents list that repeats every heading, for one) |
+| A file in a non-Western encoding without a mark | The guess prefers Western European when it fits. A wrong guess shows as garbled accents in the form's title, before anything is run |
+| The new libraries on every system | `lxml` is compiled code; GitHub's runs confirm Linux, Windows and macOS on the Python versions tested |
 | The notes folder in Obsidian | The folder is written to be an Obsidian vault: file names as titles, `[[links]]` by name, block ids, YAML properties, `.trash`. Obsidian itself has not opened one, because it is not available where the app is built. To check: open the folder as a vault, follow a `Source: [[Book#^id]]` link to its highlight (a highlight is written as `> words ^id`; if Obsidian does not find an id at the end of a quoted line, the id belongs on a line of its own after the quote, a form the app already reads), edit a note there and see it change in the app, rename a note in the app and see Obsidian's links follow |
 | The notes folder on Windows and macOS | File names, letter case and renaming are tested, and GitHub runs the tests on both systems. Not seen in real use: a note open in another program while the app saves it (Windows refuses, and the app says so), and a folder inside OneDrive or iCloud |
 | The editor on a phone or tablet | CodeMirror supports touch, but the Notes pages were laid out and tested for a laptop or desktop browser |

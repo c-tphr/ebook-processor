@@ -3,6 +3,7 @@
     ebook-processor Book.epub                 process a book (the same as: ebook-processor process Book.epub)
     ebook-processor Book.epub --purpose "Why I read it"    ... with what you want from the book
     ebook-processor estimate Book.epub        how many questions a run would write, and the book's chapters
+    ebook-processor Essay.md                  a Markdown, text or HTML file is taken in the same way
     ebook-processor rebuild Book-processed --remove c0004-p2
     ebook-processor serve                     the local web app
     ebook-processor update                    take the latest version and start the app again
@@ -20,7 +21,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from . import __version__
+from . import __version__, sources
 from . import steer as steering
 from .pipeline import load_state
 from .prep.epub import EpubError, load_book
@@ -109,8 +110,10 @@ def make_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("process", help="process a book (or continue an unfinished run)",
                        description="Process an EPUB. The original is only read. An unfinished run in the output "
                                    "folder is continued.")
-    p.add_argument("epub", type=Path, help="the EPUB to process")
-    p.add_argument("-o", "--output", type=Path, help="output folder (default: <name>-processed beside the EPUB)")
+    p.add_argument("epub", type=Path, metavar="FILE", help="the EPUB to process, or a Markdown, text or HTML file")
+    p.add_argument("-o", "--output", type=Path, help="output folder (default: <name>-processed beside the file)")
+    p.add_argument("--one-piece", action="store_true",
+                   help="for a file that is no EPUB: do not cut it into chapters at its headings")
     add_run_options(p)
     add_steer_options(p)
     p.set_defaults(func=cmd_process)
@@ -119,7 +122,9 @@ def make_parser() -> argparse.ArgumentParser:
                        description="Print about how many sections and questions a run with these options would "
                                    "give, and the book's chapters with the numbers --try-chapter takes. No model "
                                    "is called.")
-    p.add_argument("epub", type=Path, help="the EPUB")
+    p.add_argument("epub", type=Path, metavar="FILE", help="the EPUB, or a Markdown, text or HTML file")
+    p.add_argument("--one-piece", action="store_true",
+                   help="for a file that is no EPUB: do not cut it into chapters at its headings")
     add_run_options(p)
     p.set_defaults(func=cmd_estimate)
 
@@ -294,6 +299,17 @@ def print_trial(data: dict[str, Any]) -> None:
           "book; this chapter is taken over as it is.")
 
 
+def converted(path: Path, one_piece: bool) -> sources.Made:
+    """A Markdown, text or HTML file as the EPUB that is processed in its place."""
+    try:
+        made = sources.convert(path.name, path.read_bytes(), folder=path.parent, split_how="none" if one_piece else "auto")
+    except (sources.SourceError, OSError) as exc:
+        raise PipelineError(str(exc)) from exc
+    for warning in made.warnings:
+        print(warning, file=sys.stderr)
+    return made
+
+
 def cmd_process(args: argparse.Namespace) -> int:
     settings = settings_from(args)
     out_dir = (args.output or default_out_dir(args.epub)).resolve()
@@ -301,6 +317,15 @@ def cmd_process(args: argparse.Namespace) -> int:
     epub = args.epub.resolve()
     if not epub.is_file():
         raise PipelineError(f"{epub} does not exist")
+    if sources.is_source(epub.name):
+        # The same file gives the same EPUB, so a run that was stopped goes on from where it was.
+        made = converted(epub, args.one_piece)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        epub = out_dir / made.name
+        if not epub.is_file() or epub.read_bytes() != made.epub:
+            epub.write_bytes(made.epub)
+        print(f"{args.epub.name} is read as {made.title} ({made.words:,} words"
+              + (f", {made.found['count']} chapters" if made.found else "") + f"). The EPUB made from it is {epub}", file=sys.stderr)
     try:
         steer, spent = confirmed_steer(args, epub, out_dir, settings, cancel)
         if args.try_chapter is None:
@@ -329,8 +354,11 @@ def cmd_process(args: argparse.Namespace) -> int:
 
 def cmd_estimate(args: argparse.Namespace) -> int:
     settings = settings_from(args)
+    path = args.epub.resolve()
+    if not path.is_file():
+        raise PipelineError(f"{path} does not exist")
     try:
-        book = load_book(args.epub.resolve())
+        book = converted(path, args.one_piece).book if sources.is_source(path.name) else load_book(path)
     except (EpubError, OSError) as exc:
         raise PipelineError(str(exc)) from exc
     print(f"{book.title or args.epub.name}: {estimate_line(book, settings, False)}")

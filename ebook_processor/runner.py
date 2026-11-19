@@ -20,7 +20,9 @@ __all__ = ["Cancelled", "PipelineError", "change_run", "default_out_dir", "run_b
 
 
 def default_out_dir(epub: Path) -> Path:
-    return epub.resolve().parent / f"{epub.name[:-5] if epub.name.lower().endswith('.epub') else epub.name}-processed"
+    from . import sources
+    known = epub.name.lower().endswith(".epub") or sources.is_source(epub.name)
+    return epub.resolve().parent / f"{epub.stem if known else epub.name}-processed"
 
 
 def work_dir(out_dir: Path) -> Path:

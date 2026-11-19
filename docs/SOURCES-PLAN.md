@@ -2,7 +2,7 @@
 
 This is the working plan for taking in articles and documents as well as EPUB books. It was agreed with the project owner in a three-round interview on 2026-11-19 and is written for whoever builds it, so that the work can start from this file alone. It holds what was decided, what was tried before writing it, the design, the order of work in two steps, and what is left for later.
 
-**Status: plan only. Nothing is built. Building starts when the owner says go.**
+**Status: step 1 is built and on the development branch (Markdown, text and HTML files, the library's kinds, the `Articles` folder, the command line). Step 2 (web addresses, saved pages, Word files) is not started. Section 11 records what was done and where the work departed from this plan.**
 
 ## 1. What it is for
 
@@ -265,3 +265,23 @@ The instructions are not changed for books, so nothing already made is redone. W
 | Safari `.webarchive`, `.rtf`, `.odt`, old `.doc` | `.webarchive` is small to add (Python reads the format). The others would come with Pandoc |
 | Pandoc | In reserve for Word files |
 | Newsletters, feeds, transcripts | Not asked for |
+
+
+## 11. Record of progress
+
+### Step 1 (2026-11-19)
+
+Built as planned, with these differences:
+
+- **`convert()`** takes `split_how` in place of `split`, has no `whole` yet (it belongs to step 2), and takes `web` (may pictures be fetched) and `pictures` (the server wraps the way a picture is had, so that converting a held file again asks no site twice).
+- **Held files.** `Jobs.held` keeps the file as it was sent and its fetched pictures, not the made EPUB: the file is converted again on "Process", with the title, author and chapters the reader set. `POST /api/jobs` and `/api/jobs/local` also take any supported file directly.
+- **Footnotes.** A note's body is marked `role="doc-footnote"`, or `epub:type="footnote"` on a list item, which may not take that role. When a text is cut into chapters, a link to a note in another chapter names that chapter's file. Both came from running EPUBCheck on made books; they now pass with no errors or warnings.
+- **Tiny pictures** are dropped by their size in pixels (one or two wide or high), not by "under 2 KB".
+- **Titles.** When the file's head names "Title | Site" and the text has its own first heading inside that, the heading is the title.
+- **Text files.** A short line under a bare "Chapter 4" is taken as its title. The encoding guess prefers Western European when it fits.
+- **A fault that was there before:** the "Try on a chapter" control stayed visible when it was meant to be hidden (a class set `display`). `[hidden]` now always hides.
+- **Tests never reach the web** (`tests/conftest.py`): a fetch goes to a server the test starts, or is refused.
+- **Not built:** the origin line in the reader, `--as` on the command line. See `DEFERRED.md`.
+- **Real model:** a 320-word text file gave one section and two questions; a 1,370-word Markdown essay gave two sections and five questions. All passed their check, and none called the piece a book. The 8,000-word piece with headings was not run with the real model: once cut into chapters it takes the same path as a book.
+
+Order of work, section 8, step 1: items 1 to 10 done; item 11 (push, CI, report) follows.

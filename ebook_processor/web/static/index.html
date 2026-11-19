@@ -30,6 +30,7 @@ a { color: inherit; }
 .kv { display: flex; align-items: baseline; gap: 0; font: 12px/1.9 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; }
 .kv > i { flex: 1; min-width: 16px; border-bottom: 1px dotted var(--mute); margin: 0 8px; transform: translateY(-4px); }
 .kv > b { font-weight: 400; text-align: right; overflow-wrap: anywhere; text-transform: none; }
+.kv select { font: inherit; text-transform: none; padding: 0 2px; background: none; border: 0; border-bottom: 1px solid var(--ghost); color: inherit; }
 .lab { display: inline-block; font: 11px/1 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; padding: 4px 6px;
   border: 1px solid var(--ink); white-space: nowrap; }
 .lab.inv { background: var(--ink); color: var(--paper); }
@@ -81,10 +82,20 @@ input::placeholder { color: var(--mute); }
 .field { display: block; }
 .field > .m { display: block; margin-bottom: 6px; }
 .field > small { display: block; color: var(--mute); margin-top: 6px; font-size: 13px; line-height: 1.35; }
+[hidden] { display: none !important; }   /* a class that sets display must not show what is hidden */
 .drop { background: var(--sheet); padding: 34px 20px; text-align: center; border: 1px solid var(--ghost); }
 .drop.over { border-color: var(--blue); box-shadow: inset 0 0 0 2px var(--blue); }
 .drop strong { display: block; font: 500 24px/1.1 var(--grot); letter-spacing: -0.03em; margin-bottom: 14px; }
 .drop .row { justify-content: center; }
+.drop strong + .m { display: block; margin: -6px 0 14px; }
+.seen { margin-top: 18px; padding: 16px 18px; background: var(--sheet); border: 1px solid var(--ghost); }
+.seen .grid2 { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 0 18px; }
+.seen .field { margin-top: 0; } .seen .grid2 { margin-bottom: 12px; } .seen .check { display: flex; gap: 8px; align-items: center; }
+.seen ol.chapters { margin: 8px 0 0; padding-left: 22px; max-height: 220px; overflow: auto; font-size: 14px; }
+.kinds { display: flex; gap: 6px; margin: 0 auto 0 0; }
+.kinds button { font: 12px/1 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; padding: 7px 9px; background: none; border: 1px solid var(--ghost); color: var(--mute); cursor: pointer; }
+.kinds button[aria-pressed="true"] { border-color: var(--ink); color: var(--ink); }
+@media (max-width: 640px) { .seen .grid2 { grid-template-columns: minmax(0, 1fr); } }
 details.adv { margin-top: 26px; border-top: 1px solid var(--ghost); padding-top: 14px; }
 details.adv > summary { cursor: pointer; font: 12px/1.5 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; }
 .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -341,7 +352,7 @@ async function api(path, options = {}) {
   if (options.json !== undefined) { options.body = JSON.stringify(options.json); headers["Content-Type"] = "application/json"; }
   const response = await fetch("/api" + path, { ...options, headers });
   const data = await response.json().catch(() => ({ error: "The app gave an unreadable answer." }));
-  if (!response.ok) throw new Error(data.error || response.statusText);
+  if (!response.ok) throw Object.assign(new Error(data.error || response.statusText), { status: response.status });
   return data;
 }
 const put = (el, ...kids) => el.replaceChildren(...kids.flat(Infinity).filter((k) => k != null && k !== false));
@@ -436,6 +447,8 @@ function chapterSelect(chapters, chosen) {
   if (sel.selectedIndex < 0) sel.selectedIndex = 0;
   return sel;
 }
+const ACCEPTED_FILES = ".epub,.md,.markdown,.txt,.text,.html,.htm,.xhtml,application/epub+zip,text/markdown,text/plain,text/html";
+const SOURCE_NAMES = { markdown: "Markdown file", text: "Text file", html: "HTML file", epub: "EPUB" };
 const PURPOSE_HINT = "For example: I am reading this to decide how to price our product. I want to come away able to explain the main models and when each one fails.";
 
 /* ---------- home ---------- */
@@ -444,8 +457,38 @@ function showAdd() {
   let file = null, looked = null, lookedOf = null;   // looked: what the app knows of the chosen book (words, chapters)
   const error = h("div", { class: "msg err", role: "alert", hidden: true });
   const name = h("span", { class: "m mute" }, "No file chosen");
-  const input = h("input", { type: "file", accept: ".epub,application/epub+zip", hidden: true, onchange: () => choose(input.files[0]) });
+  const input = h("input", { type: "file", accept: ACCEPTED_FILES, hidden: true, onchange: () => choose(input.files[0]) });
   const pathInput = h("input", { type: "text", placeholder: "/home/you/Books/Title.epub", id: "path", onchange: () => { file = null; name.textContent = "No file chosen"; name.classList.add("mute"); look(); } });
+  // What the form knows of a chosen file and lets the reader set: what it is, and for a file that is no EPUB its
+  // title, its author and whether its headings make chapters.
+  const seen = h("div", { class: "seen", id: "seen", hidden: true });
+  const kindSel = h("select", { id: "kind", "aria-label": "Kind", onchange: () => noun() }, h("option", { value: "book" }, "Book"), h("option", { value: "article" }, "Article"));
+  const titleIn = h("input", { type: "text", id: "src-title", maxlength: 300 }), authorIn = h("input", { type: "text", id: "src-author", maxlength: 300 });
+  let splitHow = "auto";
+  function noun() {                     // the form speaks of what was chosen
+    const word = kindSel.value;
+    if (!$("go").disabled) $("go").textContent = "Process " + word;
+    $("want-label").textContent = `What do you want from this ${word}?`;
+    return word;
+  }
+  function drawSeen() {
+    seen.hidden = !looked;
+    if (!looked) return;
+    const src = !!looked.held, f = looked.found, n = looked.chapters.length;
+    const how = !f ? null : f.rule === "headings" ? `${n} chapters, cut at its headings.`
+      : `${n} chapters, found by ${{ named: "lines like", capitals: "lines in capitals like", numerals: "numbers on a line of their own like", marks: "headings like" }[f.rule] || "lines like"} “${f.example}”.`;
+    const one = h("input", { type: "checkbox", id: "one-piece", checked: splitHow === "none", onchange: () => { splitHow = one.checked ? "none" : "auto"; look(true); } });
+    put(seen,
+      src ? h("div", { class: "grid2" }, field("Title", titleIn), field("Author", authorIn)) : null,
+      h("div", { class: "row", style: "gap:18px;align-items:flex-end;flex-wrap:wrap" }, field("Kind", kindSel),
+        src ? h("p", { class: "m mute", style: "margin:0 0 8px", id: "seen-what" }, `${SOURCE_NAMES[looked.origin.format] || "File"}${looked.origin.site ? " / " + looked.origin.site : ""} / ${fmt(looked.words)} words`) : null),
+      src ? h("p", { id: "seen-found", style: "margin:12px 0 0" }, how || (splitHow === "none" ? `One piece of ${fmt(looked.words)} words.` : looked.format === "text" || looked.origin.format === "text" ? `No chapter headings were found. It will be read as one piece of ${fmt(looked.words)} words.` : `One piece of ${fmt(looked.words)} words.`)) : null,
+      src && (f || splitHow === "none") ? h("label", { class: "check", style: "margin-top:8px" }, one, h("span", {}, "Treat it as one piece, without chapters")) : null,
+      src && f ? h("details", { class: "adv", style: "margin-top:8px" }, h("summary", {}, "The chapters"), h("ol", { class: "chapters" }, looked.chapters.map((c) => h("li", {}, c.title, h("span", { class: "m mute" }, ` / ${fmt(c.words)} words`))))) : null,
+      src && looked.pictures.kept ? h("p", { class: "m mute", style: "margin:10px 0 0" }, `${looked.pictures.kept} picture${looked.pictures.kept === 1 ? "" : "s"} kept.`) : null,
+      ...(looked.warnings || []).map((w) => h("p", { class: "msg", style: "margin:10px 0 0" }, w)),
+      looked.seen_before ? h("p", { class: "msg", id: "seen-before", style: "margin:10px 0 0" }, `You added this on ${day(looked.seen_before)}. Adding it again makes a second entry.`) : null);
+  }
   function choose(f) {
     if (!f) return;
     file = f; pathInput.value = "";
@@ -456,7 +499,7 @@ function showAdd() {
     ondragover: (e) => { e.preventDefault(); drop.classList.add("over"); },
     ondragleave: () => drop.classList.remove("over"),
     ondrop: (e) => { e.preventDefault(); drop.classList.remove("over"); choose(e.dataTransfer.files[0]); } },
-    h("strong", {}, "Drop an EPUB here"),
+    h("strong", {}, "Drop a file here"), h("span", { class: "m mute" }, "EPUB, Markdown, plain text or HTML"),
     h("div", { class: "row" }, h("button", { type: "button", onclick: () => input.click() }, "Choose a file"), name), input);
 
   const field = (label, control, hint) => h("label", { class: "field" }, h("span", { class: "m" }, label), control, hint ? h("small", {}, hint) : null);
@@ -487,18 +530,26 @@ function showAdd() {
   // The chosen book's length and chapters: for the estimate, and for trying one chapter.
   const est = h("div", { class: "est", hidden: true, id: "estimate", "aria-live": "polite" }), chapterBox = h("span");
   let chapter = null, estTimer = null, estCall = 0;
-  async function look() {
+  async function look(again) {          // again: the same file, with another choice for its chapters
     const path = pathInput.value.trim(), key = file || path;
-    if (!key) { looked = lookedOf = null; return estimate(); }
-    if (lookedOf === key) return;
-    lookedOf = key; looked = null; error.hidden = true;
+    if (!key) { looked = lookedOf = null; drawSeen(); return estimate(); }
+    if (lookedOf === key && !again) return;
+    const held = again && looked && looked.held;
+    if (!again) splitHow = "auto";
+    lookedOf = key; error.hidden = true;
+    const fresh = () => (file ? api(`/look?name=${encodeURIComponent(file.name)}&split=${splitHow}`, { method: "POST", body: file, headers: { "Content-Type": "application/octet-stream" } })
+      : api("/look/local", { method: "POST", json: { path, split: splitHow } }));
     try {
-      const seen = file ? await api(`/look?name=${encodeURIComponent(file.name)}`, { method: "POST", body: file, headers: { "Content-Type": "application/epub+zip" } })
-        : await api("/look/local", { method: "POST", json: { path } });
+      let got;
+      try { got = held ? await api("/look/held", { method: "POST", json: { held, split: splitHow } }) : await fresh(); }
+      catch (err) { if (!held || err.status !== 410) throw err; got = await fresh(); }   // the app was started again since
       if (lookedOf !== key) return;
-      looked = seen;
-    } catch (err) { if (lookedOf !== key) return; lookedOf = null; error.textContent = err.message; error.hidden = false; }
-    chapter = looked && looked.chapters.some((c) => c.words >= 100) ? chapterSelect(looked.chapters, looked.suggested) : null;
+      if (!again) { titleIn.value = got.title || ""; authorIn.value = got.author || ""; kindSel.value = got.type || "book"; }
+      looked = got;
+    } catch (err) { if (lookedOf !== key) return; looked = lookedOf = null; error.textContent = err.message; error.hidden = false; }
+    drawSeen(); noun();
+    // a trial is of one chapter among several: a piece that is one document has nothing to try it on
+    chapter = looked && looked.chapters.filter((c) => c.words >= 100).length > (looked.held ? 1 : 0) ? chapterSelect(looked.chapters, looked.suggested) : null;
     put(chapterBox, chapter);
     $("try").hidden = !chapter;
     estimate();
@@ -519,10 +570,11 @@ function showAdd() {
   const form = h("form", { onsubmit: submit },
     drop,
     h("div", { style: "margin-top:18px" }, field("Or the path of a file on this computer", pathInput)),
+    seen,
     options.main,
     h("details", { class: "adv" }, h("summary", {}, "Advanced"), options.advanced),
     h("div", { class: "want", style: "margin-top:26px;border-top:1px solid var(--ghost);padding-top:18px" },
-      field("What do you want from this book?", purpose, "Why you are reading it and what you want to keep from it. The questions favour what bears on this, and the parts of the book that do may get more of them. Every answer still comes from the book. Leave it empty for questions on each section's own main ideas."),
+      h("label", { class: "field" }, h("span", { class: "m", id: "want-label" }, "What do you want from this book?"), purpose, h("small", {}, "Why you are reading it and what you want to keep from it. The questions favour what bears on this, and the parts of the book that do may get more of them. Every answer still comes from the book. Leave it empty for questions on each section's own main ideas.")),
       about),
     est, error,
     h("div", { class: "actions" }, h("button", { class: "primary", type: "submit", id: "go", onclick: () => { trial = false; } }, "Process book"),
@@ -535,17 +587,22 @@ function showAdd() {
     e.preventDefault(); error.hidden = true;
     const settings = options.read();
     const path = pathInput.value.trim();
-    if (!file && !path) { error.textContent = "Choose an EPUB first."; error.hidden = false; return; }
-    const plan = { purpose: purpose.value, interests: useAbout.checked };
+    if (!file && !path) { error.textContent = "Choose a file first."; error.hidden = false; return; }
+    const plan = { purpose: purpose.value, interests: useAbout.checked, type: kindSel.value };
     if (trial && chapter) plan.trial = +chapter.value;
-    $("go").disabled = $("go-try").disabled = true; $("go").textContent = "Reading the book";
+    const held = looked && looked.held;
+    if (held) Object.assign(plan, { title: titleIn.value.trim(), author: authorIn.value.trim(), split: splitHow });
+    $("go").disabled = $("go-try").disabled = true; $("go").textContent = "Reading the " + kindSel.value;
+    const whole = () => (path && !file
+      ? api("/jobs/local", { method: "POST", json: { path, settings, plan } })
+      : api(`/jobs?name=${encodeURIComponent(file.name)}&settings=${encodeURIComponent(JSON.stringify(settings))}&plan=${encodeURIComponent(JSON.stringify(plan))}`,
+          { method: "POST", body: file, headers: { "Content-Type": "application/octet-stream" } }));
     try {
-      const job = path && !file
-        ? await api("/jobs/local", { method: "POST", json: { path, settings, plan } })
-        : await api(`/jobs?name=${encodeURIComponent(file.name)}&settings=${encodeURIComponent(JSON.stringify(settings))}&plan=${encodeURIComponent(JSON.stringify(plan))}`,
-            { method: "POST", body: file, headers: { "Content-Type": "application/epub+zip" } });
+      let job;
+      try { job = held ? await api("/jobs/held", { method: "POST", json: { held, settings, plan } }) : await whole(); }
+      catch (err) { if (!held || err.status !== 410) throw err; job = await whole(); }   // no longer held: send the file itself
       location.hash = "#/run/" + job.id;
-    } catch (err) { error.textContent = err.message; error.hidden = false; $("go").disabled = $("go-try").disabled = false; $("go").textContent = "Process book"; }
+    } catch (err) { error.textContent = err.message; error.hidden = false; $("go").disabled = $("go-try").disabled = false; noun(); }
   }
   drawAbout();
 
@@ -560,12 +617,12 @@ function showAdd() {
   } });
   put(app,
     h("a", { class: "back m", href: "#/" }, "← Library"),
-    h("div", { class: "title" }, h("h1", {}, "Add a book"),
-      h("p", { style: "margin:0;max-width:46ch" }, "Give it an EPUB. It divides the book into sections, writes recall questions for the end of each one, has them checked against the text, and puts the book in your library with its checkpoints.")),
+    h("div", { class: "title" }, h("h1", {}, "Add a book or article"),
+      h("p", { style: "margin:0;max-width:46ch" }, "Give it an EPUB, or an article or document as a Markdown, text or HTML file. It divides the text into sections, writes recall questions for the end of each one, has them checked against the text, and puts it in your library with its checkpoints.")),
     info.claude.ok ? null : info.codex && info.codex.ok
       ? h("div", { class: "msg" }, "Claude Code is not ready, so choose a Codex model under Advanced, or make one the default in Settings. ", h("span", { class: "mute" }, info.claude.error))
       : h("div", { class: "msg err", role: "alert" }, info.claude.error),
-    band("New book", form),
+    band("New", form),
     band("Already prepared",
       h("p", { class: "lede" }, "A Book.prepared.epub made elsewhere can be added as it is and read with its checkpoints. Taking questions out and the Anki deck need a run made here."),
       importInput, h("button", { type: "button", onclick: () => importInput.click() }, "Choose a prepared EPUB"), importError));
@@ -576,7 +633,9 @@ const dur = (seconds) => { const m = Math.round(seconds / 60); return m >= 60 ? 
 function showLibrary() {
   const app = $("app");
   const hero = h("section", { class: "hero" }), runs = h("div", { class: "runs" });
-  const tools = h("div", { class: "row", style: "justify-content:flex-end;margin-bottom:16px" }, h("a", { class: "btn", href: "#/add" }, "Add book"));
+  const tools = h("div", { class: "row", style: "justify-content:flex-end;margin-bottom:16px" }, h("a", { class: "btn", href: "#/add" }, "Add book or article"));
+  let only = "";                        // the library narrowed to books or to articles
+  try { only = localStorage.getItem("library-kind") || ""; } catch (e) { /* no storage: every entry is shown */ }
   put(app, hero, band("Library",
     tools,
     runs, info.data ? h("div", { style: "margin-top:14px" }, kv("Kept in", info.data)) : null));
@@ -609,18 +668,28 @@ function showLibrary() {
     // the cards made from notes are practised with those of the books
     const waiting = jobs.reduce((n, j) => n + (j.practice ? j.practice.due + j.practice.again + j.practice.new : 0), ofNotes ? ofNotes.due + ofNotes.again + ofNotes.new : 0);
     const cards = jobs.reduce((n, j) => n + (j.practice ? j.practice.cards : 0), ofNotes ? ofNotes.cards : 0);
-    put(tools, cards ? h("a", { class: "btn" + (waiting ? " primary" : ""), href: "#/practice" }, waiting ? `Practice ${waiting}` : "Practice") : null,
-      h("a", { class: "btn", href: "#/add" }, "Add book"));
-    put(runs, jobs.length ? jobs.map(runRow) : h("p", { class: "empty" }, "No books yet."));
+    const mixed = jobs.some((j) => j.type === "article") && jobs.some((j) => j.type !== "article");
+    if (!mixed) only = "";
+    const choose = (kind) => { only = kind; try { localStorage.setItem("library-kind", kind); } catch (e) { /* not kept */ } clearTimeout(timer); refresh(); };
+    put(tools, mixed ? h("div", { class: "kinds", role: "group", "aria-label": "Show" }, [["", "All"], ["book", "Books"], ["article", "Articles"]].map(([kind, label]) =>
+        h("button", { type: "button", "aria-pressed": String(only === kind), onclick: () => choose(kind) }, label))) : null,
+      cards ? h("a", { class: "btn" + (waiting ? " primary" : ""), href: "#/practice" }, waiting ? `Practice ${waiting}` : "Practice") : null,
+      h("a", { class: "btn", href: "#/add" }, "Add book or article"));
+    const shown = jobs.filter((j) => !only || j.type === only);
+    put(runs, shown.length ? shown.map((j) => runRow(j, mixed)) : h("p", { class: "empty" }, "No books yet."));
     if (jobs.some((j) => j.status === "queued" || j.status === "running")) timer = setTimeout(refresh, 2500);
   }
   refresh();
 }
-function runRow(j) {
+const fromOf = (o) => (!o ? "" : o.site || (o.url ? new URL(o.url).hostname : SOURCE_NAMES[o.format] || ""));   // where an article came from, in a word or two
+function runRow(j, labelled) {
   const r = j.reading, c = j.counts;
-  const sub = j.status !== "done" ? j.message || ""
+  const state = j.status !== "done" ? j.message || ""
     : r ? `${Math.round(100 * r.progress)}% read` + (r.answered ? ` / ${r.correct} of ${r.answered} recalled on the first try` : "")
     : c ? `${fmt(c.questions)} questions at ${fmt(c.checkpoints)} checkpoints` : "";
+  // An article says what it is and where it came from; books say so once the library holds both.
+  const what = j.type === "article" ? ["Article", fromOf(j.origin)].filter(Boolean).join(" / ") : labelled ? "Book" : "";
+  const sub = [what, state].filter(Boolean).join(" / ");
   return h("div", { class: "run" },
     h("span", { class: "m mute d" }, day(j.created)), h("a", { class: "t", href: "#/run/" + j.id }, j.title),
     j.can_read ? h("a", { class: "btn", href: "/read/" + j.id }, r ? "Continue" : "Read") : h("span", { class: STATUS_LAB[j.status] || "lab" }, STATUS[j.status] || j.status),
@@ -938,10 +1007,11 @@ async function showNotes(params) {
   };
   function drawFilters() {
     put(filters, h("span", { class: "m mute" }, "Show"),
-      pick("kind", "Kind", [["", "Notes of every kind, and books"], ["idea", "Idea notes"], ["index", "Index notes"], ["quick", "Quick notes"],
-        ["project", "Projects"], ["project-note", "Project notes"], ["book", "Highlights and notes in books"]]),
+      pick("kind", "Kind", [["", "Notes of every kind, and what you read"], ["idea", "Idea notes"], ["index", "Index notes"], ["quick", "Quick notes"],
+        ["project", "Projects"], ["project-note", "Project notes"], ["book", "Highlights and notes in books"],
+        ...(home.books.some((b) => b.kind === "article") ? [["article", "Highlights and notes in articles"]] : [])]),
       pick("tag", "Tag", [["", "Any tag"], ...home.tags.map((t) => [t.tag, `#${t.tag} (${t.count})`]), ...(state.tag && !home.tags.some((t) => t.tag === state.tag) ? [[state.tag, "#" + state.tag]] : [])]),
-      pick("book", "Book", [["", "Any book"], ...home.books.map((b) => [b.id, b.title])]),
+      pick("book", "Book or article", [["", "Any book or article"], ...home.books.map((b) => [b.id, b.title])]),
       searching() ? h("button", { class: "text", type: "button", onclick: () => { state.q = state.kind = state.tag = state.book = ""; find.value = ""; go(); } }, "Clear") : null);
   }
   let finishedToo = false;
@@ -983,8 +1053,8 @@ async function showNotes(params) {
       h("div", { class: "nz-side" },
         part("Tags", null, home.tags.length ? h("div", { class: "nz-chips" }, home.tags.map((t) => h("a", { onclick: () => { state.tag = t.tag; go(); } }, "#" + t.tag, h("small", {}, String(t.count)))))
           : h("p", { class: "empty" }, "A #tag in a note, or in its properties, shows here.")),
-        part("Books", null, home.books.length ? home.books.map((b) => h("a", { class: "nz-book", onclick: () => { state.book = b.id; go(); } }, h("b", {}, b.title),
-          h("small", {}, `${fmt(b.entries)} highlight${b.entries === 1 ? "" : "s"} and notes` + (b.in_library ? "" : " / no longer in the library"))))
+        part(home.books.some((b) => b.kind === "article") ? "Books and articles" : "Books", null, home.books.length ? home.books.map((b) => h("a", { class: "nz-book", onclick: () => { state.book = b.id; go(); } }, h("b", {}, b.title),
+          h("small", {}, (b.kind === "article" ? "Article / " : "") + `${fmt(b.entries)} highlight${b.entries === 1 ? "" : "s"} and notes` + (b.in_library ? "" : " / no longer in the library"))))
           : h("p", { class: "empty" }, "Each book of your library gets a file here with what you marked in it.")),
         part("See the whole", null, h("div", { class: "row", id: "nz-views" }, h("a", { class: "btn", href: "#/notes/graph" }, "Graph"),
           h("a", { class: "btn", href: "#/notes/timeline" }, "Timeline"), h("a", { class: "btn", href: "#/notes/revisit" }, "Revisit"))),
@@ -1085,8 +1155,8 @@ async function showGraph(params) {
   // The picture gets the window: no tall title here, and what the page is for stands under the graph.
   put(app, h("div", { class: "row", style: "justify-content:space-between;margin-top:22px" }, h("a", { class: "m", href: "#/notes" }, "← Notes"), h("b", { style: "font:500 21px/1.2 var(--grot);letter-spacing:-0.03em" }, "Graph")),
     bar, h("div", { class: "gz-wrap" }, canvas, h("div", { class: "legend m" }, h("span", { class: "dot" }, "Idea note"), h("span", { class: "dot index" }, "Index note"),
-      h("span", { class: "dot project" }, "Project"), h("span", { class: "book" }, "Book"))),
-    h("p", { class: "note" }, "Each point is a note; a square is a book. Two are joined when one links to the other, or cites it. Point at a note to see what it is joined to, click to open it, drag to move it or the picture, scroll to zoom."), listing);
+      h("span", { class: "dot project" }, "Project"), h("span", { class: "book" }, "Book or article"))),
+    h("p", { class: "note" }, "Each point is a note; a square is a book or an article. Two are joined when one links to the other, or cites it. Point at a note to see what it is joined to, click to open it, drag to move it or the picture, scroll to zoom."), listing);
   let data;
   try { data = await api("/vault/graph"); } catch (e) { return put(bar, h("p", { class: "msg err" }, e.message)); }
   const state = { kind: params.get("kind") || "", tag: params.get("tag") || "", book: params.get("book") || "", q: "" };
@@ -1148,7 +1218,7 @@ async function showGraph(params) {
       c.globalAlpha = (lit && !lit.has(n)) || (q && !found) ? 0.25 : 1;
       c.fillStyle = n.kind === "index" ? blue : n.kind === "quick" ? mute : ink; c.strokeStyle = n.kind === "project" ? blue : ink; c.lineWidth = (n.kind === "project" ? 3 : 1.5) / view.s;
       c.beginPath();
-      if (n.kind === "book") { c.rect(n.x - r, n.y - r, 2 * r, 2 * r); c.fillStyle = paper; c.fill(); c.stroke(); }
+      if (Notes.isSource(n.kind)) { c.rect(n.x - r, n.y - r, 2 * r, 2 * r); c.fillStyle = paper; c.fill(); c.stroke(); }
       else if (n.kind === "project") { c.arc(n.x, n.y, r, 0, 7); c.fillStyle = paper; c.fill(); c.stroke(); }
       else { c.arc(n.x, n.y, r, 0, 7); c.fill(); }
       if (found) { c.strokeStyle = blue; c.lineWidth = 2 / view.s; c.beginPath(); c.arc(n.x, n.y, r + 4 / view.s, 0, 7); c.stroke(); }
@@ -1191,8 +1261,8 @@ async function showGraph(params) {
   });
   const pick = (key, label, options) => { const sel = h("select", { "aria-label": label, onchange: () => { state[key] = sel.value; choose(); } }, options.map(([v, t]) => h("option", { value: v }, t))); sel.value = state[key]; if (sel.selectedIndex < 0) sel.selectedIndex = 0; return sel; };
   const tags = [...new Set(all.flatMap((n) => n.tags))].sort((a, b) => a.localeCompare(b));
-  put(bar, find, pick("kind", "Kind", [["", "Every kind"], ["idea", "Idea notes"], ["index", "Index notes"], ["project", "Projects"], ["project-note", "Project notes"], ["quick", "Quick notes"], ["book", "Books"]]),
-    pick("tag", "Tag", [["", "Any tag"], ...tags.map((t) => [t, "#" + t])]), pick("book", "Book", [["", "Any book"], ...all.filter((n) => n.kind === "book").map((n) => [n.id, n.title])]), info);
+  put(bar, find, pick("kind", "Kind", [["", "Every kind"], ["idea", "Idea notes"], ["index", "Index notes"], ["project", "Projects"], ["project-note", "Project notes"], ["quick", "Quick notes"], ["book", "Books"], ["article", "Articles"]]),
+    pick("tag", "Tag", [["", "Any tag"], ...tags.map((t) => [t, "#" + t])]), pick("book", "Book or article", [["", "Any book or article"], ...all.filter((n) => Notes.isSource(n.kind)).map((n) => [n.id, n.title])]), info);
   choose();
   for (let i = 0; i < 120; i++) step();   // most of the settling happens before the first picture
   window.graphState = () => ({ points: nodes.map((n) => { const r = canvas.getBoundingClientRect(); return { id: n.id, title: n.title, kind: n.kind, joins: n.near.length, x: r.left + r.width / 2 + view.x + n.x * view.s, y: r.top + r.height / 2 + view.y + n.y * view.s }; }),
@@ -1356,7 +1426,7 @@ async function showProcess(params) {
       const mine = ++asked, q = find.value.trim();
       let rows;
       try {
-        rows = q ? (await api("/vault/complete?" + new URLSearchParams({ q }))).notes.filter((n) => n.kind !== "book" && n.id !== i.id && !n.untitled)
+        rows = q ? (await api("/vault/complete?" + new URLSearchParams({ q }))).notes.filter((n) => !Notes.isSource(n.kind) && n.id !== i.id && !n.untitled)
           : (await api("/vault/related", { method: "POST", json: { text: `${i.text}\n${i.note}`, but: [i.id, ...i.notes.map((n) => n.id)] } })).notes.filter((n) => !n.untitled);
       } catch (e) { rows = []; }
       if (mine !== asked) return;
@@ -1536,6 +1606,7 @@ async function showRun(id) {
   put(app, h("p", { class: "empty" }, "Loading"));
   let job, review = null, lastStatus = null;
   const head = h("div"), body = h("div");
+  const worded = (text) => (job.type === "article" ? text.replace(/\bbook\b/g, "article") : text);   // an article is not called a book where it shows
   put(app, h("a", { class: "back m", href: "#/" }, "← Library"), head, body);
 
   async function poll() {
@@ -1552,6 +1623,13 @@ async function showRun(id) {
   function act(path, method = "POST") {
     return async () => { try { await api(`/jobs/${id}${path}`, { method }); } catch (e) { alert(e.message); } clearTimeout(timer); poll(); };
   }
+  function kindOf(job) {                // what the entry is; a wrong guess is put right here
+    const sel = h("select", { class: "quiet", "aria-label": "Kind", onchange: async () => {
+      try { await api(`/jobs/${job.id}/type`, { method: "POST", json: { type: sel.value } }); clearTimeout(timer); showRun(id); } catch (err) { alert(err.message); sel.value = job.type; }   // the page is drawn again in the entry's new words
+    } }, h("option", { value: "book" }, "Book"), h("option", { value: "article" }, "Article"));
+    sel.value = job.type || "book";
+    return sel;
+  }
   function drawHead() {
     const active = job.status === "queued" || job.status === "running";
     const s = job.settings || {};
@@ -1559,7 +1637,10 @@ async function showRun(id) {
       h("h1", {}, job.title),
       h("div", {},
         kv("Status", h("span", { class: STATUS_LAB[job.status] || "lab" }, STATUS[job.status])),
-        kv("File", job.file), kv("Words", fmt(job.words)),
+        kv("Kind", kindOf(job)),
+        job.origin && job.origin.url ? kv("From", h("a", { href: job.origin.url, target: "_blank", rel: "noopener noreferrer", title: "Open the original" }, fromOf(job.origin))) : null,
+        job.origin && job.origin.fetched ? kv("Fetched", day(job.origin.fetched)) : null,
+        kv("File", job.origin && job.origin.original ? `${job.origin.original} (read as ${job.file})` : job.file), kv("Words", fmt(job.words)),
         s.min_words ? kv("Section length", `${fmt(s.min_words)}–${fmt(s.max_words)}`) : null,
         kv("Added", day(job.created)),
         job.reading ? [kv("Read", `${Math.round(100 * job.reading.progress)}%`),
@@ -1679,7 +1760,7 @@ async function showRun(id) {
     const c = job.reading_state === "confirmed" ? job.confirmed : null;
     return band("What you want",
       h("div", { class: "want" },
-        h("p", { class: "lede" }, job.report ? "Why you read this book. Questions you ask for on a highlight follow it from now on. The book's own questions stay as they were written." : "Why you read this book. Questions you ask for on a highlight follow it."),
+        h("p", { class: "lede" }, worded(job.report ? "Why you read this book. Questions you ask for on a highlight follow it from now on. The book's own questions stay as they were written." : "Why you read this book. Questions you ask for on a highlight follow it.")),
         w.box,
         h("div", { class: "row", style: "margin-top:10px" }, h("button", { type: "button", id: "save-purpose", onclick: async () => {
           try { job = await api(`/jobs/${id}/steer`, { method: "PUT", json: w.read() }); saved.textContent = "Saved"; setTimeout(() => { saved.textContent = ""; }, 2000); } catch (e) { alert(e.message); } } }, "Save"), saved,
@@ -1732,7 +1813,7 @@ async function showRun(id) {
       h("div", { class: "stats" },
         [[c.questions, "Questions"], [c.checkpoints, "Checkpoints"], [c.sections, "Sections"], [c.left_out, "Left out"]].map(([n, t]) =>
           h("div", { class: "stat" }, h("b", {}, fmt(n)), h("span", { class: "m" }, t)))),
-      band("The book", bookMap(),
+      band(worded("The book"), bookMap(),
         job.reading
           ? h("div", { class: "legend m" }, h("span", {}, "Section, by length"), h("span", { class: "cp" }, "Recalled on the first try"), h("span", { class: "no" }, "Missed"), h("span", { class: "todo" }, "Not yet met"), h("span", { class: "out" }, "Left out"))
           : h("div", { class: "legend m" }, h("span", {}, "Section, by length"), h("span", { class: "cp" }, "Question at its end"), h("span", { class: "out" }, "Left out"))),

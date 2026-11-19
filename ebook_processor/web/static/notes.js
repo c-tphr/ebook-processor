@@ -9,6 +9,7 @@
      Notes.cite(job, block)          the link that cites a highlight or a note of a book: [[Book#^id]]
      Notes.toast(text, label, act)   a quiet notice at the edge of the window
      Notes.KINDS                     the names of the kinds of note
+     Notes.isSource(kind)            whether a kind is a book's or an article's file
 
    A note is saved a moment after the last key, when the field is left, and with Ctrl/Cmd + S. Every save carries
    the stamp the note was loaded with; when the file was changed in another program meanwhile, the app does not
@@ -17,7 +18,9 @@
 (function () {
 "use strict";
 
-const KINDS = { idea: "Idea note", index: "Index note", quick: "Quick note", "project-note": "Project note", project: "Project", book: "Book" };
+const KINDS = { idea: "Idea note", index: "Index note", quick: "Quick note", "project-note": "Project note", project: "Project", book: "Book", article: "Article" };
+// A book's or an article's file: what was read, kept by the app. Everything else is a note of the reader's.
+const isSource = (kind) => kind === "book" || kind === "article";
 const HIDDEN = ["id", "kind", "created", "tags", "sources"];   // properties that have a place of their own on the page
 const hiddenFor = (kind) => [...HIDDEN, ...(kind === "project" ? ["status"] : kind === "project-note" ? ["project"] : [])];   // so have a project's state and a project note's project
 
@@ -233,7 +236,7 @@ async function neighbourhood(id, open) {
   const point = (n) => {
     const p = at.get(n.id), right = p.x >= cx, r = n.step === 0 ? 9 : n.step === 1 ? 6 : 4.5;
     return sv("a", { class: `pt k-${n.kind} s${n.step}`, href: "#/notes/" + encodeURIComponent(n.id), "aria-label": name(n), onclick: (e) => { e.preventDefault(); go(n); } },
-      n.kind === "book" ? sv("rect", { x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r }) : sv("circle", { cx: p.x, cy: p.y, r }),
+      isSource(n.kind) ? sv("rect", { x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r }) : sv("circle", { cx: p.x, cy: p.y, r }),
       sv("text", n.step === 0 ? { x: p.x, y: p.y + 28, "text-anchor": "middle" } : { x: p.x + (right ? 11 : -11), y: p.y + 4, "text-anchor": right ? "start" : "end" }, name(n)), sv("title", {}, n.title));
   };
   box.append(el("header", {}, el("b", {}, "Neighbourhood of " + name(centre)), el("button", { type: "button", onclick: () => box.close() }, "Close")),
@@ -300,7 +303,7 @@ function mount(root, options) {
   let closed = false, dead = false;   // closed: the pane left the page, a last save may still be on its way; dead: nothing more happens
   const dirty = { body: false, props: false };
   const draft = opts.id ? null : (opts.draft || { kind: "idea", body: "" });
-  const readOnly = () => !!note && note.kind === "book";
+  const readOnly = () => !!note && isSource(note.kind);
 
   const status = el("span", { class: "nt-status", role: "status" });
   const title = el("input", { type: "text", class: "nt-title", "aria-label": "Title", maxlength: "120", autocomplete: "off", spellcheck: "true" });
@@ -420,10 +423,10 @@ function mount(root, options) {
     top.replaceChildren(...parts);
     parts.length = 0;
     if (note && (note.backlinks.length || !opts.compact)) {
-      parts.push(el("section", { class: "nt-back" }, el("h3", {}, note.kind === "book" ? "Notes that cite this book" : "Linked from"),
+      parts.push(el("section", { class: "nt-back" }, el("h3", {}, isSource(note.kind) ? `Notes that cite this ${note.kind}` : "Linked from"),
         note.backlinks.length ? note.backlinks.map((b) => el("a", { class: "back", onclick: () => go(b.id) },
           el("b", {}, b.untitled ? "A note without a title" : b.title), el("span", {}, b.context)))
-          : el("p", { class: "none" }, note.kind === "book" ? "No note cites this book yet." : "No other note links here yet.")));
+          : el("p", { class: "none" }, isSource(note.kind) ? `No note cites this ${note.kind} yet.` : "No other note links here yet.")));
     }
     if (related && related.notes.length + related.passages.length && !readOnly()) {
       const shares = (r) => (r.shares.length ? "shares: " + r.shares.join(", ") : "shares a tag");
@@ -729,7 +732,7 @@ function mount(root, options) {
     if (got) { props = got.props.map((p) => ({ ...p })); drawAll(); toast("It is an idea note now, out of the inbox."); }
   }
   async function remove() {
-    if (!note || !confirm(note.kind === "book" ? "Move this book's file to the trash?" : "Move this note to the trash? It can be put back from there.")) return;
+    if (!note || !confirm(isSource(note.kind) ? `Move this ${note.kind}'s file to the trash?` : "Move this note to the trash? It can be put back from there.")) return;
     clearTimeout(timer); dirty.body = dirty.props = false;
     try { const gone = await call("/vault/notes/" + encodeURIComponent(note.id), { method: "DELETE" }); tell("removed", gone); }
     catch (e) { return fail(e.message); }
@@ -741,7 +744,7 @@ function mount(root, options) {
   async function follow(link) {
     let to;
     try { to = await call("/vault/peek?" + query({ target: link.target, anchor: link.anchor, from: note ? note.id : "" })); } catch (e) { return toast(e.message); }
-    if (to.id && to.kind === "book" && to.job && to.go) {
+    if (to.id && isSource(to.kind) && to.job && to.go) {
       await leave();
       if (opts.onPlace) return opts.onPlace({ ...to, job: to.job, go: to.go }, null);
       return void (location.href = `/read/${to.job}?go=${to.go.chapter}:${to.go.word}`);
@@ -770,6 +773,6 @@ function mount(root, options) {
   };
 }
 
-const Notes = window.Notes = { KINDS, capture, install, mount, loadEditor, toast, cite, call, day, neighbourhood, open: null,
+const Notes = window.Notes = { KINDS, isSource, capture, install, mount, loadEditor, toast, cite, call, day, neighbourhood, open: null,
   onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); } };
 })();

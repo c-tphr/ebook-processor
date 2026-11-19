@@ -94,7 +94,7 @@ def connection_material(vault: Vault, note: Note) -> dict[str, Any]:
              if k.target and k.anchor.startswith("^") and vault.resolve(k.target) is not None}
     related = vault.related(note.title + "\n" + note.body, note.tags, {note.id} | cited, limit=max(FULL, PASSAGES))
     likely = [vault.by_id[r["id"]] for r in related["notes"] if r["id"] in vault.by_id][:FULL]
-    others = sorted((n for n in vault.notes.values() if n.kind != "book" and n is not note and n.body.strip()), key=lambda n: n.modified, reverse=True)
+    others = sorted((n for n in vault.notes.values() if not n.source and n is not note and n.body.strip()), key=lambda n: n.modified, reverse=True)
     listed = (likely + [n for n in others if n not in likely])[:LISTED]
     refs = {f"N{i}": n for i, n in enumerate(listed, 1)}
     passages = {f"P{i}": p for i, p in enumerate(related["passages"][:PASSAGES], 1)}
@@ -122,7 +122,7 @@ def connections(backend: Backend, vault: Vault, note_id: str, settings: Settings
     ``{"connections": [{"kind", "id", "title", "link", "reason", "mine", "theirs"}], "sent", "model"}``."""
     with vault.lock:
         note = vault.get(note_id)
-        if note.kind == "book":
+        if note.source:
             raise AssistError("Connections are found for a note of your own.")
         if not note.body.strip():
             raise AssistError("Write the note first: there is nothing yet to connect.")

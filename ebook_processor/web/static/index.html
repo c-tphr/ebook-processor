@@ -680,7 +680,7 @@ async function showNotebook(id) {
   function watch() {                    // while questions are being written, look again; never over something being typed
     clearTimeout(timer);
     if (!asks.pending.length && !(asks.batch && asks.batch.running)) return;
-    timer = setTimeout(() => { if (body.querySelector("textarea")) watch(); else load(); }, 1500);
+    timer = setTimeout(() => { if (body.querySelector("textarea, #nb-wish")) watch(); else load(); }, 1500);   // a note, a question or a wish
   }
   function show(itemId) {               // the reader beside asks for an entry: bring it into view and light it
     const entry = document.getElementById("nb-" + itemId);

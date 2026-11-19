@@ -154,6 +154,39 @@ def test_a_question_written_while_the_notebook_loads_is_still_shown(reader: Read
     expect(entry.locator(".ans[data-status=proposed]")).to_have_count(1, timeout=10000)
 
 
+def test_a_wish_being_typed_is_not_lost_when_another_question_arrives(reader: Reader, page: Page, book: App, monkeypatch):
+    """While a question is being written the notebook looks again every second and a half, and draws itself anew.
+    That must wait for a wish that is being typed, as it waits for a note that is being typed."""
+    reader.open("2:0", "scroll")
+    highlight(reader, 2, 7)
+    highlight(reader, 12, 16)
+    page.goto(f"{book.url}/#/notebook/{book.id}")
+    first = page.locator(".nb .quote").nth(0).locator("xpath=..")
+    second = page.locator(".nb .quote").nth(1).locator("xpath=..")
+    first.get_by_role("button", name="Make a question").click()
+    expect(first.locator(".ans[data-status=proposed]")).to_have_count(1, timeout=15000)
+    answered = threading.Event()
+    write_question = server.hq.propose
+
+    def propose(*args, **kwargs) -> dict:
+        answered.wait(20)                        # the model takes its time over the second highlight
+        return write_question(*args, **kwargs)
+
+    monkeypatch.setattr(server.hq, "propose", propose)
+    try:
+        second.get_by_role("button", name="Make a question").click()
+        expect(second).to_contain_text("Writing a question")
+        first.get_by_role("button", name="Another question").click()
+        page.locator("#nb-wish input").fill("Make it harder.")
+        page.wait_for_timeout(2000)              # longer than the wait between two looks
+        expect(page.locator("#nb-wish input")).to_have_value("Make it harder.")
+    finally:
+        answered.set()
+    page.locator("#nb-wish").get_by_role("button", name="Write it").click()
+    expect(first.locator(".ans", has_text="(as asked: Make it harder.)")).to_have_count(1, timeout=15000)
+    expect(second.locator(".ans[data-status=proposed]")).to_have_count(1, timeout=15000)
+
+
 def test_a_question_for_a_section_already_read_is_practised(reader: Reader, page: Page, book: App):
     reader.open("2:0", "scroll")
     highlight(reader, 2, 7)

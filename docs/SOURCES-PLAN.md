@@ -2,7 +2,7 @@
 
 This is the working plan for taking in articles and documents as well as EPUB books. It was agreed with the project owner in a three-round interview on 2026-11-19 and is written for whoever builds it, so that the work can start from this file alone. It holds what was decided, what was tried before writing it, the design, the order of work in two steps, and what is left for later.
 
-**Status: both steps are built and on the development branch; neither is on `main` yet (that is the owner's word). Section 11 records what was done and where the work departed from this plan. Real web sites have not been tried: see section 9.**
+**Status: both steps are built and on `main` (2026-11-19, on the owner's word). Section 11 records what was done and where the work departed from this plan. The session that built it could not reach real web sites: see section 9 and the "To verify" list in `DEFERRED.md`.**
 
 ## 1. What it is for
 

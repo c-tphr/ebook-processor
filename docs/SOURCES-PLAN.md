@@ -45,6 +45,7 @@ These are technical, or small enough not to ask about. The owner can overrule an
 | The same piece twice | The form says "You added this on 3 March" and still lets you add it | The owner wants a newer version as a second entry |
 | The original | Kept beside the made EPUB in the run's folder | So that a better converter can be run on it later without fetching again |
 | Dependencies | Step 1: `markdown`, `lxml`, `charset-normalizer`. Step 2: `trafilatura`, `mammoth` | See section 4 for sizes |
+| Where the libraries live | Nothing is copied into the repository. Each library is one line in `pyproject.toml` with a version range, and `pip` downloads it when the tool is installed or updated. Pandoc, if it is ever needed, the same way (`pypandoc_binary`), as an optional extra so that only those who want it download it. Test files are built by code, not committed | The repository grows by our own code only |
 
 ## 4. What was tried before writing this
 

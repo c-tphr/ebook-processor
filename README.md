@@ -340,9 +340,17 @@ Nothing has to be marked as done. An item counts as **processed** as soon as one
 
 Gathering a highlight for a project does not process it: it keeps waiting in Process until a note of your own cites it.
 
+**Seeing the whole.** Three views, reached from the Notes front page under "See the whole":
+
+- **Graph.** Every note is a point and every book a square; two are joined when one links to the other or cites it. Point at a note to light up what it is joined to, click to open it, drag a point or the picture, scroll to zoom. Filter by kind, tag or book, and type in the box to find a note (Enter brings it to the middle). The layout is worked out afresh each time. Under the picture the same notes are listed as links, most joined first.
+- **Timeline.** Day by day, the newest first: the notes you wrote, the quick notes you caught, the notes you changed (a file keeps only the date of its last change, so a note shows on that one day), and what you highlighted and noted in each book.
+- **Revisit.** Two lists: notes joined to no other note (citing a book does not count as a join), and notes not changed for 30 days or more, the oldest first. Three of them, the same all day and others tomorrow, are on the front page under **Worth another look**.
+
+On any note, **Neighbourhood** opens a diagram of where it sits: the note in the middle, what it is joined to around it, and what those are joined to further out. Every point opens its note. A book is shown and not passed through, since it would bring in every note that cites it.
+
 **Edits made in another program** are seen: the app looks at the files again whenever Notes asks for something. A note that is open reloads when its file changes. If you have also changed it in the app, the app does not write over the file: it asks which version to keep.
 
-These are the first three parts of a larger plan (`docs/KNOWLEDGE-PLAN.md`). Views of the whole (a graph, a note's neighbourhood, old notes brought back, a timeline) and help from the model in finding connections are still to come.
+These are the first four parts of a plan of five (`docs/KNOWLEDGE-PLAN.md`). Help from the model, in finding connections and in answering a question from your notes, is still to come.
 
 ### Practice (spaced repetition)
 
@@ -472,7 +480,7 @@ After every push GitHub runs both (`.github/workflows/tests.yml`): the test suit
 | `ebook_processor/notes.py` | Highlights and notes, the notebook made from them, and its Markdown export |
 | `ebook_processor/highlight_questions.py`, `instructions/highlight.md` | Questions made from highlights: their store, what the model is sent, the check, and where an accepted question is asked |
 | `ebook_processor/srs.py` | The spaced-repetition scheduler and a book's cards |
-| `ebook_processor/vault.py` | The notes folder: files and their names, the properties at the top of a file (read and written without a YAML library), links, tags and block ids, the index kept in memory, saving that does not write over a change made on disk, renaming with links rewritten, the trash, search, which notes cite which passage, related notes, and projects (what they gathered, their outline and its export) |
+| `ebook_processor/vault.py` | The notes folder: files and their names, the properties at the top of a file (read and written without a YAML library), links, tags and block ids, the index kept in memory, saving that does not write over a change made on disk, renaming with links rewritten, the trash, search, which notes cite which passage, related notes, projects (what they gathered, their outline and its export), the graph, a note's neighbourhood, and the notes to revisit |
 | `ebook_processor/bookfile.py` | A book's file in the notes folder, made from its highlights and notes |
 | `ebook_processor/process.py` | A book's highlights and notes as items to process, and which were set aside |
 | `editor/` | The source of the note editor: CodeMirror 6 with the additions a notes folder needs (see below) |

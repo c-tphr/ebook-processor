@@ -260,7 +260,19 @@ body.dragging { cursor: col-resize; user-select: none; } body.dragging .side ifr
 .nz-hit .by { display: flex; gap: 6px 16px; flex-wrap: wrap; align-items: baseline; margin-top: 8px; font-size: 14px; color: var(--mute); }
 .nz-hit .by a { color: var(--ink); }
 .nz-go { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 6px; }
+.gz-wrap { position: relative; border: 1px solid var(--ghost); background: var(--sheet); margin-top: 14px; }
+.gz-wrap canvas { display: block; width: 100%; height: max(360px, calc(100vh - 250px)); touch-action: none; cursor: grab; }
+.gz-wrap .legend { position: absolute; left: 12px; bottom: 10px; margin: 0; pointer-events: none; }
+.gz-wrap .legend span.book::before { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink); } .gz-wrap .legend span.index::before { background: var(--blue); }
+.gz-wrap .legend span.project::before { background: transparent; box-shadow: inset 0 0 0 3px var(--blue); } .gz-wrap .legend span.dot::before { border-radius: 50%; }
+.tl-day { padding: 22px 0 6px; border-bottom: 1px solid var(--ghost); display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 8px var(--gut); }
+.tl-day > h3 { font: 500 21px/1.2 var(--grot); letter-spacing: -0.03em; margin: 0; } .tl-day > h3 small { display: block; font: 12px/1.6 var(--mono); letter-spacing: 0.04em; color: var(--mute); text-transform: uppercase; }
+.tl-group { margin: 0 0 14px; } .tl-group > .m { display: block; color: var(--mute); margin-bottom: 4px; }
+.tl-group a.n { display: block; padding: 3px 0; text-decoration: none; font: 500 17px/1.3 var(--grot); letter-spacing: -0.01em; } .tl-group a.n:hover { color: var(--blue); }
+.tl-group q { display: block; quotes: none; font: 15px/1.45 Georgia, "Iowan Old Style", serif; color: var(--mute); margin: 3px 0; padding-left: 10px; border-left: 3px solid var(--ghost); }
+@media (max-width: 760px) { .tl-day { grid-template-columns: minmax(0, 1fr); } }
 .pz-bar { display: flex; gap: 10px 18px; flex-wrap: wrap; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--ghost); }
+.pz-bar input[type=search] { font: 15px/1.2 var(--grot); color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 9px 10px; }
 .pz-bar select { width: auto; padding: 8px 9px; font-size: 14px; max-width: min(100%, 36ch); }
 .pz-cols { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 0 var(--gut); align-items: start; }
 .pz-list h3 { font: 500 21px/1.2 var(--grot); letter-spacing: -0.03em; margin: 26px 0 0; padding-bottom: 8px; border-bottom: 1px solid var(--ink); display: flex; justify-content: space-between; gap: 10px; align-items: baseline; flex-wrap: wrap; }
@@ -353,9 +365,13 @@ let info = null, timer = null, view = { removed: new Set(), saved: new Set(), fi
 function route() {
   clearTimeout(timer); $("sticky").classList.remove("on"); sideClose(); addForm = nbReload = practiceReload = notesReload = null; window.scrollTo(0, 0);
   if (noteView) { noteView.destroy(); noteView = null; }
+  if (viewStop) { viewStop(); viewStop = null; }
   const notes = location.hash.match(/^#\/notes(?:\/([^?]*))?(?:\?(.*))?$/);
   if (notes) {
     const part = decodeURIComponent(notes[1] || ""), params = new URLSearchParams(notes[2] || "");
+    if (part === "graph") return showGraph(params);
+    if (part === "revisit") return showRevisit();
+    if (part === "timeline") return showTimeline();
     return part === "trash" ? showTrash() : part === "process" ? showProcess(params) : part === "new" ? showNote(null, params) : part ? showNote(part, params) : showNotes(params);
   }
   const m = location.hash.match(/^#\/run\/([0-9a-z-]+)$/);
@@ -370,6 +386,7 @@ $("b-settings").onclick = () => AppSettings.open(location.hash.startsWith("#/not
   : location.hash.startsWith("#/practice") ? "practice" : location.hash === "#/add" ? "add" : "general");
 let addForm = null, nbReload = null, practiceReload = null;   // what the open page offers a changed setting
 let notesReload = null, noteView = null;                     // the front page of Notes, and the note that is open
+let viewStop = null;                                         // ends what a page keeps running (the graph's drawing)
 AppSettings.onChange((key, value) => {
   if (key === "notes_folder" && location.hash.startsWith("#/notes")) route();
   if (key.startsWith("add_") && addForm) addForm.set(key.slice(4), value);
@@ -949,13 +966,17 @@ async function showNotes(params) {
           h("div", { style: "margin-top:12px" }, h("a", { class: "btn", href: "#/notes/new?kind=index" }, "New index note"))),
         projectsPart(),
         part("Worked on last", null, home.recent.length ? h("div", { class: "nz-list", id: "nz-recent" }, home.recent.map((n) => noteRow(n)))
-          : h("p", { class: "empty" }, "No notes yet. Start one with New note, or from a highlight while you read: select the words and choose Idea note."))),
+          : h("p", { class: "empty" }, "No notes yet. Start one with New note, or from a highlight while you read: select the words and choose Idea note.")),
+        home.revisit.length ? part("Worth another look", null, h("div", { class: "nz-list", id: "nz-revisit" }, home.revisit.map((n) => noteRow({ ...n, snippet: (n.why === "unlinked" ? "Joined to no other note. " : "Not changed for a long time. ") + n.excerpt.slice(0, 140) }))),
+          h("div", { style: "margin-top:12px" }, h("a", { class: "m", href: "#/notes/revisit" }, "All notes to come back to"))) : null),
       h("div", { class: "nz-side" },
         part("Tags", null, home.tags.length ? h("div", { class: "nz-chips" }, home.tags.map((t) => h("a", { onclick: () => { state.tag = t.tag; go(); } }, "#" + t.tag, h("small", {}, String(t.count)))))
           : h("p", { class: "empty" }, "A #tag in a note, or in its properties, shows here.")),
         part("Books", null, home.books.length ? home.books.map((b) => h("a", { class: "nz-book", onclick: () => { state.book = b.id; go(); } }, h("b", {}, b.title),
           h("small", {}, `${fmt(b.entries)} highlight${b.entries === 1 ? "" : "s"} and notes` + (b.in_library ? "" : " / no longer in the library"))))
           : h("p", { class: "empty" }, "Each book of your library gets a file here with what you marked in it.")),
+        part("See the whole", null, h("div", { class: "row", id: "nz-views" }, h("a", { class: "btn", href: "#/notes/graph" }, "Graph"),
+          h("a", { class: "btn", href: "#/notes/timeline" }, "Timeline"), h("a", { class: "btn", href: "#/notes/revisit" }, "Revisit"))),
         part("The folder", null, kv("Notes", fmt(home.notes)), h("p", { class: "note", style: "overflow-wrap:anywhere;margin-top:4px" }, home.folder),
           h("div", { class: "row", style: "margin-top:10px" }, h("a", { class: "m", href: "#/notes/trash" }, `Trash (${home.trash})`),
             h("button", { class: "text", type: "button", onclick: () => AppSettings.open("notes") }, "Change the folder"))))));
@@ -995,6 +1016,166 @@ async function showNotes(params) {
   notesReload = () => { home = null; load(); };
   load();
 }
+/* ---------- notes: the graph ---------- */
+// Every note and every book is a point; two are joined when one links to or cites the other. The layout is a
+// small force simulation written for this page: joined points pull together, all points push apart, and the
+// whole settles in a second or two. It is drawn on a canvas; the list under it holds the same notes as links.
+async function showGraph(params) {
+  const app = $("app"), canvas = h("canvas", { id: "gz", role: "img", tabindex: "0" }), info = h("span", { class: "m mute", id: "gz-info" });
+  const find = h("input", { type: "search", id: "gz-q", "aria-label": "Find a note in the graph", placeholder: "Find a note", autocomplete: "off", style: "flex:1 1 200px;min-width:0" });
+  const bar = h("div", { class: "pz-bar" }), listing = h("details", { class: "adv" });
+  // The picture gets the window: no tall title here, and what the page is for stands under the graph.
+  put(app, h("div", { class: "row", style: "justify-content:space-between;margin-top:22px" }, h("a", { class: "m", href: "#/notes" }, "← Notes"), h("b", { style: "font:500 21px/1.2 var(--grot);letter-spacing:-0.03em" }, "Graph")),
+    bar, h("div", { class: "gz-wrap" }, canvas, h("div", { class: "legend m" }, h("span", { class: "dot" }, "Idea note"), h("span", { class: "dot index" }, "Index note"),
+      h("span", { class: "dot project" }, "Project"), h("span", { class: "book" }, "Book"))),
+    h("p", { class: "note" }, "Each point is a note; a square is a book. Two are joined when one links to the other, or cites it. Point at a note to see what it is joined to, click to open it, drag to move it or the picture, scroll to zoom."), listing);
+  let data;
+  try { data = await api("/vault/graph"); } catch (e) { return put(bar, h("p", { class: "msg err" }, e.message)); }
+  const state = { kind: params.get("kind") || "", tag: params.get("tag") || "", book: params.get("book") || "", q: "" };
+  const all = data.nodes.map((n, i) => ({ ...n, x: 260 * Math.cos(i * 2.4) * Math.sqrt((i + 1) / data.nodes.length), y: 260 * Math.sin(i * 2.4) * Math.sqrt((i + 1) / data.nodes.length), vx: 0, vy: 0, to: [] }));
+  const byId = new Map(all.map((n) => [n.id, n]));
+  for (const [a, b] of data.edges) { byId.get(a).to.push(byId.get(b)); byId.get(b).to.push(byId.get(a)); }
+  let nodes = [], edges = [], heat = 1, hover = null, drag = null, moved = false, view = { s: 1, x: 0, y: 0 }, frame = 0, stopped = false, own = false;
+  const name = (n) => (n.untitled ? "A note without a title" : n.title);
+  const radius = (n) => 3.5 + 1.7 * Math.sqrt(n.to.length);
+  function choose() {                   // the points the filters leave, and the joins among them
+    const book = state.book ? byId.get(state.book) : null;
+    nodes = all.filter((n) => (state.kind ? n.kind === state.kind : !(n.untitled && !n.to.length))
+      && (!state.tag || n.tags.some((t) => t.toLowerCase() === state.tag.toLowerCase())) && (!book || n === book || n.to.includes(book)));
+    const shown = new Set(nodes);
+    edges = data.edges.map(([a, b]) => [byId.get(a), byId.get(b)]).filter(([a, b]) => shown.has(a) && shown.has(b));
+    for (const n of nodes) n.near = n.to.filter((o) => shown.has(o));
+    heat = 1; own = false;
+    info.textContent = `${fmt(nodes.length)} point${nodes.length === 1 ? "" : "s"} / ${fmt(edges.length)} join${edges.length === 1 ? "" : "s"}`;
+    canvas.setAttribute("aria-label", `A graph of ${nodes.length} notes and books with ${edges.length} joins between them. The same notes are listed under it.`);
+    const ranked = nodes.slice().sort((a, b) => b.near.length - a.near.length || name(a).localeCompare(name(b)));
+    put(listing, h("summary", {}, "The same as a list, most joined first"), h("div", { class: "nz-list", id: "gz-list", style: "margin-top:12px" },
+      ranked.map((n) => h("a", { class: "nz-row", href: "#/notes/" + encodeURIComponent(n.id) }, h("b", {}, name(n)),
+        h("span", { class: "when m mute" }, `${n.near.length} join${n.near.length === 1 ? "" : "s"}`), h("span", { class: "sub" }, Notes.KINDS[n.kind] || n.kind)))));
+  }
+  function step() {                     // one turn of the layout
+    const cell = 190, grid = new Map();
+    for (const n of nodes) { const k = Math.floor(n.x / cell) + ":" + Math.floor(n.y / cell); (grid.get(k) || grid.set(k, []).get(k)).push(n); }
+    for (const n of nodes) {
+      const gx = Math.floor(n.x / cell), gy = Math.floor(n.y / cell);
+      for (let i = gx - 1; i <= gx + 1; i++) for (let j = gy - 1; j <= gy + 1; j++) for (const o of grid.get(i + ":" + j) || []) {
+        if (o === n) continue;
+        let dx = n.x - o.x, dy = n.y - o.y, d2 = dx * dx + dy * dy;
+        if (d2 < 0.01) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 0.5; }
+        if (d2 < cell * cell) { const f = 2600 / d2; n.vx += dx * f * 0.02; n.vy += dy * f * 0.02; }
+      }
+      n.vx -= n.x * 0.004; n.vy -= n.y * 0.004;
+    }
+    for (const [a, b] of edges) {
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx * dx + dy * dy) || 1, f = (d - 120) * 0.012;
+      a.vx += dx / d * f; a.vy += dy / d * f; b.vx -= dx / d * f; b.vy -= dy / d * f;
+    }
+    for (const n of nodes) { if (n === drag) { n.vx = n.vy = 0; continue; } n.vx *= 0.82; n.vy *= 0.82; n.x += n.vx * heat * 6; n.y += n.vy * heat * 6; }
+    heat *= 0.985;
+  }
+  const colour = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  function draw() {
+    const ratio = window.devicePixelRatio || 1, w = canvas.clientWidth, hgt = canvas.clientHeight;
+    if (canvas.width !== Math.round(w * ratio) || canvas.height !== Math.round(hgt * ratio)) { canvas.width = Math.round(w * ratio); canvas.height = Math.round(hgt * ratio); }
+    const c = canvas.getContext("2d"), ink = colour("--ink"), ghost = colour("--ghost"), blue = colour("--blue"), mute = colour("--mute"), paper = colour("--sheet");
+    c.setTransform(ratio, 0, 0, ratio, 0, 0); c.clearRect(0, 0, w, hgt);
+    c.translate(w / 2 + view.x, hgt / 2 + view.y); c.scale(view.s, view.s);
+    const lit = hover ? new Set([hover, ...hover.near]) : null, q = state.q.trim().toLowerCase();
+    c.lineWidth = 1 / view.s;
+    for (const [a, b] of edges) { c.strokeStyle = lit && (a === hover || b === hover) ? ink : ghost; c.globalAlpha = lit && !(a === hover || b === hover) ? 0.35 : 1; c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke(); }
+    const busy = nodes.slice().sort((a, b) => b.near.length - a.near.length).slice(0, 14);
+    c.font = `${12 / view.s}px ${colour("--grot") || "sans-serif"}`; c.textBaseline = "middle";
+    for (const n of nodes) {
+      const r = radius(n), found = q && name(n).toLowerCase().includes(q);
+      c.globalAlpha = (lit && !lit.has(n)) || (q && !found) ? 0.25 : 1;
+      c.fillStyle = n.kind === "index" ? blue : n.kind === "quick" ? mute : ink; c.strokeStyle = n.kind === "project" ? blue : ink; c.lineWidth = (n.kind === "project" ? 3 : 1.5) / view.s;
+      c.beginPath();
+      if (n.kind === "book") { c.rect(n.x - r, n.y - r, 2 * r, 2 * r); c.fillStyle = paper; c.fill(); c.stroke(); }
+      else if (n.kind === "project") { c.arc(n.x, n.y, r, 0, 7); c.fillStyle = paper; c.fill(); c.stroke(); }
+      else { c.arc(n.x, n.y, r, 0, 7); c.fill(); }
+      if (found) { c.strokeStyle = blue; c.lineWidth = 2 / view.s; c.beginPath(); c.arc(n.x, n.y, r + 4 / view.s, 0, 7); c.stroke(); }
+      if ((lit && lit.has(n)) || found || view.s > 1.5 || busy.includes(n) || nodes.length <= 40) { c.fillStyle = ink; const t = name(n); c.fillText(t.length > 38 ? t.slice(0, 37) + "…" : t, n.x + r + 4 / view.s, n.y); }
+    }
+    c.globalAlpha = 1;
+  }
+  function fit() {                      // the whole graph in view, until the person moves it themselves
+    if (!nodes.length || !canvas.clientWidth) return;
+    const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    view.s = Math.max(0.2, Math.min(2, (canvas.clientWidth - 260) / (x1 - x0 + 1), (canvas.clientHeight - 90) / (y1 - y0 + 1)));
+    view.x = -(x0 + x1) / 2 * view.s - 60; view.y = -(y0 + y1) / 2 * view.s;
+  }
+  function loop() { if (stopped) return; if (heat > 0.03) { for (let i = 0; i < 3; i++) step(); if (!own) fit(); } draw(); frame = requestAnimationFrame(loop); }
+  const where = (e) => { const r = canvas.getBoundingClientRect(); return { x: (e.clientX - r.left - r.width / 2 - view.x) / view.s, y: (e.clientY - r.top - r.height / 2 - view.y) / view.s }; };
+  const under = (p) => { let best = null, bd = Infinity; for (const n of nodes) { const d = Math.hypot(n.x - p.x, n.y - p.y) - radius(n); if (d < 8 / view.s && d < bd) { best = n; bd = d; } } return best; };
+  let last = null;
+  canvas.addEventListener("pointerdown", (e) => { canvas.setPointerCapture(e.pointerId); const p = where(e); drag = under(p); moved = false; last = { x: e.clientX, y: e.clientY }; canvas.style.cursor = "grabbing"; });
+  canvas.addEventListener("pointermove", (e) => {
+    const p = where(e);
+    if (last && (Math.abs(e.clientX - last.x) > 2 || Math.abs(e.clientY - last.y) > 2)) moved = true;
+    if (last && drag && moved) { drag.x = p.x; drag.y = p.y; heat = Math.max(heat, 0.3); }
+    else if (last && moved) { view.x += e.clientX - last.x; view.y += e.clientY - last.y; own = true; }
+    if (last && moved) last = { x: e.clientX, y: e.clientY };
+    if (!last) { hover = under(p); canvas.style.cursor = hover ? "pointer" : "grab"; canvas.title = hover ? name(hover) : ""; }
+  });
+  canvas.addEventListener("pointerup", (e) => { const hit = drag; drag = null; last = null; canvas.style.cursor = "grab"; if (hit && !moved) location.hash = "#/notes/" + encodeURIComponent(hit.id); });
+  canvas.addEventListener("pointerleave", () => { if (!last) hover = null; });
+  canvas.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const r = canvas.getBoundingClientRect(), mx = e.clientX - r.left - r.width / 2, my = e.clientY - r.top - r.height / 2, to = Math.max(0.2, Math.min(5, view.s * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+    view.x = mx - (mx - view.x) * to / view.s; view.y = my - (my - view.y) * to / view.s; view.s = to; own = true;
+  }, { passive: false });
+  canvas.addEventListener("keydown", (e) => { const d = { ArrowLeft: [40, 0], ArrowRight: [-40, 0], ArrowUp: [0, 40], ArrowDown: [0, -40] }[e.key]; own = true; if (d) { e.preventDefault(); view.x += d[0]; view.y += d[1]; } else if (e.key === "+" || e.key === "=") view.s = Math.min(5, view.s * 1.15); else if (e.key === "-") view.s = Math.max(0.2, view.s / 1.15); });
+  find.addEventListener("input", () => { state.q = find.value; });
+  find.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const q = state.q.trim().toLowerCase(), hit = q ? nodes.find((n) => name(n).toLowerCase().includes(q)) : null;
+    if (hit) { own = true; view.s = Math.max(view.s, 1.6); view.x = -hit.x * view.s; view.y = -hit.y * view.s; hover = hit; }
+  });
+  const pick = (key, label, options) => { const sel = h("select", { "aria-label": label, onchange: () => { state[key] = sel.value; choose(); } }, options.map(([v, t]) => h("option", { value: v }, t))); sel.value = state[key]; if (sel.selectedIndex < 0) sel.selectedIndex = 0; return sel; };
+  const tags = [...new Set(all.flatMap((n) => n.tags))].sort((a, b) => a.localeCompare(b));
+  put(bar, find, pick("kind", "Kind", [["", "Every kind"], ["idea", "Idea notes"], ["index", "Index notes"], ["project", "Projects"], ["project-note", "Project notes"], ["quick", "Quick notes"], ["book", "Books"]]),
+    pick("tag", "Tag", [["", "Any tag"], ...tags.map((t) => [t, "#" + t])]), pick("book", "Book", [["", "Any book"], ...all.filter((n) => n.kind === "book").map((n) => [n.id, n.title])]), info);
+  choose();
+  for (let i = 0; i < 120; i++) step();   // most of the settling happens before the first picture
+  window.graphState = () => ({ points: nodes.map((n) => { const r = canvas.getBoundingClientRect(); return { id: n.id, title: n.title, kind: n.kind, joins: n.near.length, x: r.left + r.width / 2 + view.x + n.x * view.s, y: r.top + r.height / 2 + view.y + n.y * view.s }; }),
+    joins: edges.length, hover: hover ? hover.id : null, zoom: view.s });
+  viewStop = () => { stopped = true; cancelAnimationFrame(frame); delete window.graphState; };
+  loop();
+}
+
+/* ---------- notes: coming back to what was left, and the timeline ---------- */
+async function showRevisit() {
+  const app = $("app"), body = h("div");
+  put(app, h("a", { class: "back m", href: "#/notes" }, "← Notes"), h("div", { class: "title" }, h("h1", {}, "Revisit"),
+    h("p", { style: "margin:0;max-width:46ch" }, "Notes that stand alone, and notes you have not touched for a while. Link one, rewrite it, or decide it can go. Three of them are on the Notes page each day.")), body);
+  let got;
+  try { got = await api("/vault/revisit"); } catch (e) { return put(body, h("p", { class: "msg err" }, e.message)); }
+  const part = (title, rows, none) => h("section", { class: "nz-part" }, h("h2", {}, title, h("small", {}, String(rows.length))),
+    rows.length ? h("div", { class: "nz-list" }, rows.map((n) => noteRow(n))) : h("p", { class: "empty" }, none));
+  put(body, part("Joined to no other note", got.unlinked, "Every note links to another, or is linked from one."),
+    part(`Not changed for ${got.old_days} days or more`, got.old, "Nothing has been left alone that long."));
+}
+async function showTimeline() {
+  const app = $("app"), body = h("div"), more = h("div", { class: "actions" });
+  put(app, h("a", { class: "back m", href: "#/notes" }, "← Notes"), h("div", { class: "title" }, h("h1", {}, "Timeline"),
+    h("p", { style: "margin:0;max-width:46ch" }, "What you wrote and what you marked, day by day. A note shows on the day it was made, and again on the day of its last change.")), body, more);
+  const note = (n) => h("a", { class: "n", href: "#/notes/" + encodeURIComponent(n.id) }, n.untitled ? (n.excerpt.split(/\s+/).slice(0, 12).join(" ") || "An empty note") : n.title);
+  const group = (label, rows) => (rows.length ? h("div", { class: "tl-group" }, h("span", { class: "m" }, `${label} ${rows.length}`), rows.map(note)) : null);
+  const dayOf = (d) => { const at = new Date(d.day + "T12:00:00"); return h("h3", {}, at.toLocaleDateString("en", { day: "numeric", month: "long", year: "numeric" }), h("small", {}, at.toLocaleDateString("en", { weekday: "long" }))); };
+  async function load(before) {
+    let got;
+    try { got = await api("/timeline" + (before ? "?before=" + before : "")); } catch (e) { return put(more, h("p", { class: "msg err" }, e.message)); }
+    if (!before && !got.days.length) return put(body, h("p", { class: "empty" }, "Nothing yet. What you write and mark will show here by day."));
+    body.append(...got.days.map((d) => h("section", { class: "tl-day", id: "tl-" + d.day }, dayOf(d), h("div", {},
+      group("Written", d.written), group("Quick notes", d.quick), group("Changed", d.edited),
+      d.books.map((b) => h("div", { class: "tl-group" }, h("span", { class: "m" }, `${b.highlights.length} highlight${b.highlights.length === 1 ? "" : "s"}, ${b.notes.length} note${b.notes.length === 1 ? "" : "s"} in`),
+        h("a", { class: "n", href: "#/notebook/" + b.job }, b.title), [...b.highlights, ...b.notes].slice(0, 3).map((x) => h("q", {}, x.text)),
+        b.highlights.length + b.notes.length > 3 ? h("span", { class: "m mute" }, `and ${b.highlights.length + b.notes.length - 3} more`) : null))))));
+    put(more, got.more ? h("button", { type: "button", onclick: () => load(got.days[got.days.length - 1].day) }, "Earlier") : null);
+  }
+  load(null);
+}
+
 /* ---------- notes: processing what was marked ---------- */
 // Everything marked in a book, and every quick note, ends in one of three ways: an idea note is written from it,
 // it is added to a note that exists, or it is set aside. The list is on the left; the item chosen, and then the

@@ -109,6 +109,18 @@ dialog.nt-capture::backdrop { background: color-mix(in srgb, var(--ink) 45%, tra
 .nt button.quiet:hover { background: transparent; color: var(--blue); }
 .nt button:disabled, .nt-capture button:disabled { opacity: 0.45; cursor: not-allowed; }
 .nt kbd { font: 11px/1 var(--mono); border: 1px solid currentColor; padding: 2px 4px; margin-left: 6px; opacity: 0.7; }
+dialog.nt-near { width: min(1000px, calc(100vw - 24px)); padding: 0; border: 1px solid var(--ink); border-radius: 0; background: var(--paper); color: var(--ink); }
+dialog.nt-near::backdrop { background: color-mix(in srgb, var(--ink) 45%, transparent); }
+.nt-near header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 10px 10px 16px; border-bottom: 1px solid var(--ink); }
+.nt-near header b { font: 500 18px/1.2 var(--grot); letter-spacing: -0.02em; }
+.nt-near header button { font: 12px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; border: 1px solid var(--ink); border-radius: 0; background: transparent; color: var(--ink); padding: 10px 13px; cursor: pointer; }
+.nt-near svg { display: block; width: 100%; height: auto; max-height: calc(100vh - 190px); }
+.nt-near line { stroke: var(--ghost); stroke-width: 1; } .nt-near line.near { stroke: var(--mute); }
+.nt-near .pt circle, .nt-near .pt rect { fill: var(--ink); } .nt-near .pt.s0 circle, .nt-near .pt.s0 rect { fill: var(--blue); }
+.nt-near .pt.k-book rect { fill: var(--paper); stroke: var(--ink); stroke-width: 1.5; } .nt-near .pt.k-index circle { fill: var(--paper); stroke: var(--ink); stroke-width: 2; }
+.nt-near .pt text { font: 13px/1 var(--grot); fill: var(--ink); } .nt-near .pt.s2 text { fill: var(--mute); font-size: 12px; } .nt-near .pt.s0 text { font-weight: 600; font-size: 14px; }
+.nt-near .pt { cursor: pointer; text-decoration: none; } .nt-near .pt:hover text, .nt-near .pt:focus text { fill: var(--blue); }
+.nt-near p { margin: 0; padding: 10px 16px 14px; color: var(--mute); font-size: 14px; border-top: 1px solid var(--ghost); }
 .nt-err { border: 1px solid var(--ink); border-left-width: 8px; padding: 9px 13px; margin: 12px 0 0; font-size: 15px; }
 .nt .nt-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 14px 0 10px; }
 .nt .nt-head .row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -187,6 +199,49 @@ const listeners = new Set();           // told when a note was made, saved, rena
 const tell = (what, note) => { for (const fn of listeners) fn(what, note); };
 const openNote = (id) => { if (Notes.open) Notes.open(id); else location.href = "/#/notes/" + encodeURIComponent(id); };
 const cite = (job, block) => call("/vault/cite", { method: "POST", json: { job, block } });
+
+/* ---------- the neighbourhood of a note ---------- */
+// A diagram of one note, what it is joined to (the inner ring) and what those are joined to (the outer ring).
+// It is drawn as SVG, so every point is a link that the keyboard reaches. `open(id)` is called for a point.
+const sv = (tag, attrs, ...kids) => {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs || {})) if (v != null && v !== false) { if (k.startsWith("on")) node.addEventListener(k.slice(2), v); else node.setAttribute(k, v); }
+  for (const kid of kids.flat()) if (kid != null && kid !== false) node.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
+  return node;
+};
+async function neighbourhood(id, open) {
+  let data;
+  try { data = await call(`/vault/notes/${encodeURIComponent(id)}/neighbourhood`); } catch (e) { return toast(e.message); }
+  const W = 960, H = 640, cx = W / 2, cy = H / 2, at = new Map(), joined = new Map(data.nodes.map((n) => [n.id, []]));
+  for (const [a, b] of data.edges) { joined.get(a).push(b); joined.get(b).push(a); }
+  const centre = data.nodes.find((n) => n.step === 0), inner = data.nodes.filter((n) => n.step === 1).sort((a, b) => a.title.localeCompare(b.title)), outer = data.nodes.filter((n) => n.step === 2);
+  at.set(centre.id, { x: cx, y: cy, a: 0 });
+  inner.forEach((n, i) => { const a = -Math.PI / 2 + 2 * Math.PI * i / inner.length; at.set(n.id, { x: cx + 150 * Math.cos(a), y: cy + 125 * Math.sin(a), a }); });
+  // a point of the outer ring stands near the inner points it is joined to
+  const lean = (n) => { const near = joined.get(n.id).map((o) => at.get(o)).filter((p) => p && p.a !== undefined && p.x !== cx); return near.length ? Math.atan2(near.reduce((t, p) => t + Math.sin(p.a), 0), near.reduce((t, p) => t + Math.cos(p.a), 0)) : 0; };
+  const leaning = outer.map((n) => ({ n, a: lean(n) })).sort((p, q) => p.a - q.a || p.n.title.localeCompare(q.n.title));
+  const turn = leaning.length ? leaning.reduce((t, p, i) => t + p.a - 2 * Math.PI * i / leaning.length, 0) / leaning.length : 0;
+  leaning.forEach((p, i) => { const a = turn + 2 * Math.PI * i / leaning.length; at.set(p.n.id, { x: cx + 330 * Math.cos(a), y: cy + 255 * Math.sin(a), a }); });
+  const name = (n) => { const t = n.untitled ? "A note without a title" : n.title; return t.length > 30 ? t.slice(0, 29) + "…" : t; };
+  const box = el("dialog", { class: "nt-near", "aria-label": "Neighbourhood" });
+  const go = (n) => { box.close(); if (n.id !== centre.id) open(n.id); };
+  const point = (n) => {
+    const p = at.get(n.id), right = p.x >= cx, r = n.step === 0 ? 9 : n.step === 1 ? 6 : 4.5;
+    return sv("a", { class: `pt k-${n.kind} s${n.step}`, href: "#/notes/" + encodeURIComponent(n.id), "aria-label": name(n), onclick: (e) => { e.preventDefault(); go(n); } },
+      n.kind === "book" ? sv("rect", { x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r }) : sv("circle", { cx: p.x, cy: p.y, r }),
+      sv("text", n.step === 0 ? { x: p.x, y: p.y + 28, "text-anchor": "middle" } : { x: p.x + (right ? 11 : -11), y: p.y + 4, "text-anchor": right ? "start" : "end" }, name(n)), sv("title", {}, n.title));
+  };
+  box.append(el("header", {}, el("b", {}, "Neighbourhood of " + name(centre)), el("button", { type: "button", onclick: () => box.close() }, "Close")),
+    sv("svg", { viewBox: `0 0 ${W} ${H}`, role: "group", "aria-label": `${name(centre)} and the ${data.nodes.length - 1} notes and books within two links of it` },
+      data.edges.map(([a, b]) => sv("line", { x1: at.get(a).x, y1: at.get(a).y, x2: at.get(b).x, y2: at.get(b).y, class: a === centre.id || b === centre.id ? "near" : "" })),
+      data.nodes.map(point)),
+    el("p", {}, data.nodes.length === 1 ? "Nothing is joined to this note yet. Type [[ in its text to link it to another."
+      : "Two links out. A square is a book: it is shown, and not passed through, since it would bring in every note that cites it." + (data.more ? " There is more beyond what is shown." : "")));
+  box.addEventListener("click", (e) => { if (e.target === box) box.close(); });
+  box.addEventListener("close", () => box.remove());
+  document.body.append(box);
+  box.showModal();
+}
 
 /* ---------- a quick note, from any page ---------- */
 let captureBox = null, captureDraft = "";
@@ -277,6 +332,7 @@ function mount(root, options) {
       book ? null : el("button", { type: "button", class: "quiet", "aria-expanded": String(!propsBox.hidden), onclick: () => { propsBox.hidden = !propsBox.hidden; drawHead(); } }, "Properties"),
       book && note.job ? el("a", { class: "btn", href: "/read/" + note.job }, "Read") : null,
       book && note.job ? el("a", { class: "btn", href: "/#/notebook/" + note.job }, "Notebook") : null,
+      note ? el("button", { type: "button", class: "quiet", title: "This note, what it is joined to, and what those are joined to", onclick: () => neighbourhood(note.id, go) }, "Neighbourhood") : null,
       note && !note.inbox && ["idea", "index", "quick", "project-note"].includes(kind) ? el("button", { type: "button", class: "quiet", onclick: pickProject }, "Add to a project") : null,
       note && (!book || !note.in_library) ? el("button", { type: "button", class: "quiet", onclick: remove }, "Delete") : null,
       opts.close ? el("button", { type: "button", onclick: () => opts.close() }, "Close") : null].filter(Boolean));
@@ -637,6 +693,6 @@ function mount(root, options) {
   };
 }
 
-const Notes = window.Notes = { KINDS, capture, install, mount, loadEditor, toast, cite, call, day, open: null,
+const Notes = window.Notes = { KINDS, capture, install, mount, loadEditor, toast, cite, call, day, neighbourhood, open: null,
   onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); } };
 })();

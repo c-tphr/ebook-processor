@@ -4,7 +4,7 @@ Things that were discussed and put off, in one place. Nothing here is being work
 
 ## Decided for later
 
-These were chosen as later work by the project owner. The knowledge system is planned in five phases: see `docs/KNOWLEDGE-PLAN.md`. Phases 1 to 3 (the notes folder, the editor, idea notes and quick notes, search; the Process view and related notes; index notes, projects and more of Markdown in the editor) are built; phases 4 and 5 are not.
+These were chosen as later work by the project owner. The knowledge system is planned in five phases: see `docs/KNOWLEDGE-PLAN.md`. Phases 1 to 4 (the notes folder, the editor, idea notes and quick notes, search; the Process view and related notes; index notes, projects and more of Markdown in the editor; the graph, the neighbourhood, revisiting and the timeline) are built; phase 5, the model's part, is not.
 
 | Item | What it means | Notes |
 | --- | --- | --- |
@@ -172,6 +172,20 @@ Passed over while Phase 1 was built. The later phases are in `docs/KNOWLEDGE-PLA
 | Kinds of callout | Every callout has the same look, with its kind as a label. Colours and icons per kind, and folding, were left out |
 | Footnotes at the foot | A footnote shows as a raised mark with its text on hover. Numbering them and listing them under the note is left to an export |
 
+### Seeing and revisiting (Phase 4 of the knowledge system)
+
+| Item | What it means |
+| --- | --- |
+| A graph you lay out yourself | Points can be dragged, but the layout is worked out again on each visit. Keeping where you put things was not chosen |
+| Tags as points of the graph | Not chosen: tags are a filter |
+| The neighbourhood always beside a note | Not chosen: it opens on request |
+| "Not seen for long" | A note is old by the date of its file's last change. Recording when a note was last opened in the app was not chosen, so a note you only read can come back |
+| Notes nothing links to | Only a note with no link in either direction counts as unlinked. Notes that link out but cannot be reached were not included |
+| A history of changes | The timeline shows a note on the day it was made and on the day of its last change. Earlier changes are not known: the files keep one date |
+| A quick note's day after it became an idea note | It then shows on its day as a note written, not as a quick note: the file no longer says it was one |
+| Reading on the timeline | Reading sessions are not there: the app keeps totals per book, not a log by day (see "Detailed reading history" above) |
+| The graph for the keyboard | The canvas can be moved and zoomed with the keys, but a point cannot be chosen with them. The list under the graph and the neighbourhood diagram, whose points are links, are the keyboard's way in |
+
 ## To verify
 
 Things that work in tests but have not been confirmed in real use, and facts that are still unknown.
@@ -183,6 +197,7 @@ Things that work in tests but have not been confirmed in real use, and facts tha
 | The editor on a phone or tablet | CodeMirror supports touch, but the Notes pages were laid out and tested for a laptop or desktop browser |
 | More of Markdown, compared with Obsidian | Tables, embeds, callouts, footnotes and tasks were written to match how Obsidian reads them, and were not compared side by side with it. In a table, a bar inside a link must be written `\\|`, as Obsidian also asks |
 | Dragging in the outline | Tested with the buttons. Dragging uses the browser's own drag and drop and was tried by hand in Chromium only |
+| The graph with many notes | The layout was tried with a few dozen points. It is written to stay quick with a few thousand (points only push those near them), but that was not measured, and how readable a large graph is will show with a real folder |
 | Related notes on a real folder | The scoring was tried on a handful of made-up notes. Whether the list is useful, and how many everyday words slip through, will show only with a real folder of some size |
 | A large notes folder | The index is kept in memory and files are read again when they change. Measured only with a handful of notes; the design expects a few thousand to be read in under a second |
 | Mochi's actual defaults | Mochi does not publish its multipliers. Reading them off the Review Settings screen of a fresh install would settle the Remembered multiplier (1.8 here), the Forgot multiplier (0.5), the longest interval and the size of the due-date variation |

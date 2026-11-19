@@ -556,3 +556,61 @@ def test_tables_embeds_callouts_footnotes_and_tasks_show_as_what_they_are(page: 
     expect(content).to_contain_text("| Lamp oil | 12 |")
     content.locator(".cm-embed b").click()                                     # the embedded note opens
     expect(page.get_by_label("Title")).to_have_value("Decide once")
+
+
+def test_the_graph_a_neighbourhood_revisit_and_the_timeline(page: Page, book: App, vault: Path):
+    hid = book.call("POST", f"/jobs/{book.id}/notes/highlight", json_body={"chapter": 2, "start": 3, "end": 14})["made"]
+    a = make(book, title="First idea", body="Leads to [[Second idea]].", source={"job": book.id, "block": hid})
+    b = make(book, title="Second idea", body="Leads to [[Third idea]].", tags=["chain"])
+    make(book, title="Third idea", body="The end of the chain.")
+    make(book, title="Standing alone", body="Nothing links here.")
+    page.goto(book.url + "/#/notes")
+    expect(page.locator("#nz-revisit .nz-row b")).to_have_text(["Standing alone"])       # the one note joined to no other
+    expect(page.locator("#nz-revisit")).to_contain_text("Joined to no other note")
+    # the graph: notes and the book as points, joined by links and citations
+    page.locator("#nz-views a", has_text="Graph").click()
+    page.wait_for_function("() => !!window.graphState && graphState().points.length > 0")
+    expect(page.locator("#gz-info")).to_have_text("5 points / 3 joins", ignore_case=True)
+    page.wait_for_timeout(1500)                                                          # the layout settles
+    state = page.evaluate("() => graphState()")
+    assert {p["title"]: p["joins"] for p in state["points"] if p["kind"] != "book"} == {"First idea": 2, "Second idea": 2, "Third idea": 1, "Standing alone": 0}
+    assert sum(p["kind"] == "book" for p in state["points"]) == 1 and state["joins"] == 3
+    box = page.locator("#gz").bounding_box()
+    assert all(box["x"] <= p["x"] <= box["x"] + box["width"] and box["y"] <= p["y"] <= box["y"] + box["height"] for p in state["points"])   # all in view
+    second = next(p for p in state["points"] if p["title"] == "Second idea")
+    page.mouse.move(second["x"], second["y"])
+    page.wait_for_function("(id) => graphState().hover === id", arg=b["id"])
+    page.get_by_label("Tag").select_option("chain")
+    expect(page.locator("#gz-info")).to_have_text("1 point / 0 joins", ignore_case=True)
+    page.get_by_label("Tag").select_option("")
+    page.get_by_label("Kind").select_option("book")
+    expect(page.locator("#gz-info")).to_have_text("1 point / 0 joins", ignore_case=True)
+    page.get_by_label("Kind").select_option("")
+    page.locator("details.adv summary").click()                                          # the same notes as links, for the keyboard
+    expect(page.locator("#gz-list .nz-row")).to_have_count(5)
+    page.wait_for_timeout(1500)
+    first = next(p for p in page.evaluate("() => graphState()")["points"] if p["title"] == "First idea")
+    page.mouse.click(first["x"], first["y"])                                             # a click opens the note
+    expect(page.get_by_label("Title")).to_have_value("First idea")
+    assert page.evaluate("() => window.graphState") is None                              # the drawing stopped with its page
+    # the neighbourhood: two links out, every point a link
+    page.get_by_role("button", name="Neighbourhood").click()
+    points = page.locator(".nt-near .pt")
+    expect(points).to_have_count(4)                                                      # itself, the second idea, the book, the third idea
+    expect(page.locator(".nt-near .pt.s0 text")).to_have_text("First idea")
+    expect(page.locator(".nt-near .pt.s2 text")).to_have_text(["Third idea"])
+    expect(page.locator(".nt-near .pt.k-book")).to_have_count(1)
+    page.locator(".nt-near .pt", has_text="Second idea").click()
+    expect(page.get_by_label("Title")).to_have_value("Second idea")
+    expect(page.locator(".nt-near")).to_have_count(0)
+    # everything to come back to, and what was done by day
+    page.goto(book.url + "/#/notes/revisit")
+    expect(page.locator(".nz-part").first.locator(".nz-row b")).to_have_text(["Standing alone"])
+    expect(page.locator(".nz-part").nth(1)).to_contain_text("Nothing has been left alone that long")
+    page.goto(book.url + "/#/notes/timeline")
+    today = page.locator(".tl-day").first
+    expect(today.locator(".tl-group").first).to_contain_text("Written 4")
+    expect(today.locator(".tl-group a.n", has_text="First idea")).to_have_count(1)
+    expect(today).to_contain_text("1 highlight, 0 notes in")
+    expect(today.locator("q")).to_contain_text("The supply boat reached Gannet Rock")
+    assert a["id"] in today.locator(".tl-group a.n", has_text="First idea").get_attribute("href")

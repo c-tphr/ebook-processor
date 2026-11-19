@@ -3,11 +3,13 @@
 // It is CodeMirror 6 with the Markdown language, plus what a notes folder needs: wiki links ([[Note]],
 // [[Note|shown]], [[Note#Heading]], [[Note#^block]]), tags and block ids are understood, the marks of a construct
 // are hidden unless the cursor is in it, links complete as they are typed, and a link shows what it leads to.
+// Tables are drawn as tables, an embed (![[Note]]) shows its text under its line, callouts (> [!note]) are
+// labelled, footnotes ([^1]) are raised, and the box of a task (- [ ]) can be ticked.
 // The page around it gives the editor what only the app knows (see `create`).
 //
 // Built into ebook_processor/web/static/editor.js by `npm run build` in this folder. The built file is committed.
 
-import { EditorSelection, EditorState, Annotation, StateEffect, Prec } from "@codemirror/state";
+import { EditorSelection, EditorState, Annotation, StateEffect, StateField, Prec } from "@codemirror/state";
 import { EditorView, keymap, Decoration, ViewPlugin, WidgetType, placeholder, hoverTooltip } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { syntaxTree, Language, LanguageSupport } from "@codemirror/language";
@@ -23,8 +25,17 @@ const TAG_BEFORE = new RegExp(`[${WORD}/#&]`, "u");
 const BLOCK_ID = /^\^[A-Za-z0-9-]+[ \t]*(?=\n|$)/;
 
 const notesSyntax = {
-  defineNodes: ["WikiLink", "WikiMark", "WikiTarget", "WikiAnchor", "WikiShown", "Tag", "BlockId"],
+  defineNodes: ["WikiLink", "WikiMark", "WikiTarget", "WikiAnchor", "WikiShown", "Tag", "BlockId", "Footnote"],
   parseInline: [
+    {
+      name: "Footnote",                 // [^1] in the text, and [^1]: at the start of the line that says what it is
+      before: "Link",
+      parse(cx, next, pos) {
+        if (next !== 91 || cx.char(pos + 1) !== 94) return -1;
+        const m = /^\[\^[^\]\s]+\]/.exec(cx.slice(pos, Math.min(cx.end, pos + 60)));
+        return m ? cx.addElement(cx.elt("Footnote", pos, pos + m[0].length)) : -1;
+      },
+    },
     {
       name: "WikiLink",
       before: "Link",
@@ -70,6 +81,106 @@ const notesSyntax = {
 const notesLanguage = new Language(markdownLanguage.data, markdownLanguage.parser.configure(notesSyntax), [], "markdown");
 
 /* ---------- formatting as you type ---------- */
+
+class Tick extends WidgetType {       // the box of a task: ticking it writes the x into the text
+  constructor(done) { super(); this.done = done; }
+  eq(other) { return other.done === this.done; }
+  toDOM(view) {
+    const box = document.createElement("input");
+    box.type = "checkbox"; box.className = "cm-tick"; box.checked = this.done; box.setAttribute("aria-label", "Done");
+    box.addEventListener("mousedown", (e) => e.preventDefault());
+    box.addEventListener("click", (e) => {
+      e.preventDefault();
+      const pos = view.posAtDOM(box);
+      if (/^\[[ xX]\]$/.test(view.state.sliceDoc(pos, pos + 3))) view.dispatch({ changes: { from: pos + 1, to: pos + 2, insert: this.done ? " " : "x" }, userEvent: "input" });
+    });
+    return box;
+  }
+  ignoreEvent() { return true; }
+}
+
+/* ---------- tables and embeds: drawn as blocks ---------- */
+// A cell as words. In a table a bar inside a link is written \\|, as Markdown asks.
+const plainCell = (text) => text.replace(/\\\|/g, "|").replace(/!?\[\[([^\]|#]*)(#[^\]|]*)?(?:\|([^\]]*))?\]\]/g, (_m, to, _part, shown) => shown || to).trim();
+const cells = (line) => line.trim().replace(/^\|/, "").replace(/\|$/, "").split(/(?<!\\)\|/);
+
+class TableBlock extends WidgetType {   // a Markdown table as a table; a click in it goes back to its text
+  constructor(source) { super(); this.source = source; }
+  eq(other) { return other.source === this.source; }
+  toDOM(view) {
+    const rows = this.source.split("\n").filter((line) => line.trim()), table = document.createElement("table");
+    const align = cells(rows[1] || "").map((c) => (/^\s*:-+:\s*$/.test(c) ? "center" : /-+:\s*$/.test(c) ? "right" : ""));
+    table.className = "cm-table";
+    rows.forEach((row, n) => {
+      if (n === 1) return;
+      const tr = table.insertRow();
+      cells(row).forEach((c, i) => {
+        const cell = n === 0 ? document.createElement("th") : document.createElement("td");
+        cell.textContent = plainCell(c);
+        if (align[i]) cell.style.textAlign = align[i];
+        tr.append(cell);
+      });
+    });
+    const wrap = document.createElement("div");
+    wrap.className = "cm-table-wrap"; wrap.title = "Click to edit the table as text"; wrap.append(table);
+    wrap.addEventListener("mousedown", (e) => { e.preventDefault(); view.dispatch({ selection: { anchor: view.posAtDOM(wrap) }, scrollIntoView: true }); view.focus(); });
+    return wrap;
+  }
+  ignoreEvent() { return true; }
+}
+
+class EmbedBlock extends WidgetType {   // what ![[Note]] embeds, shown under its line
+  constructor(link, got, open) { super(); this.link = link; this.got = got; this.open = open; }
+  eq(other) { return other.link.target === this.link.target && other.link.anchor === this.link.anchor && other.got === this.got; }
+  toDOM() {
+    const box = document.createElement("div"), head = document.createElement("b"), got = this.got;
+    box.className = "cm-embed";
+    const part = this.link.anchor && !this.link.anchor.startsWith("^") ? " › " + this.link.anchor : "";
+    head.textContent = !got ? "…" : got.found ? (got.title || "") + part : got.title ? `Nothing called ${this.link.anchor.replace(/^\^/, "")} in ${got.title}` : `No note called ${this.link.target} yet`;
+    box.append(head);
+    if (got && got.found && got.body) { const text = document.createElement("div"); text.textContent = got.body; box.append(text); }
+    if (got && got.found && this.open) { head.classList.add("cm-embed-open"); head.addEventListener("mousedown", (e) => { e.preventDefault(); this.open(this.link); }); }
+    return box;
+  }
+  ignoreEvent() { return true; }
+}
+
+// Whether the keyboard is in the editor, kept in the state so that what is drawn as a block can follow it: a
+// table shows as text only while the cursor is in it and the editor has the keyboard.
+const setFocus = StateEffect.define();
+const focusField = StateField.define({ create: () => false, update: (value, tr) => tr.effects.reduce((v, e) => (e.is(setFocus) ? e.value : v), value) });
+const focusWatch = EditorView.focusChangeEffect.of((_state, focusing) => setFocus.of(focusing));
+
+const blocks = (embeds, opts) => {
+  const build = (state) => {
+    const decos = [], focused = state.field(focusField, false);
+    const touched = (from, to) => focused && state.selection.ranges.some((r) => r.from <= to && r.to >= from);
+    syntaxTree(state).iterate({
+      enter(ref) {
+        if (ref.name === "Table") {
+          const from = state.doc.lineAt(ref.from).from, to = state.doc.lineAt(ref.to).to;
+          if (!touched(from, to)) decos.push(Decoration.replace({ widget: new TableBlock(state.sliceDoc(from, to)), block: true }).range(from, to));
+          return false;
+        }
+        if (ref.name === "FencedCode" || ref.name === "CodeBlock") return false;
+        if (ref.name === "WikiLink" && state.sliceDoc(ref.from, ref.from + 1) === "!") {
+          const link = wikiAt(state, ref.from);
+          if (link) decos.push(Decoration.widget({ widget: new EmbedBlock(link, embeds.get(link.target, link.anchor), opts.onOpen), block: true, side: 1 }).range(state.doc.lineAt(ref.to).to));
+          return false;
+        }
+        return undefined;
+      },
+    });
+    return Decoration.set(decos, true);
+  };
+  return StateField.define({
+    create: build,
+    update(value, tr) {
+      return tr.docChanged || tr.selection || tr.effects.some((e) => e.is(redraw) || e.is(setFocus)) || syntaxTree(tr.startState) !== syntaxTree(tr.state) ? build(tr.state) : value;
+    },
+    provide: (field) => EditorView.decorations.from(field),
+  });
+};
 
 class Glyph extends WidgetType {
   constructor(text, cls) { super(); this.text = text; this.cls = cls; }
@@ -120,14 +231,32 @@ function format(view, links) {
           for (let kid = node.firstChild; kid; kid = kid.nextSibling) if (kid.name === "CodeMark" || kid.name === "CodeInfo") mark("cm-mute", kid.from, kid.to);
           return false;
         } else if (name === "Blockquote") {
-          lines("cm-quote", ref.from, ref.to);
+          const first = state.doc.lineAt(ref.from), callout = /^(\s*>\s*)\[!([A-Za-z]+)\][+-]?[ \t]*/.exec(first.text);
+          lines(callout ? "cm-quote cm-callout" : "cm-quote", ref.from, ref.to);
+          if (callout) {                // > [!note] Title: a labelled box, as Obsidian draws it
+            const from = first.from + callout[1].length, to = first.from + callout[0].length, label = callout[2][0].toUpperCase() + callout[2].slice(1).toLowerCase();
+            if (!inSel(first.from, first.to)) decos.push(Decoration.replace({ widget: new Glyph(label + (to < first.to ? ": " : ""), "cm-callout-label") }).range(from, to));
+            else mark("cm-mute", from, to);
+          }
         } else if (name === "QuoteMark") {
           const line = state.doc.lineAt(ref.from);
           if (!inSel(line.from, line.to)) hide(ref.from, state.sliceDoc(ref.to, ref.to + 1) === " " ? ref.to + 1 : ref.to);
           else mark("cm-mute", ref.from, ref.to);
+        } else if (name === "TaskMarker") {
+          const done = /x/i.test(text(ref));
+          if (!inSel(ref.from, ref.to)) decos.push(Decoration.replace({ widget: new Tick(done) }).range(ref.from, ref.to));
+          else mark("cm-mute", ref.from, ref.to);
+          if (done && node.parent) mark("cm-done", ref.to, node.parent.to);
+        } else if (name === "Footnote") {
+          const defines = state.sliceDoc(ref.to, ref.to + 1) === ":" && ref.from === state.doc.lineAt(ref.from).from;
+          mark(defines ? "cm-footnote-def" : "cm-footnote", ref.from + 2, ref.to - 1, { "data-footnote": state.sliceDoc(ref.from + 2, ref.to - 1) });
+          if (!inSel(ref.from, ref.to) && !defines) { hide(ref.from, ref.from + 2); hide(ref.to - 1, ref.to); }
+          else { mark("cm-mute", ref.from, ref.from + 2); mark("cm-mute", ref.to - 1, ref.to); }
         } else if (name === "ListMark") {
           const line = state.doc.lineAt(ref.from), bullet = node.parent && node.parent.parent && node.parent.parent.name === "BulletList";
-          if (bullet && !inSel(ref.from, ref.to)) decos.push(Decoration.replace({ widget: new Glyph("•", "cm-bullet") }).range(ref.from, ref.to));
+          const task = node.parent && node.parent.getChild("Task");
+          if (task && !inSel(ref.from, ref.to)) hide(ref.from, Math.min(ref.to + 1, task.from));   // a task shows its box, not a bullet
+          else if (bullet && !inSel(ref.from, ref.to)) decos.push(Decoration.replace({ widget: new Glyph("•", "cm-bullet") }).range(ref.from, ref.to));
           else mark("cm-listmark", ref.from, ref.to);
           decos.push(Decoration.line({ class: "cm-li" }).range(line.from));
         } else if (name === "HorizontalRule") {
@@ -203,6 +332,22 @@ function linkBook(view, peek) {
   };
 }
 
+function embedBook(view, embed) {       // the text of each embed, asked of the page once
+  const known = new Map();
+  return {
+    get(target, anchor) {
+      const k = target.toLowerCase() + "#" + anchor.toLowerCase();
+      if (!known.has(k)) {
+        known.set(k, null);
+        Promise.resolve(embed({ target, anchor })).then((got) => { known.set(k, got || { found: false }); if (view.current) view.current.dispatch({ effects: redraw.of(null) }); },
+          () => { known.delete(k); });
+      }
+      return known.get(k);
+    },
+    forget() { known.clear(); },
+  };
+}
+
 function wikiAt(state, pos) {
   for (let node = syntaxTree(state).resolveInner(pos, 1); node; node = node.parent) {
     if (node.name === "WikiLink") {
@@ -216,7 +361,27 @@ function wikiAt(state, pos) {
 
 const KINDS = { idea: "Idea note", index: "Index note", quick: "Quick note", "project-note": "Project note", project: "Project", book: "Book" };
 
+function footnoteAt(state, pos) {
+  for (let node = syntaxTree(state).resolveInner(pos, 1); node; node = node.parent) {
+    if (node.name === "Footnote") {
+      const id = state.sliceDoc(node.from + 2, node.to - 1);
+      const said = new RegExp("^\\[\\^" + id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\]:[ \\t]*(.*)$", "m").exec(state.doc.toString());
+      return { from: node.from, to: node.to, id, text: said ? said[1] : "" };
+    }
+  }
+  return null;
+}
+
 const hover = (links) => hoverTooltip(async (view, pos) => {
+  const note = footnoteAt(view.state, pos);
+  if (note) {
+    return { pos: note.from, end: note.to, above: true, create() {
+      const dom = document.createElement("div"), head = document.createElement("b");
+      dom.className = "cm-peek"; head.textContent = "Footnote " + note.id; dom.append(head);
+      const p = document.createElement("p"); p.textContent = note.text || "This footnote has no text yet. Write a line that starts with [^" + note.id + "]:"; dom.append(p);
+      return { dom };
+    } };
+  }
   const link = wikiAt(view.state, pos);
   if (!link) return null;
   const got = await links.ask(link.target, link.anchor);
@@ -317,6 +482,19 @@ const looks = EditorView.theme({
   ".cm-code": { fontFamily: "var(--mono)", fontSize: "0.85em", background: "var(--sheet)", padding: "1px 3px" },
   ".cm-codeblock": { fontFamily: "var(--mono)", fontSize: "0.85em", background: "var(--sheet)", padding: "0 10px" },
   ".cm-quote": { borderLeft: "3px solid var(--ghost)", paddingLeft: "12px", color: "var(--mute)" },
+  ".cm-callout": { borderLeft: "6px solid var(--ink)", background: "var(--sheet)", color: "var(--ink)" },
+  ".cm-callout-label": { fontFamily: "var(--mono)", fontSize: "0.7em", letterSpacing: "0.05em", textTransform: "uppercase", fontWeight: "600" },
+  ".cm-tick": { width: "0.9em", height: "0.9em", margin: "0 0.5em 0 0", verticalAlign: "-0.05em", accentColor: "var(--blue)", cursor: "pointer" },
+  ".cm-done": { color: "var(--mute)", textDecoration: "line-through" },
+  ".cm-footnote": { fontFamily: "var(--mono)", fontSize: "0.7em", verticalAlign: "super", color: "var(--blue)" },
+  ".cm-footnote-def": { fontFamily: "var(--mono)", fontSize: "0.8em", color: "var(--blue)" },
+  ".cm-table-wrap": { padding: "0.4em 0", overflowX: "auto", cursor: "text" },
+  ".cm-table": { borderCollapse: "collapse", fontFamily: "var(--grot)", fontSize: "0.88em", lineHeight: "1.35" },
+  ".cm-table th, .cm-table td": { border: "1px solid var(--ghost)", padding: "5px 10px", textAlign: "left", verticalAlign: "top" },
+  ".cm-table th": { fontWeight: "600", borderBottom: "1px solid var(--ink)" },
+  ".cm-embed": { margin: "0.3em 0 0.5em", padding: "8px 12px", border: "1px solid var(--ghost)", borderLeft: "6px solid var(--ghost)", background: "var(--sheet)", fontSize: "0.92em", whiteSpace: "pre-wrap" },
+  ".cm-embed b": { display: "block", fontFamily: "var(--mono)", fontSize: "11px", fontWeight: "400", letterSpacing: "0.04em", textTransform: "uppercase", color: "var(--mute)", marginBottom: "4px", whiteSpace: "normal" },
+  ".cm-embed b.cm-embed-open": { cursor: "pointer", color: "var(--blue)" },
   ".cm-mute, .cm-listmark, .cm-blockid": { color: "var(--mute)" },
   ".cm-blockid": { fontFamily: "var(--mono)", fontSize: "0.75em" },
   ".cm-bullet": { color: "var(--mute)" },
@@ -352,10 +530,12 @@ const looks = EditorView.theme({
 //   complete({q}) -> [{title, link, kind, untitled, excerpt}]      notes to offer after [[
 //   anchors({target}) -> {link, headings: [..], blocks: [{id, text}]}   parts of a note to offer after [[Note#
 //   peek({target, anchor}) -> {found, title, kind, text}            what a link leads to
+//   embed({target, anchor}) -> {found, title, body}                 the text that ![[...]] shows under its line
 function create(parent, options = {}) {
   const opts = { complete: async () => [], anchors: async () => ({ link: "", headings: [], blocks: [] }), peek: async () => null, ...options };
+  if (!opts.embed) opts.embed = opts.peek;
   const holder = { current: null };
-  const links = linkBook(holder, opts.peek);
+  const links = linkBook(holder, opts.peek), embeds = embedBook(holder, opts.embed);
   const view = new EditorView({
     parent,
     state: EditorState.create({
@@ -372,6 +552,7 @@ function create(parent, options = {}) {
         new LanguageSupport(notesLanguage), Prec.high(keymap.of(markdownKeymap)), pasteURLAsLink,
         autocompletion({ override: [completeLinks(opts)], activateOnTyping: true, icons: false }),
         formatting(links),
+        focusField, focusWatch, blocks(embeds, opts),
         hover(links),
         looks,
         opts.placeholder ? placeholder(opts.placeholder) : [],
@@ -413,6 +594,13 @@ function create(parent, options = {}) {
     setText(text) {                    // put other text in place, as when the file changed on disk: not a change by the person
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, annotations: fromOutside.of(true) });
     },
+    rewrite(text) {                    // the page changed the text for the person (an outline was rearranged): saved like typing, and it can be undone
+      const now = view.state.doc.toString();
+      let a = 0, b = 0;
+      while (a < now.length && a < text.length && now[a] === text[a]) a++;
+      while (b < now.length - a && b < text.length - a && now[now.length - 1 - b] === text[text.length - 1 - b]) b++;
+      view.dispatch({ changes: { from: a, to: now.length - b, insert: text.slice(a, text.length - b) }, userEvent: "input" });
+    },
     insert(text) { view.dispatch(view.state.replaceSelection(text), { userEvent: "input", scrollIntoView: true }); view.focus(); },
     focus(where) {
       if (where === "start") view.dispatch({ selection: { anchor: 0 } });
@@ -420,7 +608,7 @@ function create(parent, options = {}) {
       view.focus();
     },
     hasFocus: () => view.hasFocus,
-    forgetLinks: () => links.forget(),  // notes were made, renamed or removed: ask again what links lead to
+    forgetLinks: () => { embeds.forget(); links.forget(); },  // notes were made, renamed or removed: ask again what links lead to
     destroy() { holder.current = null; view.destroy(); },
   };
 }

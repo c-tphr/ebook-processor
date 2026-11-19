@@ -294,14 +294,17 @@ ebook-processor-notes/
 
 The folder is `ebook-processor-notes`, beside the folder that holds your books (so `~/ebook-processor-notes` unless you moved that). It is made the first time you open Notes. **Settings > Notes** shows where it is and lets you point the app at another folder, as does `ebook-processor serve --notes FOLDER`. The app never moves files: to move your notes, move the folder yourself and then name its new place.
 
-There are two kinds of note for now:
+The kinds of note:
 
 | Kind | What it is for |
 | --- | --- |
 | **Idea note** | One idea, in your own words, with a title that says it. It cites where it came from and links to other notes. This is what the folder is for |
 | **Quick note** | A thought caught before it goes. It waits in the inbox until you make something of it |
+| **Index note** | A way into your notes on one subject: links to them, in an order of your choosing, with a word on why each belongs |
+| **Project** | Something you are making: what was gathered for it, an outline, and its own notes |
+| **Project note** | A draft, a list or minutes that belong to one project only |
 
-**Writing.** A note has a title, which is also the name of its file, and its text. The text is one pane that formats as you type: headings, emphasis, lists, quotes, code and links look like what they are, and the marks of a construct show only while the cursor is in it. Type `[[` to link to another note: the app offers your notes as you type, and after `#` the headings of the note, or after `#^` its passages. A link can be written `[[Title]]`, `[[Title|other words]]`, `[[Title#Heading]]` or `[[Title#^passage]]`. Click a link to follow it; point at it to see what it leads to; a link to a note that does not exist yet offers to make it. `#tag` anywhere in the text is a tag. Ctrl or Cmd with **B**, **I** and **K** make bold, italic and a link. Tab indents a list item; to leave the text with the keyboard, press Escape and then Tab. A note is saved a moment after you stop typing, when you leave it, and with Ctrl or Cmd + **S**.
+**Writing.** A note has a title, which is also the name of its file, and its text. The text is one pane that formats as you type: headings, emphasis, lists, quotes, code and links look like what they are, and the marks of a construct show only while the cursor is in it. Type `[[` to link to another note: the app offers your notes as you type, and after `#` the headings of the note, or after `#^` its passages. A link can be written `[[Title]]`, `[[Title|other words]]`, `[[Title#Heading]]` or `[[Title#^passage]]`. Click a link to follow it; point at it to see what it leads to; a link to a note that does not exist yet offers to make it. `#tag` anywhere in the text is a tag. More of Markdown is shown as what it is: a table is drawn as a table (click it to edit its text), `![[Note]]` embeds a note, a part of one or a passage and shows its text under the line, `> [!note] Title` is a labelled box, `[^1]` is a footnote whose text shows when you point at it, and the box of a task (`- [ ]`) can be ticked. Ctrl or Cmd with **B**, **I** and **K** make bold, italic and a link. Tab indents a list item; to leave the text with the keyboard, press Escape and then Tab. A note is saved a moment after you stop typing, when you leave it, and with Ctrl or Cmd + **S**.
 
 Beside the text are the note's **sources** (the passages it cites, with a way to open each in the book) and **Linked from**: every note that links to this one, with the sentence the link is in. **Properties** shows the block at the top of the file as fields: the kind, the tags, and any property of your own. Properties the app does not know, written in Obsidian or by hand, are kept as they are.
 
@@ -325,9 +328,21 @@ Nothing has to be marked as done. An item counts as **processed** as soon as one
 
 **Related.** Beside a note, under what links to it, the app lists other notes and passages of your books that seem to be about the same thing, and says which words they share. It is found on this computer, by the uncommon words and the tags two texts have in common; no model is asked and nothing is sent anywhere. **Link** puts a link to a related note where the cursor is, **Cite** a citation of a related passage.
 
+**Index notes.** An index note is written like any note: headings, lists and sentences with links, in whatever shape suits the subject. **New index note** on the front page starts one, and the front page lists them, as the places from which to enter your notes. A note gets into an index by your writing its link there.
+
+**Projects.** A project is for something you are making: a talk, an article, a decision. Name one under **Projects** on the front page and its page opens. The project is one file with two sections that its page works on, **Gathered** and **Outline**; everything above them is yours for a description.
+
+- **Gathering.** On any note's page, **Add to a project** adds a link to that note under Gathered. The note itself is not changed or moved, and it shows which projects it was gathered for. A passage of a book is gathered by writing its link under Gathered (`[[Book#^` offers the passages).
+- **The outline** is a nested list: headings of your own, notes, passages, lines of your own. Beside the text, each gathered note has **To the outline**, and each entry of the outline has arrows to move it up, down, in under the entry above, or out, and a cross to take it out; entries can also be dragged. This rewrites the list in the file, which you can equally edit as text.
+- **Export the outline** downloads one Markdown file: the outline's headings as headings, under each entry the full text of the note it names, a passage quoted with the title of its book, and links turned into plain words. A first draft to continue in a writing program.
+- **Project notes** are made with **New project note** and listed on the project's page. They are ordinary files that name their project in a property, and they stay out of the front page's recent notes.
+- **Mark as finished** puts the project away: it leaves the list of active projects and is no longer offered by "Add to a project". Its page and notes stay as they are, under **Finished** on the front page, and **Reopen** brings it back.
+
+Gathering a highlight for a project does not process it: it keeps waiting in Process until a note of your own cites it.
+
 **Edits made in another program** are seen: the app looks at the files again whenever Notes asks for something. A note that is open reloads when its file changes. If you have also changed it in the app, the app does not write over the file: it asks which version to keep.
 
-These are the first two parts of a larger plan (`docs/KNOWLEDGE-PLAN.md`). Index notes and projects, a graph, and help from the model in finding connections are still to come.
+These are the first three parts of a larger plan (`docs/KNOWLEDGE-PLAN.md`). Views of the whole (a graph, a note's neighbourhood, old notes brought back, a timeline) and help from the model in finding connections are still to come.
 
 ### Practice (spaced repetition)
 
@@ -457,7 +472,7 @@ After every push GitHub runs both (`.github/workflows/tests.yml`): the test suit
 | `ebook_processor/notes.py` | Highlights and notes, the notebook made from them, and its Markdown export |
 | `ebook_processor/highlight_questions.py`, `instructions/highlight.md` | Questions made from highlights: their store, what the model is sent, the check, and where an accepted question is asked |
 | `ebook_processor/srs.py` | The spaced-repetition scheduler and a book's cards |
-| `ebook_processor/vault.py` | The notes folder: files and their names, the properties at the top of a file (read and written without a YAML library), links, tags and block ids, the index kept in memory, saving that does not write over a change made on disk, renaming with links rewritten, the trash, search, which notes cite which passage, and related notes |
+| `ebook_processor/vault.py` | The notes folder: files and their names, the properties at the top of a file (read and written without a YAML library), links, tags and block ids, the index kept in memory, saving that does not write over a change made on disk, renaming with links rewritten, the trash, search, which notes cite which passage, related notes, and projects (what they gathered, their outline and its export) |
 | `ebook_processor/bookfile.py` | A book's file in the notes folder, made from its highlights and notes |
 | `ebook_processor/process.py` | A book's highlights and notes as items to process, and which were set aside |
 | `editor/` | The source of the note editor: CodeMirror 6 with the additions a notes folder needs (see below) |

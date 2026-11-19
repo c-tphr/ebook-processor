@@ -19,6 +19,53 @@
 
 const KINDS = { idea: "Idea note", index: "Index note", quick: "Quick note", "project-note": "Project note", project: "Project", book: "Book" };
 const HIDDEN = ["id", "kind", "created", "tags", "sources"];   // properties that have a place of their own on the page
+const hiddenFor = (kind) => [...HIDDEN, ...(kind === "project" ? ["status"] : kind === "project-note" ? ["project"] : [])];   // so have a project's state and a project note's project
+
+/* ---------- a project's file: the two sections the page works on ---------- */
+// A project is a note whose text has a section "Gathered" (links to what was collected for it) and a section
+// "Outline" (a nested list of notes, passages and lines of the person's own). Both are found by their headings
+// in the text of the editor, and a change made on the page rewrites that text, so it is saved like typing.
+function sectionOf(lines, heading) {
+  let fence = "";
+  const head = (line) => { const m = /^ {0,3}(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$/.exec(line); return m ? { level: m[1].length, text: m[2].trim().toLowerCase() } : null; };
+  const real = lines.map((line) => { const f = /^ {0,3}(```|~~~)/.exec(line); if (fence) { if (f && f[1] === fence) fence = ""; return false; } if (f) { fence = f[1]; return false; } return true; });
+  for (let n = 0; n < lines.length; n++) {
+    const h = real[n] ? head(lines[n]) : null;
+    if (!h || h.text !== heading.toLowerCase()) continue;
+    let end = lines.length;
+    for (let m = n + 1; m < lines.length; m++) { const other = real[m] ? head(lines[m]) : null; if (other && other.level <= h.level) { end = m; break; } }
+    return { start: n + 1, end };
+  }
+  return null;
+}
+function outlineOf(text) {              // the entries of the outline, in order: { depth, text }
+  const lines = text.split("\n"), part = sectionOf(lines, "Outline"), items = [], stack = [];
+  if (!part) return items;
+  for (const line of lines.slice(part.start, part.end)) {
+    if (!line.trim()) continue;
+    const m = /^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+(.*)$/.exec(line);
+    if (!m) { if (items.length) items[items.length - 1].text += " " + line.trim(); else items.push({ depth: 0, text: line.trim() }); continue; }
+    const indent = m[1].replace(/\t/g, "    ").length;
+    while (stack.length && indent < stack[stack.length - 1]) stack.pop();
+    if (!stack.length || indent > stack[stack.length - 1]) stack.push(indent);
+    items.push({ depth: stack.length - 1, text: m[2].trim() });
+  }
+  return items;
+}
+function withOutline(text, items) {     // the text with its outline written again from the entries
+  let depth = 0;
+  const made = items.map((i) => { depth = Math.max(0, Math.min(i.depth, depth + 1)); const line = "  ".repeat(depth) + "- " + i.text; return line; });
+  const lines = text.split("\n"), part = sectionOf(lines, "Outline");
+  if (!part) return text.replace(/\n*$/, "") + (text.trim() ? "\n\n" : "") + "## Outline\n\n" + made.join("\n") + "\n";
+  lines.splice(part.start, part.end - part.start, "", ...made, ...(part.end < lines.length ? [""] : []));
+  return lines.join("\n").replace(/\n*$/, "\n");
+}
+function gatheredOf(text) {             // the links under "Gathered", as written
+  const lines = text.split("\n"), part = sectionOf(lines, "Gathered");
+  return part ? [...lines.slice(part.start, part.end).join("\n").matchAll(/!?\[\[([^\[\]|#\n]*)(#[^\[\]|\n]*)?(?:\|([^\[\]\n]*))?\]\]/g)].map((m) => ({ raw: m[0].replace(/^!/, ""), shown: (m[3] || m[1]).trim() + (m[2] && !m[3] && m[2].startsWith("#^") ? " ¶" : "") })) : [];
+}
+const blockEnd = (items, n) => { let m = n + 1; while (m < items.length && items[m].depth > items[n].depth) m++; return m; };
+const asWords = (text) => text.replace(/!?\[\[([^\[\]|#\n]*)(#[^\[\]|\n]*)?(?:\|([^\[\]\n]*))?\]\]/g, (_m, to, part, shown) => (shown || to).trim() + (part && !shown && part.startsWith("#^") ? " ¶" : ""));
 
 function el(tag, attrs, ...kids) {
   const node = document.createElement(tag);
@@ -85,6 +132,16 @@ dialog.nt-capture::backdrop { background: color-mix(in srgb, var(--ink) 45%, tra
 .nt .nt-props .add { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; padding-top: 10px; }
 .nt .nt-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 320px); gap: 28px var(--gut, 28px); margin-top: 22px; align-items: start; }
 .nt.compact .nt-cols, .nt.book .nt-cols { grid-template-columns: minmax(0, 1fr); }
+.nt .nt-aside .out { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; align-items: baseline; padding: 6px 0 6px calc(var(--d) * 18px); border-bottom: 1px solid var(--ghost); cursor: grab; }
+.nt .nt-aside .out.over { box-shadow: inset 0 2px 0 var(--blue); } .nt .nt-aside .out.head > span:first-child { font-weight: 600; }
+.nt .nt-aside .out > span:first-child { font: 15px/1.35 var(--grot); overflow-wrap: anywhere; }
+.nt .nt-aside .out .acts { display: inline-flex; gap: 2px; } .nt .nt-aside .out .acts button { padding: 4px 6px; border-color: transparent; font-size: 12px; }
+.nt .nt-aside .out .acts button:hover { border-color: var(--ink); }
+.nt .nt-aside .addline { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 10px; }
+.nt .nt-aside .addline input { font: 15px/1.2 var(--grot); color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 7px 9px; min-width: 0; }
+.nt .nt-aside .rowline { display: flex; gap: 8px 14px; flex-wrap: wrap; align-items: center; margin: 0 0 4px; }
+.nt .nt-pick { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.nt .nt-pick select { font: 15px/1.2 var(--grot); color: var(--ink); background: var(--paper); border: 1px solid var(--ink); border-radius: 0; padding: 8px 9px; max-width: min(100%, 40ch); }
 .nt .nt-more:not(:empty) { margin-top: 26px; } .nt.compact .nt-top:not(:empty) { margin-bottom: 4px; }
 .nt .nt-aside .rel { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 12px; align-items: start; border-bottom: 1px solid var(--ghost); }
 .nt .nt-aside .rel .back { border-bottom: 0; } .nt .nt-aside .rel button { padding: 10px 0; }
@@ -192,7 +249,7 @@ function mount(root, options) {
   // sources stand above the text and the rest below it.
   const edBox = el("div", { class: "nt-editor" });
   const top = el("div", { class: "nt-top" + (opts.compact ? " nt-aside" : "") }), more = el("div", { class: "nt-more" + (opts.compact ? " nt-aside" : "") });
-  let related = null, relatedTurn = 0;
+  let related = null, relatedTurn = 0, outlineTimer = null;
   const buttons = el("span", { class: "row" });
   const shell = el("div", { class: "nt" + (opts.compact ? " compact" : "") },
     el("div", { class: "nt-head" }, status, buttons), title, meta, notice, propsBox,
@@ -207,7 +264,7 @@ function mount(root, options) {
   function setProp(key, value) {
     const p = props.find((x) => x.key === key);
     if (p) p.value = value; else props.push({ key, value });
-    dirty.props = true; schedule();
+    dirty.props = true; say("Not saved yet"); schedule();
   }
 
   /* -- what is shown around the text -- */
@@ -220,11 +277,15 @@ function mount(root, options) {
       book ? null : el("button", { type: "button", class: "quiet", "aria-expanded": String(!propsBox.hidden), onclick: () => { propsBox.hidden = !propsBox.hidden; drawHead(); } }, "Properties"),
       book && note.job ? el("a", { class: "btn", href: "/read/" + note.job }, "Read") : null,
       book && note.job ? el("a", { class: "btn", href: "/#/notebook/" + note.job }, "Notebook") : null,
+      note && !note.inbox && ["idea", "index", "quick", "project-note"].includes(kind) ? el("button", { type: "button", class: "quiet", onclick: pickProject }, "Add to a project") : null,
       note && (!book || !note.in_library) ? el("button", { type: "button", class: "quiet", onclick: remove }, "Delete") : null,
       opts.close ? el("button", { type: "button", onclick: () => opts.close() }, "Close") : null].filter(Boolean));
     const tags = note ? note.tags : [];
     meta.replaceChildren(...[
       el("span", { class: "lab" + (kind === "quick" ? " blue" : "") }, KINDS[kind] || kind),
+      kind === "project" ? el("span", { class: "lab" + (prop("status") === "finished" ? "" : " blue") }, prop("status") === "finished" ? "Finished" : "Active") : null,
+      note && note.of ? el("a", { class: "tag", onclick: () => go(note.of.id) }, "Project: " + note.of.title) : null,
+      ...(note && note.gathered_for ? note.gathered_for.filter((g) => !note.of || g.id !== note.of.id).map((g) => el("a", { class: "tag", title: "This note was gathered for the project", onclick: () => go(g.id) }, "In " + g.title)) : []),
       note && note.inbox ? el("span", { class: "mute" }, "In the inbox") : null,
       ...tags.map((t) => el("a", { class: "tag", onclick: () => opts.onTag && leave().then(() => opts.onTag(t)) }, "#" + t)),
       note && note.created ? el("span", { class: "mute" }, "Made " + day(note.created)) : null,
@@ -243,7 +304,7 @@ function mount(root, options) {
   function drawProps() {
     const rows = [];
     const row = (label, control, extra) => el("div", { class: "pr-row" }, el("span", { class: "k" }, label), control, extra || el("span"));
-    const kind = kindNow(), kinds = [["idea", KINDS.idea], ["quick", KINDS.quick]];
+    const kind = kindNow(), kinds = [["idea", KINDS.idea], ["index", KINDS.index], ["quick", KINDS.quick]];
     if (!kinds.some(([k]) => k === kind)) kinds.push([kind, KINDS[kind] || kind]);
     const select = el("select", { "aria-label": "Kind", onchange: () => { setProp("kind", select.value); drawHead(); drawNotice(); } }, kinds.map(([k, t]) => el("option", { value: k }, t)));
     select.value = kind;
@@ -253,7 +314,7 @@ function mount(root, options) {
     tags.addEventListener("change", () => setProp("tags", tags.value.split(/[,\s]+/).map((t) => t.replace(/^#/, "").trim()).filter(Boolean)));
     rows.push(row("Tags", tags, el("small", {}, "A #tag in the text counts too")));
     for (const p of props) {
-      if (!p.key || HIDDEN.includes(p.key)) continue;
+      if (!p.key || hiddenFor(kind).includes(p.key)) continue;
       const drop = el("button", { type: "button", class: "quiet", "aria-label": `Remove ${p.key}`, onclick: () => { props = props.filter((x) => x !== p); dirty.props = true; schedule(); drawProps(); } }, "Remove");
       if (!("value" in p)) { rows.push(row(p.key, el("code", {}, p.raw), el("small", {}, "kept as written"))); continue; }
       const list = Array.isArray(p.value);
@@ -270,7 +331,7 @@ function mount(root, options) {
     const add = () => {
       const k = name.value.trim();
       if (!k) return name.focus();
-      if (!/^[\p{L}\p{N}_][^:#\n]*$/u.test(k) || HIDDEN.includes(k) || props.some((p) => p.key === k)) { name.select(); return toast(`“${k}” cannot be used as the name of a new property.`); }
+      if (!/^[\p{L}\p{N}_][^:#\n]*$/u.test(k) || hiddenFor(kind).includes(k) || props.some((p) => p.key === k)) { name.select(); return toast(`“${k}” cannot be used as the name of a new property.`); }
       setProp(k, value.value.trim()); drawProps();
     };
     value.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } });
@@ -292,6 +353,7 @@ function mount(root, options) {
         w.job && w.go ? el("a", { href: `/read/${w.job}?go=${w.go.chapter}:${w.go.word}`, onclick: (e) => { if (opts.onPlace) opts.onPlace(w, e); } }, "Open the place")
           : w.in_library === false ? el("span", {}, "No longer in your library") : null))));
     }
+    if (note && note.kind === "project" && editor) parts.unshift(...projectParts());
     top.replaceChildren(...parts);
     parts.length = 0;
     if (note && (note.backlinks.length || !opts.compact)) {
@@ -315,7 +377,7 @@ function mount(root, options) {
   }
   // What else in the folder is about the same thing: asked when the note opens and after each save.
   async function findRelated() {
-    if (closed || !editor || readOnly() || opts.related === false) return;
+    if (closed || !editor || readOnly() || opts.related === false || (note && note.kind === "project")) return;
     const mine = ++relatedTurn, sources = note ? note.sources : (draft && draft.cited) || [];
     const text = [title.value, editor.getText(), ...sources.map((x) => x.text || "")].join("\n");
     try {
@@ -323,6 +385,74 @@ function mount(root, options) {
         but: [note ? note.id : "", ...sources.map((x) => `${x.id}#${x.block}`)].filter(Boolean) } });
       if (mine === relatedTurn && !closed) { related = got; drawAside(); }
     } catch (e) { /* the list is a help, not a need */ }
+  }
+  // A project's page: its state, what it gathered, its outline to arrange, and the notes written for it.
+  function projectParts() {
+    const text = editor.getText(), items = outlineOf(text), gathered = gatheredOf(text), finished = prop("status") === "finished";
+    const put = (next) => { editor.rewrite(withOutline(editor.getText(), next)); drawAside(); };
+    const inOutline = new Set(items.map((i) => i.text.toLowerCase()));
+    const move = (n, to) => {           // an entry with what is under it, to stand before entry `to`
+      const end = blockEnd(items, n), block = items.slice(n, end), shift = (to < items.length ? items[to].depth : 0) - items[n].depth;
+      if (to >= n && to <= end) return;
+      const rest = [...items.slice(0, n), ...items.slice(end)], at = to > n ? to - block.length : to;
+      rest.splice(at, 0, ...block.map((b) => ({ ...b, depth: Math.max(0, b.depth + shift) })));
+      put(rest);
+    };
+    const up = (n) => { let m = n - 1; while (m >= 0 && items[m].depth > items[n].depth) m--; if (m >= 0 && items[m].depth === items[n].depth) move(n, m); };
+    const down = (n) => { const end = blockEnd(items, n); if (end < items.length && items[end].depth === items[n].depth) { const after = blockEnd(items, end); const block = items.slice(n, end); put([...items.slice(0, n), ...items.slice(end, after), ...block, ...items.slice(after)]); } };
+    const shift = (n, by) => { if (by > 0 && (n === 0 || items[n - 1].depth < items[n].depth)) return; const end = blockEnd(items, n); put(items.map((i, k) => (k >= n && k < end ? { ...i, depth: Math.max(0, i.depth + by) } : i))); };
+    const drop = (n) => { const end = blockEnd(items, n); put(items.map((i, k) => (k > n && k < end ? { ...i, depth: i.depth - 1 } : i)).filter((_, k) => k !== n)); };   // what was under it moves out a level
+    const act = (label, title, fn) => el("button", { type: "button", title, "aria-label": title, onclick: fn }, label);
+    let dragged = null;
+    const rows = items.map((i, n) => {
+      const parent = n + 1 < items.length && items[n + 1].depth > i.depth;
+      const row = el("div", { class: "out" + (parent ? " head" : ""), style: `--d:${i.depth}`, draggable: "true" }, el("span", {}, asWords(i.text)),
+        el("span", { class: "acts" }, act("↑", "Move up", () => up(n)), act("↓", "Move down", () => down(n)), act("←", "Move out a level", () => shift(n, -1)),
+          act("→", "Move in, under the entry above", () => shift(n, 1)), act("×", "Take out of the outline", () => drop(n))));
+      row.addEventListener("dragstart", (e) => { dragged = n; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", i.text); });
+      row.addEventListener("dragover", (e) => { if (dragged !== null) { e.preventDefault(); row.classList.add("over"); } });
+      row.addEventListener("dragleave", () => row.classList.remove("over"));
+      row.addEventListener("drop", (e) => { e.preventDefault(); row.classList.remove("over"); const from = dragged; dragged = null; if (from !== null) move(from, n); });
+      return row;
+    });
+    const line = el("input", { type: "text", "aria-label": "A heading or a line of your own for the outline", placeholder: "A heading, or a line of your own" });
+    const add = () => { const words = line.value.trim(); if (!words) return line.focus(); put([...items, { depth: 0, text: words }]); };
+    line.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); add(); } });
+    return [
+      el("section", { class: "nt-project" }, el("h3", {}, "Project"),
+        el("div", { class: "rowline" },
+          el("button", { type: "button", onclick: () => { setProp("status", finished ? "active" : "finished"); drawHead(); drawAside(); } }, finished ? "Reopen the project" : "Mark as finished"),
+          el("button", { type: "button", title: "The outline as one Markdown file, with the text of the notes it names", onclick: async () => { await leave(); location.href = `/api/vault/notes/${encodeURIComponent(note.id)}/export.md`; } }, "Export the outline")),
+        finished ? el("p", { class: "none" }, "A finished project is put away: it is not offered when a note is added to a project.") : null),
+      el("section", { class: "nt-gathered" }, el("h3", {}, `Gathered${gathered.length ? " " + gathered.length : ""}`),
+        gathered.length ? gathered.map((g) => el("div", { class: "rel" }, el("a", { class: "back", onclick: () => follow({ target: g.raw.slice(2, -2).split(/[#|]/)[0], anchor: (g.raw.slice(2, -2).split("|")[0].split("#")[1] || "") }) }, el("b", {}, g.shown)),
+          inOutline.has(g.raw.toLowerCase()) ? el("small", { style: "padding:10px 0" }, "in the outline") : el("button", { type: "button", class: "quiet", onclick: () => put([...items, { depth: 0, text: g.raw }]) }, "To the outline")))
+          : el("p", { class: "none" }, "Nothing yet. “Add to a project” on a note’s page gathers it here; a passage of a book is gathered by writing its link under Gathered.")),
+      el("section", { class: "nt-outline" }, el("h3", {}, "Outline"), rows.length ? rows : el("p", { class: "none" }, "Put what you gathered in order, under headings of your own."),
+        el("div", { class: "addline" }, line, el("button", { type: "button", onclick: add }, "Add"))),
+      el("section", { class: "nt-pnotes" }, el("h3", {}, "Notes of this project"),
+        note.project && note.project.notes.length ? note.project.notes.map((n) => el("a", { class: "back", onclick: () => go(n.id) }, el("b", {}, n.title), el("span", {}, n.excerpt.slice(0, 120))))
+          : el("p", { class: "none" }, "Drafts, lists and minutes that belong to this project only."),
+        el("div", { style: "margin-top:10px" }, el("button", { type: "button", onclick: async () => { await leave(); if (opts.onNew) opts.onNew({ kind: "project-note", project: note.id }); } }, "New project note")))];
+  }
+  // "Add to a project": the note is gathered by a link in the project's file; the note itself is not changed.
+  async function pickProject() {
+    let rows;
+    try { rows = (await call("/vault/projects")).projects.filter((p) => p.status === "active"); } catch (e) { return toast(e.message); }
+    if (!rows.length) return toast("You have no active project. Make one on the Notes page, under Projects.");
+    const select = el("select", { "aria-label": "Project" }, rows.map((p) => el("option", { value: p.id }, p.title)));
+    const done = () => { asked = false; notice.replaceChildren(); drawNotice(); };
+    asked = true;
+    notice.replaceChildren(el("div", { class: "nt-note nt-pick" }, el("span", {}, "Gather this note for which project?"), select,
+      el("button", { type: "button", class: "primary", onclick: async () => {
+        await save();
+        try {
+          const got = await call(`/vault/projects/${encodeURIComponent(select.value)}/gather`, { method: "POST", json: { note: note.id } });
+          toast(got.added ? `Gathered for “${got.title}”.` : `“${got.title}” already has this note.`, "Open the project", () => go(got.id));
+          take(await call("/vault/notes/" + encodeURIComponent(note.id)));
+        } catch (e) { toast(e.message); }
+        done();
+      } }, "Add"), el("button", { type: "button", onclick: done }, "Cancel")));
   }
   function drawAll() { drawHead(); drawNotice(); drawProps(); drawAside(); }
 
@@ -352,15 +482,18 @@ function mount(root, options) {
     if (dead) return;
     editor = window.NoteEditor.create(edBox, {
       doc: note ? note.body : draft.body || "", label: "Note text", readOnly: readOnly(),
-      placeholder: draft && draft.kind === "quick" ? "A thought, before it goes." : "One idea, in your own words. Type [[ to link to another note.",
-      onChange: () => { dirty.body = true; say("Not saved yet"); schedule(); },
+      placeholder: draft && draft.kind === "quick" ? "A thought, before it goes." : kindNow() === "index" ? "Gather the notes on a subject: type [[ to link one, and say why it belongs."
+        : kindNow() === "project-note" ? "A draft, a list, minutes: what belongs to this project only." : "One idea, in your own words. Type [[ to link to another note.",
+      onChange: () => { dirty.body = true; say("Not saved yet"); schedule(); if (note && note.kind === "project") { clearTimeout(outlineTimer); outlineTimer = setTimeout(() => { if (!closed) drawAside(); }, 400); } },
       onSave: () => save(),
       onOpen: follow,
       onTag: (tag) => opts.onTag && leave().then(() => opts.onTag(tag)),
       complete: ({ q }) => call("/vault/complete?" + query({ q })).then((r) => r.notes),
       anchors: ({ target }) => call("/vault/anchors?" + query({ target })),
       peek: ({ target, anchor }) => call("/vault/peek?" + query({ target, anchor, from: note ? note.id : "" })),
+      embed: ({ target, anchor }) => call("/vault/peek?" + query({ target, anchor, from: note ? note.id : "", full: "1" })),
     });
+    if (note && note.kind === "project") drawAside();
     say(note ? "Saved" : "");
     findRelated();
     watching = setInterval(look, 4000);
@@ -387,7 +520,7 @@ function mount(root, options) {
         let got;
         if (!note) {
           got = await call("/vault/notes", { method: "POST", keepalive: !!extra.leaving, json: { title: extra.title || title.value.trim(), body: sent.body, kind: extra.kind || kindNow(),
-            sources: draft.sources, tags: prop("tags") } });
+            sources: draft.sources, tags: prop("tags"), project: draft.project } });
           tell("made", got);
         } else {
           got = await call("/vault/notes/" + encodeURIComponent(note.id), { method: "PUT", keepalive: !!extra.leaving,

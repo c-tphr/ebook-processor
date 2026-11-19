@@ -910,14 +910,33 @@ async function showNotes(params) {
   };
   function drawFilters() {
     put(filters, h("span", { class: "m mute" }, "Show"),
-      pick("kind", "Kind", [["", "Notes of every kind, and books"], ["idea", "Idea notes"], ["quick", "Quick notes"], ["book", "Highlights and notes in books"],
-        ...[...new Set([...home.recent, ...home.inbox].map((n) => n.kind))].filter((k) => !["idea", "quick", "book"].includes(k)).map((k) => [k, Notes.KINDS[k] || k])]),
+      pick("kind", "Kind", [["", "Notes of every kind, and books"], ["idea", "Idea notes"], ["index", "Index notes"], ["quick", "Quick notes"],
+        ["project", "Projects"], ["project-note", "Project notes"], ["book", "Highlights and notes in books"]]),
       pick("tag", "Tag", [["", "Any tag"], ...home.tags.map((t) => [t.tag, `#${t.tag} (${t.count})`]), ...(state.tag && !home.tags.some((t) => t.tag === state.tag) ? [[state.tag, "#" + state.tag]] : [])]),
       pick("book", "Book", [["", "Any book"], ...home.books.map((b) => [b.id, b.title])]),
       searching() ? h("button", { class: "text", type: "button", onclick: () => { state.q = state.kind = state.tag = state.book = ""; find.value = ""; go(); } }, "Clear") : null);
   }
+  let finishedToo = false;
+  const part = (title, count, ...kids) => h("section", { class: "nz-part" }, h("h2", {}, title, count != null ? h("small", {}, String(count)) : null), kids);
+  function projectsPart() {             // the active projects, a way to start one, and the finished ones on request
+    const active = home.projects.filter((p) => p.status === "active"), finished = home.projects.filter((p) => p.status !== "active");
+    const name = h("input", { type: "text", "aria-label": "Name of a new project", placeholder: "Name of a new project", maxlength: "120", style: "flex:1 1 220px;min-width:0" });
+    const make = async () => {
+      if (!name.value.trim()) return name.focus();
+      try { const made = await api("/vault/notes", { method: "POST", json: { kind: "project", title: name.value.trim() } }); location.hash = "#/notes/" + encodeURIComponent(made.id); }
+      catch (e) { alert(e.message); }
+    };
+    name.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); make(); } });
+    const row = (p) => h("a", { class: "nz-row", href: "#/notes/" + encodeURIComponent(p.id) }, h("b", {}, p.title),
+      h("span", { class: "when m mute" }, p.status === "active" ? null : h("span", { class: "lab quiet", style: "margin-right:10px" }, "Finished"), day(p.modified)),
+      h("span", { class: "sub" }, `${fmt(p.gathered)} gathered / ${fmt(p.outline)} in the outline / ${fmt(p.project_notes)} project note${p.project_notes === 1 ? "" : "s"}`));
+    return part("Projects", active.length || null,
+      active.length || (finishedToo && finished.length) ? h("div", { class: "nz-list", id: "nz-projects" }, active.map(row), finishedToo ? finished.map(row) : null)
+        : h("p", { class: "empty" }, "A project gathers notes and passages for something you are making: a talk, an article, a decision. It has an outline you arrange and export."),
+      h("div", { class: "row", style: "margin-top:12px" }, name, h("button", { type: "button", onclick: make }, "New project"),
+        finished.length ? h("button", { class: "text", type: "button", onclick: () => { finishedToo = !finishedToo; drawHome(); } }, finishedToo ? "Hide the finished" : `Finished (${finished.length})`) : null));
+  }
   function drawHome() {
-    const part = (title, count, ...kids) => h("section", { class: "nz-part" }, h("h2", {}, title, count != null ? h("small", {}, String(count)) : null), kids);
     put(body, h("div", { class: "nz-cols" },
       h("div", {},
         home.waiting ? part("To process", home.waiting, h("div", { class: "row", id: "nz-process" },
@@ -925,6 +944,10 @@ async function showNotes(params) {
           h("span", { class: "mute", style: "flex:1 1 30ch;font-size:15px" }, "Highlights, notes written in your books, and quick notes that nothing has been made of yet."))) : null,
         part("Inbox", home.inbox.length, home.inbox.length ? h("div", { class: "nz-list", id: "nz-inbox" }, home.inbox.map((n) => noteRow(n)))
           : h("p", { class: "empty" }, "Nothing waits here. Quick note, or Ctrl + . on any page, puts a thought in the inbox; so does a Markdown file dropped into the Inbox folder.")),
+        part("Index notes", home.indexes.length || null, home.indexes.length ? h("div", { class: "nz-list", id: "nz-indexes" }, home.indexes.map((n) => noteRow(n)))
+          : h("p", { class: "empty" }, "An index note gathers the notes on one subject, in an order of your choosing: a way into your notes."),
+          h("div", { style: "margin-top:12px" }, h("a", { class: "btn", href: "#/notes/new?kind=index" }, "New index note"))),
+        projectsPart(),
         part("Worked on last", null, home.recent.length ? h("div", { class: "nz-list", id: "nz-recent" }, home.recent.map((n) => noteRow(n)))
           : h("p", { class: "empty" }, "No notes yet. Start one with New note, or from a highlight while you read: select the words and choose Idea note."))),
       h("div", { class: "nz-side" },
@@ -1124,7 +1147,8 @@ async function showNote(id, params) {
   put(app, h("a", { class: "back m", href: "#/notes" }, "← Notes"), box);
   let draft = null;
   if (!id) {
-    draft = { kind: "idea", body: "" };
+    const kind = params.get("kind");
+    draft = { kind: ["index", "project-note"].includes(kind) ? kind : "idea", body: "", project: kind === "project-note" ? params.get("project") : undefined };
     if (params.get("job")) {            // an idea note that starts from a highlight or a note of a book
       const here = location.hash;
       try {
@@ -1138,6 +1162,7 @@ async function showNote(id, params) {
     onOpen: (other) => { location.hash = "#/notes/" + encodeURIComponent(other); },
     onGone: () => { location.hash = "#/notes"; },
     onTag: (tag) => { location.hash = notesAt({ tag }); },
+    onNew: (what) => { location.hash = "#/notes/new?" + new URLSearchParams(what); },
     onPlace: openPlace,
     onState: (note) => {                // a new note has its id now; a file without one was given one
       const want = "#/notes/" + encodeURIComponent(note.id);

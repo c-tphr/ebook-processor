@@ -1744,6 +1744,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(jobs.vault_create(self.json_body()), HTTPStatus.CREATED)
             case ("GET", ["vault", "notes", note_id]):
                 return self.send_json(jobs.vault_note(note_id))
+            case ("GET", ["vault", "projects"]):
+                return self.send_json({"projects": jobs.vault().projects()})
             case ("POST", ["vault", "projects", project_id, "gather"]):
                 return self.send_json(jobs.vault_gather(project_id, self.json_body()))
             case ("GET", ["vault", "notes", note_id, "export.md"]):

@@ -439,3 +439,119 @@ def test_processing_a_highlight_into_a_note_a_source_or_aside(page: Page, book: 
     assert page.evaluate("location.hash").startswith("#/notes/process?book=" + book.id)
     have_now = book.call("GET", f"/vault/notes/{have['id']}")
     assert len(have_now["sources"]) == 1 and "compare with pilots' checklists" in have_now["body"]
+
+
+def test_an_index_note_and_a_project_with_its_outline(page: Page, book: App, vault: Path):
+    duty = make(book, title="A duty is kept by rule", body="The keeper lights the lamp whatever the weather.\n")
+    once = make(book, title="Decide once", body="A decision made in advance is cheaper.\n")
+    page.goto(book.url + "/#/notes")
+    page.wait_for_selector("#nz-recent")
+    # an index note: an ordinary note of its kind, listed on the front page as a way in
+    page.get_by_role("link", name="New index note").click()
+    page.wait_for_selector(".cm-focused")
+    expect(page.locator(".nt-meta .lab")).to_have_text("Index note")
+    title = page.get_by_label("Title")
+    title.fill("On rules")
+    title.press("Enter")
+    page.keyboard.type("- [[Decide once]]: the core idea.")
+    saved(page)
+    assert "kind: index\n" in (vault / "On rules.md").read_text(encoding="utf-8")
+    page.goto(book.url + "/#/notes")
+    expect(page.locator("#nz-indexes .nz-row b")).to_have_text(["On rules"])
+    expect(page.locator("#nz-recent .nz-row")).to_have_count(2)                # index notes are not among the notes worked on last
+    # a project: made by its name, with the two sections its page works on
+    page.get_by_label("Name of a new project").fill("Talk on habits")
+    page.get_by_role("button", name="New project").click()
+    page.wait_for_selector(".nt-project")
+    expect(page.locator(".nt-meta .lab")).to_have_text(["Project", "Active"])
+    project = vault / "Talk on habits.md"
+    assert project.read_text(encoding="utf-8").endswith("---\n\n\n## Gathered\n\n## Outline\n") and "status: active\n" in project.read_text(encoding="utf-8")
+    # notes are gathered from their own pages; the notes are not changed
+    for note in (duty, once):
+        page.goto(f"{book.url}/#/notes/{note['id']}")
+        page.wait_for_selector(".cm-content")
+        page.get_by_role("button", name="Add to a project").click()
+        page.locator(".nt-pick").get_by_role("button", name="Add").click()
+        expect(page.locator(".nt-toast")).to_contain_text("Gathered for “Talk on habits”")
+        expect(page.locator(".nt-meta")).to_contain_text("In Talk on habits")
+    assert (vault / "Decide once.md").read_text(encoding="utf-8").endswith("---\nA decision made in advance is cheaper.\n")
+    page.locator(".nt-toast button").click()                                   # Open the project
+    gathered = page.locator(".nt-gathered .rel")
+    expect(gathered).to_have_count(2)
+    # the outline: what was gathered, under a heading of one's own, put in order
+    gathered.nth(0).get_by_role("button", name="To the outline").click()
+    gathered.nth(1).get_by_role("button", name="To the outline").click()
+    line = page.get_by_label("A heading or a line of your own for the outline")
+    line.fill("Why rules")
+    line.press("Enter")
+    rows = page.locator(".nt-outline .out")
+    expect(rows).to_have_count(3)
+    rows.nth(2).get_by_role("button", name="Move up").click()
+    rows.nth(1).get_by_role("button", name="Move up").click()
+    expect(rows.nth(0)).to_contain_text("Why rules")
+    rows.nth(1).get_by_role("button", name="Move in, under the entry above").click()
+    rows.nth(2).get_by_role("button", name="Move in, under the entry above").click()
+    rows.nth(2).get_by_role("button", name="Move up").click()                  # Decide once before the duty
+    saved(page)
+    assert project.read_text(encoding="utf-8").endswith(
+        "## Gathered\n\n- [[A duty is kept by rule]]\n- [[Decide once]]\n\n## Outline\n\n- Why rules\n  - [[Decide once]]\n  - [[A duty is kept by rule]]\n")
+    expect(page.locator(".nt-gathered")).to_contain_text("in the outline")
+    with page.expect_download() as download:
+        page.get_by_role("button", name="Export the outline").click()
+    assert download.value.suggested_filename == "Talk on habits.md"
+    assert Path(download.value.path()).read_text(encoding="utf-8") == (
+        "# Talk on habits\n\n## Why rules\n\nA decision made in advance is cheaper.\n\nThe keeper lights the lamp whatever the weather.\n")
+    # a note of the project's own
+    page.get_by_role("button", name="New project note").click()
+    page.wait_for_selector(".cm-focused")
+    title = page.get_by_label("Title")
+    title.fill("Talk - to do")
+    title.press("Enter")
+    page.keyboard.type("- [ ] book a room")
+    saved(page)
+    expect(page.locator(".nt-meta")).to_contain_text("Project: Talk on habits")
+    assert 'project: "[[Talk on habits]]"' in (vault / "Talk - to do.md").read_text(encoding="utf-8")
+    page.locator(".nt-meta a", has_text="Project: Talk on habits").click()
+    expect(page.locator(".nt-pnotes .back b")).to_have_text(["Talk - to do"])
+    # finished: put away, readable, and no longer offered
+    page.get_by_role("button", name="Mark as finished").click()
+    saved(page)
+    expect(page.locator(".nt-meta .lab")).to_have_text(["Project", "Finished"])
+    assert "status: finished\n" in project.read_text(encoding="utf-8")
+    page.goto(book.url + "/#/notes")
+    page.wait_for_selector("#nz-recent")
+    expect(page.locator("#nz-projects")).to_have_count(0)
+    page.get_by_role("button", name="Finished (1)").click()
+    expect(page.locator("#nz-projects .nz-row b")).to_have_text(["Talk on habits"])
+    page.goto(f"{book.url}/#/notes/{once['id']}")
+    page.wait_for_selector(".cm-content")
+    page.get_by_role("button", name="Add to a project").click()
+    expect(page.locator(".nt-toast")).to_contain_text("You have no active project")
+
+
+def test_tables_embeds_callouts_footnotes_and_tasks_show_as_what_they_are(page: Page, book: App, vault: Path):
+    make(book, title="Decide once", body="A decision made in advance is cheaper.\n")
+    note = make(book, title="More of Markdown", body="| Name | Price |\n| :--- | ---: |\n| Lamp oil | 12 |\n\nA footnote[^1] and an embed:\n\n![[Decide once]]\n\n"
+                                                     "> [!note] Remember\n> Callouts are boxes.\n\n- [ ] book a room\n- [x] write the outline\n\n[^1]: The footnote's text.\n")
+    page.goto(f"{book.url}/#/notes/{note['id']}")
+    page.wait_for_selector(".cm-content .cm-table")
+    page.locator(".nt-status").click()
+    content = page.locator(".cm-content")
+    expect(content.locator(".cm-table th")).to_have_text(["Name", "Price"])
+    expect(content.locator(".cm-table td")).to_have_text(["Lamp oil", "12"])
+    expect(content.locator(".cm-embed")).to_contain_text("A decision made in advance is cheaper.")
+    expect(content.locator(".cm-callout").first).to_have_text("Note: Remember")
+    expect(content.locator(".cm-footnote")).to_have_text("1")
+    boxes = content.locator(".cm-tick")
+    expect(boxes).to_have_count(2)
+    assert boxes.evaluate_all("(all) => all.map((b) => b.checked)") == [False, True]
+    boxes.first.click()                                                        # ticking writes the x into the text
+    saved(page)
+    assert "- [x] book a room\n- [x] write the outline\n" in (vault / "More of Markdown.md").read_text(encoding="utf-8")
+    content.locator(".cm-footnote").hover()
+    expect(page.locator(".cm-peek")).to_contain_text("The footnote's text.")
+    content.locator(".cm-table-wrap").click()                                  # a table is edited as its text
+    expect(content.locator(".cm-table")).to_have_count(0)
+    expect(content).to_contain_text("| Lamp oil | 12 |")
+    content.locator(".cm-embed b").click()                                     # the embedded note opens
+    expect(page.get_by_label("Title")).to_have_value("Decide once")

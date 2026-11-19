@@ -4,7 +4,7 @@ Things that were discussed and put off, in one place. Nothing here is being work
 
 ## Decided for later
 
-These were chosen as later work by the project owner. The knowledge system is planned in five phases: see `docs/KNOWLEDGE-PLAN.md`. Phases 1 and 2 (the notes folder, the editor, idea notes and quick notes, search; the Process view and related notes) are built; phases 3 to 5 are not.
+These were chosen as later work by the project owner. The knowledge system is planned in five phases: see `docs/KNOWLEDGE-PLAN.md`. Phases 1 to 3 (the notes folder, the editor, idea notes and quick notes, search; the Process view and related notes; index notes, projects and more of Markdown in the editor) are built; phases 4 and 5 are not.
 
 | Item | What it means | Notes |
 | --- | --- | --- |
@@ -133,8 +133,8 @@ Passed over while Phase 1 was built. The later phases are in `docs/KNOWLEDGE-PLA
 | --- | --- |
 | Emptying the trash | Deleted notes stay in `.trash` until they are removed in a file manager. The app only lists them and puts them back |
 | Moving the notes for you | Pointing the app at another folder never moves or copies files. A "move my notes there" button was left out as too easy to get wrong |
-| Index notes and project notes in the app | The kinds exist in the files (`kind: index`, `project-note`, `project`) and are kept and shown, but the page offers only Idea note and Quick note until Phase 3 |
-| Embeds, callouts, footnotes, tables and task lists in the editor | They are kept in the text and shown as written. Formatting them as you type is Phase 3 |
+| Index notes and project notes in the app | Done in Phase 3 |
+| Embeds, callouts, footnotes, tables and task lists in the editor | Done in Phase 3 |
 | An idea note from RSVP | "Idea note" is offered on selected text in the page and scroll views. In RSVP a sentence can be highlighted and noted, and the idea note started from the highlight afterwards |
 | Citing a second passage with one click | Done in Phase 2: "Cite" on a related passage, and "Add as a source" in the Process view. From a search result or from the reader a second citation is still typed with `[[Book#^` |
 | A list of every note | The front page shows the inbox and the notes worked on last (forty at most); the rest are found by search, tag or book. A full, sortable list was not asked for |
@@ -155,6 +155,23 @@ Passed over while Phase 1 was built. The later phases are in `docs/KNOWLEDGE-PLA
 | The reader beside the Process view | "Open in the book" leaves for the reader; Back returns to the same item. Three columns were too many |
 | Better relatedness | Related notes are found by shared uncommon words and tags. Word stems, phrases and languages other than English are not handled; "Find connections" with a model is Phase 5 |
 
+### Index notes and projects (Phase 3 of the knowledge system)
+
+| Item | What it means |
+| --- | --- |
+| "Add to an index" on a note | Not chosen: a note gets into an index only by writing its link there |
+| An index as a managed, draggable list | Not chosen: an index note is free text |
+| Gathering a passage with a button | "Add to a project" is on a note's page only. A passage is gathered by writing its link in the project's file. Buttons in search, in Process and in the reader were not chosen |
+| Gathering from the project's page | A search box on the project page that adds notes and passages was not chosen |
+| Several outlines per project | The outline is one nested list in the project's file. A separate outline note per purpose was not chosen |
+| Choosing what an export contains | The export always carries the notes' text. An outline-only export was not chosen |
+| Projects steering the questions | By the owner's earlier decision a project does not replace "what I am working on" in Settings |
+| Editing table cells in place | A table is drawn as a table and edited as its Markdown text. Cell editing with Tab and buttons for rows and columns was not chosen |
+| Formatting inside a drawn table or an embed | Cells and embedded text are shown as plain words; links in them are not clickable there |
+| Embedded pictures | `![[file.png]]` and `![](...)` are kept as written and not drawn |
+| Kinds of callout | Every callout has the same look, with its kind as a label. Colours and icons per kind, and folding, were left out |
+| Footnotes at the foot | A footnote shows as a raised mark with its text on hover. Numbering them and listing them under the note is left to an export |
+
 ## To verify
 
 Things that work in tests but have not been confirmed in real use, and facts that are still unknown.
@@ -164,6 +181,8 @@ Things that work in tests but have not been confirmed in real use, and facts tha
 | The notes folder in Obsidian | The folder is written to be an Obsidian vault: file names as titles, `[[links]]` by name, block ids, YAML properties, `.trash`. Obsidian itself has not opened one, because it is not available where the app is built. To check: open the folder as a vault, follow a `Source: [[Book#^id]]` link to its highlight (a highlight is written as `> words ^id`; if Obsidian does not find an id at the end of a quoted line, the id belongs on a line of its own after the quote, a form the app already reads), edit a note there and see it change in the app, rename a note in the app and see Obsidian's links follow |
 | The notes folder on Windows and macOS | File names, letter case and renaming are tested, and GitHub runs the tests on both systems. Not seen in real use: a note open in another program while the app saves it (Windows refuses, and the app says so), and a folder inside OneDrive or iCloud |
 | The editor on a phone or tablet | CodeMirror supports touch, but the Notes pages were laid out and tested for a laptop or desktop browser |
+| More of Markdown, compared with Obsidian | Tables, embeds, callouts, footnotes and tasks were written to match how Obsidian reads them, and were not compared side by side with it. In a table, a bar inside a link must be written `\\|`, as Obsidian also asks |
+| Dragging in the outline | Tested with the buttons. Dragging uses the browser's own drag and drop and was tried by hand in Chromium only |
 | Related notes on a real folder | The scoring was tried on a handful of made-up notes. Whether the list is useful, and how many everyday words slip through, will show only with a real folder of some size |
 | A large notes folder | The index is kept in memory and files are read again when they change. Measured only with a handful of notes; the design expects a few thousand to be read in under a second |
 | Mochi's actual defaults | Mochi does not publish its multipliers. Reading them off the Review Settings screen of a fresh install would settle the Remembered multiplier (1.8 here), the Forgot multiplier (0.5), the longest interval and the size of the due-date variation |

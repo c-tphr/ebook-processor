@@ -278,3 +278,43 @@ def test_index_notes_and_projects_over_http(app):
         assert response.headers["Content-Disposition"] == 'attachment; filename="Talk on habits.md"'
         assert response.read().decode() == "# Talk on habits\n\n## Opening\n\nA decision made in advance is cheaper.\n"
     assert app("GET", "/api/vault/peek?" + q(target="Decide once", full="1"))[1]["body"] == "A decision made in advance is cheaper."
+
+
+def test_the_graph_a_neighbourhood_what_to_revisit_and_the_timeline(app):
+    jid = app.book()
+    hid = app("POST", f"/api/jobs/{jid}/notes/highlight", json_body={"chapter": 2, "start": 3, "end": 9})[1]["made"]
+    app("PUT", f"/api/jobs/{jid}/notes/target", json_body={"target": {"on": "book"}, "text": "On the whole book"})
+    a = app("POST", "/api/vault/notes", json_body={"title": "A", "body": "To [[B]].", "source": {"job": jid, "block": hid}})[1]
+    b = app("POST", "/api/vault/notes", json_body={"title": "B", "body": "x"})[1]
+    alone = app("POST", "/api/vault/notes", json_body={"title": "Alone", "body": "x"})[1]
+    quick = app("POST", "/api/vault/notes", json_body={"body": "a thought", "kind": "quick"})[1]
+    graph = app("GET", "/api/vault/graph")[1]
+    book = bookfile.book_id(jid)
+    assert {n["id"] for n in graph["nodes"]} == {a["id"], b["id"], alone["id"], quick["id"], book}
+    assert sorted(map(tuple, graph["edges"])) == sorted([tuple(sorted((a["id"], b["id"]))), tuple(sorted((a["id"], book)))])
+    near = app("GET", f"/api/vault/notes/{a['id']}/neighbourhood")[1]
+    assert {n["id"]: n["step"] for n in near["nodes"]} == {a["id"]: 0, b["id"]: 1, book: 1} and not near["more"]
+    assert app("GET", "/api/vault/notes/n00000000/neighbourhood")[0] == 404
+    again = app("GET", "/api/vault/revisit")[1]
+    assert [n["id"] for n in again["unlinked"]] == [alone["id"]] and again["old"] == [] and [n["id"] for n in again["today"]] == [alone["id"]]
+    assert [(n["id"], n["why"]) for n in app("GET", "/api/vault")[1]["revisit"]] == [(alone["id"], "unlinked")]
+    # the timeline: today holds what was written, caught and marked; a note changed on a later day shows there as edited
+    import datetime, os
+    line = app("GET", "/api/timeline")[1]
+    today = datetime.date.today().isoformat()
+    assert [d["day"] for d in line["days"]] == [today] and not line["more"]
+    day = line["days"][0]
+    assert {n["id"] for n in day["written"]} == {a["id"], b["id"], alone["id"]} and [n["id"] for n in day["quick"]] == [quick["id"]] and day["edited"] == []
+    assert [(x["job"], [h["id"] for h in x["highlights"]], len(x["notes"])) for x in day["books"]] == [(jid, [hid], 1)]
+    assert day["books"][0]["highlights"][0]["text"].startswith("The supply boat")
+    path = app.folder / "B.md"
+    path.write_text(path.read_text(encoding="utf-8").replace("created: " + b["created"], "created: 2026-01-05T12:00:00Z"), encoding="utf-8")
+    then = (datetime.datetime(2026, 3, 9, 12) - datetime.datetime(1970, 1, 1)).total_seconds()
+    os.utime(app.folder / "Alone.md", (then, then))
+    app.jobs.vault().refresh(force=True)
+    line = app("GET", "/api/timeline")[1]
+    assert [d["day"] for d in line["days"]] == [today, "2026-03-09", "2026-01-05"]
+    assert [n["id"] for n in line["days"][1]["edited"]] == [alone["id"]] and [n["id"] for n in line["days"][2]["written"]] == [b["id"]]
+    assert b["id"] in {n["id"] for n in line["days"][0]["edited"]} and b["id"] not in {n["id"] for n in line["days"][0]["written"]}
+    assert [d["day"] for d in app("GET", "/api/timeline?before=2026-03-09")[1]["days"]] == ["2026-01-05"]
+    assert app("GET", "/api/timeline?before=yesterday")[0] == 400

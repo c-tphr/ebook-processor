@@ -518,3 +518,53 @@ def test_an_embed_shows_the_note_a_part_of_it_or_one_block(vault):
     assert vault.peek("Whole", "^b1", full=True)["body"] == "A block." and "body" not in vault.peek("Whole", "^b1")
     assert vault.peek("Whole", "No such part", full=True) == {"found": False, "id": vault.resolve("Whole").id, "title": "Whole", "kind": "idea",
                                                               "text": vault.resolve("Whole").excerpt, "heading": "No such part", "body": ""}
+
+
+# ---- seeing the whole: the graph, a neighbourhood, what to come back to
+
+
+def test_the_graph_joins_notes_and_books_and_a_neighbourhood_is_two_steps(vault):
+    vault.put_book("b-20261118-101500-almanac", "The Almanac", lambda name: BOOK)
+    a = vault.create("A", "Links to [[B]] and [[B]] again, and cites [[The Almanac#^h3f9a]].")
+    b = vault.create("B", "Links to [[C]] and back to [[A]].")
+    c = vault.create("C", "Links to [[D]].")
+    d = vault.create("D", "Three steps from A.")
+    e = vault.create("E", "Cites the same book: [[The Almanac#^n81c2]].")
+    alone = vault.create("Alone", "No links, to [[Nothing there]].")
+    graph = vault.graph()
+    assert {n["title"]: n["links"] for n in graph["nodes"]} == {"A": 2, "B": 2, "C": 2, "D": 1, "E": 1, "Alone": 0, "The Almanac": 2}
+    book = "b-20261118-101500-almanac"
+    assert sorted(map(tuple, graph["edges"])) == sorted(tuple(sorted(pair)) for pair in
+                                                        [(a["id"], b["id"]), (b["id"], c["id"]), (c["id"], d["id"]), (a["id"], book), (e["id"], book)])
+    near = vault.neighbourhood(a["id"])
+    assert near["centre"] == a["id"] and {n["title"]: n["step"] for n in near["nodes"]} == {"A": 0, "B": 1, "The Almanac": 1, "C": 2}
+    assert near["more"] and len(near["edges"]) == 3                               # D lies further; E is only reached through the book
+    assert {n["title"] for n in vault.neighbourhood(book)["nodes"]} == {"The Almanac", "A", "E", "B"}  # from the book itself, its notes and theirs
+    assert vault.neighbourhood(alone["id"]) == {"centre": alone["id"], "nodes": [{"id": alone["id"], "title": "Alone", "kind": "idea", "untitled": False, "step": 0}],
+                                                "edges": [], "more": False}
+    assert len(vault.neighbourhood(a["id"], most=2)["nodes"]) == 2
+    with pytest.raises(V.Missing):
+        vault.neighbourhood("n00000000")
+
+
+def test_unlinked_and_old_notes_are_brought_back_a_few_each_day(vault):
+    vault.put_book("b-20261118-101500-almanac", "The Almanac", lambda name: BOOK)
+    linked = vault.create("Linked", "To [[Other]].")
+    other = vault.create("Other", "x")
+    cites = vault.create("Cites only", "From [[The Almanac#^h3f9a]].")           # a source is not a link to another idea
+    alone = vault.create("Alone", "x")
+    vault.create("", "a quick thought", "quick")                                   # not an idea yet: not asked about
+    vault.create("A project", "", "project")
+    old = (dt.datetime(2026, 9, 1) - dt.datetime(1970, 1, 1)).total_seconds()
+    os.utime(vault.root / "Other.md", (old, old))
+    vault.refresh(force=True)
+    got = vault.revisit(dt.date(2026, 11, 19))
+    assert sorted(n["title"] for n in got["unlinked"]) == ["Alone", "Cites only"] and [n["title"] for n in got["old"]] == ["Other"]
+    assert sorted(n["title"] for n in got["today"]) == ["Alone", "Cites only", "Other"] and got["old_days"] == 30
+    assert {n["title"]: n["why"] for n in got["today"]} == {"Alone": "unlinked", "Cites only": "unlinked", "Other": "old"}
+    two = vault.revisit(dt.date(2026, 11, 19), pick=2)["today"]
+    assert two == vault.revisit(dt.date(2026, 11, 19), pick=2)["today"]           # the same all day
+    picks = {tuple(n["id"] for n in vault.revisit(dt.date(2026, 11, day), pick=1)["today"]) for day in range(1, 29)}
+    assert len(picks) == 3                                                         # and other notes on other days
+    assert vault.revisit(dt.date(2026, 9, 15))["old"] == [] and linked["id"] not in {n["id"] for n in got["today"]}
+    assert Vault(vault.root / "none").revisit() == {"unlinked": [], "old": [], "old_days": 30, "today": []}

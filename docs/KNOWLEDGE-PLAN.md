@@ -2,7 +2,7 @@
 
 This is the working plan for the knowledge system, agreed with the project owner in a six-round interview on 2026-11-18. It is written for whoever builds it, so that the work can start from this file alone. It holds what was decided, the phases, a design for each phase, and the questions that are still open. Keep it up to date as phases are finished: mark what is done, and move what was passed over to `DEFERRED.md`.
 
-**Status: Phases 1 and 2 are on `main`. Phase 3 (index notes, projects, more of Markdown in the editor) is built and on the development branch (section 6d); it goes to `main` when the owner says. Phase 4 starts with its interview.**
+**Status: Phases 1 to 3 are on `main`. Phase 4 (the graph, the neighbourhood, revisiting, the timeline) is being built in the order of section 6e.**
 
 ## 1. What it is for
 
@@ -290,6 +290,28 @@ Order of work:
 3. [x] `notes.js` and `index.html`: index notes, the project page (status, gathered, outline, project notes, export), "Add to a project", the front page.
 4. [x] Browser tests, README, `DEFERRED.md`.
 
+## 6e. Phase 4: answers of the interview, and the order of work
+
+Asked on 2026-11-19, after Phase 3 went to `main` (`3598492`).
+
+| Question | Answer |
+| --- | --- |
+| The points of the graph | Notes and books. A note that cites a book is joined to it. Tags are a filter, not points |
+| Using the graph | Explore and open: zoom and pan, point at a note to light what it is joined to, click to open, filter by kind, tag and book, type to find a note. Points can be dragged; the layout is worked out again each time |
+| The neighbourhood of a note | On the note's page, on request: a button opens a diagram two steps out, every point clickable |
+| Bringing notes back | Both: three notes on the Notes front page, changed once a day, and a page with the full lists |
+| The timeline | Notes written, notes edited (the last change only), highlights and notes made in books, quick notes |
+| "Left alone for long" | By when the file was last changed |
+| "Unlinked" | No link to another note and none from one. Citing a book does not count as a link |
+
+Builder's choices: the graph is drawn on a canvas with a small force layout written for the app; the neighbourhood is an SVG diagram, so that its points are links a keyboard and a test can reach, and it does not pass through a book (a book would pull in every note that cites it). A note counts as old after 30 days without a change. The three notes of the day are chosen by the date, so they stay the same all day. Days of the timeline are days of this computer's clock.
+
+Order of work:
+
+1. [ ] `vault.py`: the graph, a note's neighbourhood, unlinked and old notes. Server: the routes and the timeline. Tests.
+2. [ ] The pages: graph, revisit, timeline in `index.html`; the neighbourhood in `notes.js`; "Worth another look" and the ways in on the Notes front page.
+3. [ ] Browser tests, README, `DEFERRED.md`.
+
 ## 7. Record of progress
 
 | Date | What |
@@ -301,3 +323,4 @@ Order of work:
 | 2026-11-18 | Phase 2 built: `process.py`, citing and related notes in `vault.py`, `/api/process`, the Process view (`showProcess` in `index.html`), related notes in `notes.js`. The Process status is per book in `process.json` (set aside only); for a quick note it is the property `aside` |
 | 2026-11-19 | Phase 2 pushed to `main` at `dcf0eda` on the owner's word. Phase 3 interview done (three rounds); building starts |
 | 2026-11-19 | Phase 3 built: sections, `gather`, `export`, `projects` and embeds in `vault.py`; the project page, index notes and "Add to a project" in `notes.js` (`projectParts`, `sectionOf`, `outlineOf`); tables, embeds, callouts, footnotes and tasks in `editor/src/index.js` (block decorations come from a state field, which also holds whether the editor has the keyboard) |
+| 2026-11-19 | Phase 3 pushed to `main` at `3598492` on the owner's word. Phase 4 interview done (two rounds); building starts |

@@ -851,7 +851,7 @@ class Jobs:
                   "entries": len(vault.get(r["id"]).blocks)} for r in rows if r["kind"] == "book"]
         aside = {r["id"] for r in rows if r["kind"] == "quick" and vault.prop_of(r["id"], "aside") is True}
         return {"folder": str(vault.root), "inbox": [r for r in rows if r["inbox"] and r["id"] not in aside],
-                "waiting": self.process_view()["counts"]["waiting"],
+                "waiting": self.process_view()["counts"]["waiting"], "revisit": vault.revisit(self.today())["today"],
                 "recent": [r for r in rows if not r["inbox"] and r["kind"] in ("idea", "quick")][:40],
                 "indexes": [r for r in rows if r["kind"] == "index" and not r["inbox"]], "projects": vault.projects(),
                 "notes": sum(1 for r in rows if r["kind"] != "book"), "tags": vault.tags(),
@@ -963,6 +963,47 @@ class Jobs:
             if p["in_library"] and p["block"]:
                 p["job"], p["go"] = job_id, self._place(job_id, p["block"])
         return found
+
+    def timeline(self, before: str | None = None, most: int = 30) -> dict[str, Any]:
+        """What was written and marked, day by day, the newest day first: notes on the day they were made (quick
+        notes apart), notes on the day of their last change when that is another day, and for each book what
+        was highlighted and noted in it. ``before`` gives the days earlier than a day. Days are those of this
+        computer's clock."""
+        def day(stamp: str) -> str | None:
+            try:
+                at = _dt.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_dt.timezone.utc)
+            except (TypeError, ValueError):
+                return None
+            return at.astimezone().date().isoformat()
+
+        days: dict[str, dict[str, Any]] = {}
+        on = lambda d: days.setdefault(d, {"day": d, "written": [], "edited": [], "quick": [], "books": {}})
+        vault = self.vault()
+        vault.refresh()
+        with vault.lock:
+            for note in vault.notes.values():
+                if note.kind == "book":
+                    continue
+                made, changed = day(note.created) or day(note.modified), day(note.modified)
+                if made:
+                    on(made)["quick" if note.kind == "quick" else "written"].append(vault.brief(note))
+                if changed and changed != made:
+                    on(changed)["edited"].append(vault.brief(note))
+        clip = lambda text: text if len(text) <= 200 else text[:200].rsplit(" ", 1)[0] + " …"
+        for job_id in [j for j in list(self.jobs) if self._readable(j)]:
+            marked = notes.load(self.folder(job_id))
+            rows = [(h.get("created"), "highlights", h) for h in marked["highlights"]] + [(n.get("created"), "notes", n) for n in marked["notes"]]
+            for stamp, what, row in rows:
+                d = day(stamp or "")
+                if d:
+                    book = on(d)["books"].setdefault(job_id, {"job": job_id, "title": self.jobs[job_id].get("title") or "", "highlights": [], "notes": []})
+                    book[what].append({"id": row["id"], "text": clip(row["text"])})
+        ordered = [d for d in sorted(days.values(), key=lambda d: d["day"], reverse=True) if before is None or d["day"] < before]
+        for d in ordered[:most]:
+            d["books"] = sorted(d["books"].values(), key=lambda b: b["title"].casefold())
+            for name in ("written", "edited", "quick"):
+                d[name].sort(key=lambda n: n["modified"], reverse=True)
+        return {"days": ordered[:most], "more": len(ordered) > most}
 
     def vault_search(self, query: str, kind: str | None, tag: str | None, book: str | None) -> dict[str, Any]:
         found = self.vault().search(query[:200], kind or None, tag or None, book or None)
@@ -1744,6 +1785,18 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(jobs.vault_create(self.json_body()), HTTPStatus.CREATED)
             case ("GET", ["vault", "notes", note_id]):
                 return self.send_json(jobs.vault_note(note_id))
+            case ("GET", ["vault", "graph"]):
+                return self.send_json(jobs.vault().graph())
+            case ("GET", ["vault", "revisit"]):
+                return self.send_json(jobs.vault().revisit(jobs.today()))
+            case ("GET", ["timeline"]):
+                before = (query.get("before") or [None])[0]
+                if before is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", before):
+                    raise ApiError(HTTPStatus.BAD_REQUEST, "'before' is a day, as 2026-11-19")
+                return self.send_json(jobs.timeline(before))
+            case ("GET", ["vault", "notes", note_id, "neighbourhood"]):
+                vault = jobs.vault()
+                return self.send_json(jobs._vaulted(lambda: vault.neighbourhood(note_id)))
             case ("GET", ["vault", "projects"]):
                 return self.send_json({"projects": jobs.vault().projects()})
             case ("POST", ["vault", "projects", project_id, "gather"]):

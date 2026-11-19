@@ -863,6 +863,71 @@ class Vault:
             out["body"] = body.strip("\n")[:8000]
         return out
 
+    # ---- seeing the whole, and coming back to what was left
+
+    def _joined(self) -> dict[str, set[str]]:
+        """For each note, the notes it is joined to by a link in either direction, by path."""
+        joined: dict[str, set[str]] = {path: set() for path in self.notes}
+        for note in self.notes.values():
+            for link in note.links:
+                to = self.resolve(link.target) if link.target else None
+                if to is not None and to is not note:
+                    joined[note.path].add(to.path)
+                    joined[to.path].add(note.path)
+        return joined
+
+    def graph(self) -> dict[str, Any]:
+        """Every note and every book as a point, and each pair joined by a link, once."""
+        self.refresh()
+        with self.lock:
+            joined = self._joined()
+            nodes = [{"id": n.id, "title": n.title, "kind": n.kind, "untitled": n.untitled, "tags": n.tags, "links": len(joined[n.path])}
+                     for n in sorted(self.notes.values(), key=lambda n: n.path)]
+            edges = sorted({tuple(sorted((self.notes[a].id, self.notes[b].id))) for a, others in joined.items() for b in others})
+            return {"nodes": nodes, "edges": [list(e) for e in edges]}
+
+    def neighbourhood(self, note_id: str, steps: int = 2, most: int = 60) -> dict[str, Any]:
+        """A note, what it is joined to, and what those are joined to. A book is shown but not passed through:
+        it would bring in every note that cites it."""
+        self.refresh()
+        with self.lock:
+            centre = self.get(note_id)
+            joined = self._joined()
+            step = {centre.path: 0}
+            ring = [centre.path]
+            for n in range(1, steps + 1):
+                found = []
+                for path in ring:
+                    if n > 1 and self.notes[path].kind == "book":
+                        continue
+                    for other in sorted(joined[path], key=lambda p: (-len(joined[p]), p)):
+                        if other not in step and len(step) < most:
+                            step[other] = n
+                            found.append(other)
+                ring = found
+            nodes = [{"id": self.notes[p].id, "title": self.notes[p].title, "kind": self.notes[p].kind, "untitled": self.notes[p].untitled, "step": n}
+                     for p, n in step.items()]
+            edges = sorted({tuple(sorted((self.notes[a].id, self.notes[b].id))) for a in step for b in joined[a] if b in step})
+            return {"centre": centre.id, "nodes": nodes, "edges": [list(e) for e in edges],
+                    "more": sum(1 for p in step for o in joined[p] if o not in step and not (self.notes[p].kind == "book" and step[p] > 0)) > 0}
+
+    def revisit(self, today: _dt.date | None = None, old_days: int = 30, pick: int = 3) -> dict[str, Any]:
+        """Notes to come back to: those joined to no other note (citing a book does not count), and those not
+        changed for ``old_days``, oldest first. ``today`` holds a few of them, the same ones all day."""
+        self.refresh()
+        today = today or _dt.date.today()
+        with self.lock:
+            joined = self._joined()
+            mine = [n for n in self.notes.values() if n.kind in ("idea", "index") and not n.inbox]
+            alone = [n for n in mine if not any(self.notes[o].kind != "book" for o in joined[n.path])]
+            limit = (_dt.datetime.combine(today, _dt.time.min) - _dt.timedelta(days=old_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            old = sorted((n for n in mine if n.modified < limit), key=lambda n: n.modified)
+            seen: dict[str, Note] = {n.id: n for n in alone + old}
+            order = sorted(seen.values(), key=lambda n: hashlib.sha1(f"{today.isoformat()} {n.id}".encode()).hexdigest())
+            return {"unlinked": [self.brief(n) for n in sorted(alone, key=lambda n: n.modified, reverse=True)],
+                    "old": [self.brief(n) for n in old], "old_days": old_days,
+                    "today": [{**self.brief(n), "why": "unlinked" if n in alone else "old"} for n in order[:pick]]}
+
     # ---- projects
 
     def _project(self, project_id: str) -> Note:

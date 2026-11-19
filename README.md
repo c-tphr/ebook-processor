@@ -67,9 +67,18 @@ ebook-processor update
 
 This stops the app if it is running, fetches the latest `main` into the git checkout the tool was installed from, installs it, and starts the app again on the same port and data folder, in the terminal where you gave the command. With `--no-serve` it updates and stops there.
 
-- The checkout must be on `main` with no uncommitted changes to tracked files; otherwise nothing is touched and the message says what to do.
+- The checkout must have no uncommitted changes to tracked files; otherwise nothing is touched and the message says what to do.
+- If the checkout is on another branch, it is switched to `main`. A branch that holds commits found on no branch of the remote (work of your own) is not left: the message says so and nothing is touched.
 - The app is not stopped while it is processing a book. Wait for the book, or give `--force`; the run continues afterwards with its Continue button.
 - The running app is found through a small record it keeps in `~/.ebook-processor/servers/` while it runs. An app started by a version from before this command existed has no record: stop it with Ctrl-C first.
+
+To try what is being worked on before it reaches `main`:
+
+```bash
+ebook-processor beta
+```
+
+This is the same command with the development branch in place of `main`: it stops the app, switches the checkout to that branch, brings it up to date, installs it and starts the app again. The development branch is newer and less tested. `ebook-processor update` switches back to `main`; when the version you leave was ahead, the command says by how many commits, because what a newer version wrote in your data folder is not guaranteed to be read by an older one. `--no-serve` and `--force` work as for `update`, and `--branch NAME` takes another branch than the usual one (`claude/dreamy-allen-6un3tt` at present).
 
 The first time, the command itself has to arrive by hand: stop the app, then
 
@@ -492,7 +501,7 @@ After every push GitHub runs both (`.github/workflows/tests.yml`): the test suit
 | `ebook_processor/assist.py`, `instructions/connections.md`, `answer.md`, `note_question.md`, `note_check.md` | The model's help in the notes folder: what is sent for a connection, an answer or a note's question, the reply shapes, and the checks made on each reply |
 | `editor/` | The source of the note editor: CodeMirror 6 with the additions a notes folder needs (see below) |
 | `ebook_processor/reading.py` | A prepared EPUB as the reader needs it (clean chapter HTML with word positions, sections, search) and the saved reading state |
-| `ebook_processor/update.py` | `ebook-processor update`: find and stop the running app, fast-forward the checkout, install, start again |
+| `ebook_processor/update.py` | `ebook-processor update` and `beta`: find and stop the running app, bring the checkout to the latest `main` or development branch, install, start again |
 | `ebook_processor/web/` | The local web app: a standard-library HTTP server, the library page (`index.html`), the reader (`reader.html`, which is also the reader beside the notebook when opened with `?pane=1` in a frame), and the scripts both share: the settings window (`settings.js`), the questions' forms (`forms.js`), a note's page and the Quick note box (`notes.js`) and the built editor (`editor.js`) |
 | `tests/data/` | A small made-up book with its expected results, broken prepared books the validator must reject, and Thomas Paine's *Essays* (Standard Ebooks, CC0) |
 

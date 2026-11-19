@@ -5,6 +5,8 @@
     ebook-processor estimate Book.epub        how many questions a run would write, and the book's chapters
     ebook-processor rebuild Book-processed --remove c0004-p2
     ebook-processor serve                     the local web app
+    ebook-processor update                    take the latest version and start the app again
+    ebook-processor beta                      the same, with the development version
 
 Exit status: 0 done, 1 a problem with the input or the run, 2 a usage error, 3 the run stopped before it was
 finished and can be continued with the same command (usage limit reached, or Ctrl-C).
@@ -29,7 +31,7 @@ from .runner import Cancelled, PipelineError, default_out_dir, rebuild, run_book
 from .settings import CONTENT_MODES, DENSITIES, EFFORTS, KINDS, MAX_QUESTIONS, Settings, SettingsError, from_options
 
 EXIT_OK, EXIT_INPUT, EXIT_USAGE, EXIT_STOPPED = 0, 1, 2, 3
-COMMANDS = ("process", "estimate", "rebuild", "serve", "models", "update")
+COMMANDS = ("process", "estimate", "rebuild", "serve", "models", "update", "beta")
 
 
 def add_run_options(p: argparse.ArgumentParser) -> None:
@@ -154,14 +156,22 @@ def make_parser() -> argparse.ArgumentParser:
                                    "--model and --checker-model take.")
     p.set_defaults(func=cmd_models)
 
-    p = sub.add_parser("update", help="update to the latest version and start the app again",
-                       description="Stop the app if it is running, fetch the latest 'main' into the git checkout "
-                                   "the tool is installed from, install it, and start the app again as it was "
-                                   "running. The checkout must be on 'main' with no uncommitted changes.")
-    p.add_argument("--no-serve", action="store_true", help="update only; do not start the app afterwards")
-    p.add_argument("--force", action="store_true",
-                   help="stop the app even while it is processing a book (the run can be continued afterwards)")
-    p.set_defaults(func=cmd_update)
+    from .update import BETA_BRANCH
+    for name, branch, text in (
+            ("update", None, "update to the latest version and start the app again"),
+            ("beta", BETA_BRANCH, "switch to the development version, newer and less tested, and start the app again")):
+        p = sub.add_parser(name, help=text, description=(
+            "Stop the app if it is running, fetch the latest '" + (branch or "main") + "' into the git checkout the tool "
+            "is installed from, install it, and start the app again as it was running. The checkout is switched to "
+            "that branch when it is on another; it must have no uncommitted changes."
+            + (" This is the development branch: what is being worked on before it reaches 'main'. 'ebook-processor "
+               "update' goes back to 'main'." if branch else " After 'ebook-processor beta', this goes back to 'main'.")))
+        p.add_argument("--no-serve", action="store_true", help="update only; do not start the app afterwards")
+        p.add_argument("--force", action="store_true",
+                       help="stop the app even while it is processing a book (the run can be continued afterwards)")
+        if branch:
+            p.add_argument("--branch", default=branch, metavar="NAME", help=f"the branch to take (default: {branch})")
+        p.set_defaults(func=cmd_update)
     return parser
 
 
@@ -380,7 +390,7 @@ def cmd_models(args: argparse.Namespace) -> int:
 def cmd_update(args: argparse.Namespace) -> int:
     from . import update
     try:
-        return update.update(serve=not args.no_serve, force=args.force)
+        return update.update(serve=not args.no_serve, force=args.force, branch=getattr(args, "branch", None) or update.BRANCH)
     except update.UpdateError as exc:
         print(f"ebook-processor: {exc}", file=sys.stderr)
         return EXIT_INPUT

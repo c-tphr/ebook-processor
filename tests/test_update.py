@@ -68,8 +68,46 @@ def test_a_checkout_with_changes_or_on_another_branch_is_left_alone(checkout):
     git(clone, "checkout", "-q", "--", "file.txt")
     (clone / "untracked.txt").write_text("fine\n")  # a file git does not track is no obstacle
     git(clone, "checkout", "-q", "-b", "other")
-    with pytest.raises(update.UpdateError, match="on the branch 'other'"):
-        update.pull(clone)
+    (clone / "own.txt").write_text("work of my own\n")
+    git(clone, "add", "own.txt"), git(clone, "commit", "-q", "-m", "mine")
+    with pytest.raises(update.UpdateError, match="on the branch 'other', which has commits that are on no branch of the remote"):
+        update.pull(clone)                           # leaving it would hide that commit
+    assert git(clone, "rev-parse", "--abbrev-ref", "HEAD") == "other" and (clone / "own.txt").is_file()
+
+
+def test_beta_switches_to_the_development_branch_and_update_goes_back_to_main(tmp_path, checkout, monkeypatch):
+    clone, work = checkout
+    git(work, "checkout", "-q", "-b", "dev/next")
+    (work / "file.txt").write_text("three, not yet on main\n")
+    git(work, "commit", "-q", "-am", "third"), git(work, "push", "-q", "origin", "dev/next")
+    before, after = update.pull(clone, "dev/next")   # from main, one commit behind it, to the development branch
+    assert before != after and after == git(work, "rev-parse", "HEAD") and (clone / "file.txt").read_text() == "three, not yet on main\n"
+    assert git(clone, "rev-parse", "--abbrev-ref", "HEAD") == "dev/next" and update.pull(clone, "dev/next") == (after, after)
+    (work / "file.txt").write_text("four\n")
+    git(work, "commit", "-q", "-am", "fourth"), git(work, "push", "-q", "origin", "dev/next")
+    assert update.pull(clone, "dev/next")[1] == git(work, "rev-parse", "HEAD")           # on it already: brought up to date
+    back = update.pull(clone)                                                            # and back to main
+    assert git(clone, "rev-parse", "--abbrev-ref", "HEAD") == "main" and (clone / "file.txt").read_text() == "two\n" and back[1] == git(work, "rev-parse", "main")
+    assert update.pull(clone, "dev/next")[1] == git(work, "rev-parse", "dev/next")       # the branch is there now: checked out, not made
+    with pytest.raises(update.UpdateError, match="'no/such' could not be fetched"):
+        update.pull(clone, "no/such")
+    assert git(clone, "rev-parse", "--abbrev-ref", "HEAD") == "dev/next"
+    # the command: beta takes the development branch, and names another with --branch; update takes main
+    monkeypatch.setenv("EBOOK_PROCESSOR_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(update, "unrecorded", lambda port=update.DEFAULT_PORT: False)
+    monkeypatch.setattr(update, "repo_root", lambda: clone)
+    asked = []
+    monkeypatch.setattr(update, "update", lambda **kw: asked.append(kw) or 0)
+    assert cli.main(["beta", "--no-serve"]) == 0 and cli.main(["beta", "--branch", "dev/next"]) == 0 and cli.main(["update", "--force"]) == 0
+    assert [(kw["branch"], kw["serve"], kw["force"]) for kw in asked] == [(update.BETA_BRANCH, False, False), ("dev/next", True, False), ("main", True, True)]
+    monkeypatch.undo()
+    monkeypatch.setenv("EBOOK_PROCESSOR_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(update, "unrecorded", lambda port=update.DEFAULT_PORT: False)
+    monkeypatch.setattr(update, "repo_root", lambda: clone)
+    said, installed = [], []
+    assert update.update(serve=False, say=said.append, installer=installed.append, branch="main") == 0
+    text = "\n".join(said)
+    assert "Fetching the latest main" in text and "Now on main" in text and "2 commits of the version you had are not in this one" in text and installed == [clone]
 
 
 def test_a_running_app_is_found_by_its_record_and_stops_when_asked_with_its_token(app):

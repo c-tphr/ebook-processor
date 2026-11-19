@@ -9,8 +9,12 @@ the address, the data folder and a one-time token. The app is stopped by asking 
 itself; only if it does not answer is the process signalled. An app started by a version from before this command
 existed leaves no record and has to be stopped by hand.
 
-What it will not do: touch a checkout that is not on ``main`` or that has uncommitted changes to tracked files, or
-stop the app while it is processing a book (unless told to with ``--force``; the run can be continued afterwards).
+``ebook-processor beta`` does the same with the development branch in place of ``main``: the checkout is switched
+to that branch and brought up to date. ``ebook-processor update`` switches it back to ``main``.
+
+What it will not do: touch a checkout that has uncommitted changes to tracked files, leave a branch that holds
+commits found on no branch of the remote (work of your own, which a switch would hide), or stop the app while it
+is processing a book (unless told to with ``--force``; the run can be continued afterwards).
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 BRANCH = "main"
+BETA_BRANCH = "claude/dreamy-allen-6un3tt"  # where work goes before it reaches main; ``beta --branch`` names another
 DEFAULT_PORT = 8765
 
 
@@ -201,16 +206,27 @@ def git(repo: Path, *args: str) -> str:
 
 
 def pull(repo: Path, branch: str = BRANCH) -> tuple[str, str]:
-    """Fast-forward the checkout to the latest ``branch``. Returns the commit before and after."""
+    """Bring the checkout to the latest ``branch``, switching to that branch when it is on another. Returns the
+    commit before and after. A branch is only left when nothing would be hidden by leaving it."""
     current = git(repo, "rev-parse", "--abbrev-ref", "HEAD")
-    if current != branch:
-        raise UpdateError(f"the checkout at {repo} is on the branch '{current}', not '{branch}'. Switch to it first "
-                          f"(git -C {repo} checkout {branch}), or update by hand.")
     changed = git(repo, "status", "--porcelain", "--untracked-files=no")
     if changed:
         raise UpdateError(f"the checkout at {repo} has changes that are not committed:\n{changed}\n"
                           "Commit them or put them aside (git stash) first; nothing was changed.")
     before = git(repo, "rev-parse", "HEAD")
+    if current != branch:
+        if not git(repo, "branch", "--remotes", "--contains", "HEAD"):
+            raise UpdateError(f"the checkout at {repo} is on the branch '{current}', which has commits that are on no "
+                              f"branch of the remote. Push them or switch by hand (git -C {repo} checkout {branch}); "
+                              "nothing was changed.")
+        try:  # by its full name, so that a clone made for one branch only can fetch it too
+            git(repo, "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
+        except UpdateError as exc:
+            raise UpdateError(f"the branch '{branch}' could not be fetched. Is there such a branch?\n{exc}") from exc
+        if git(repo, "branch", "--list", branch):
+            git(repo, "checkout", "--quiet", branch)
+        else:
+            git(repo, "checkout", "--quiet", "-b", branch, "--track", f"origin/{branch}")
     git(repo, "pull", "--ff-only", "origin", branch)
     return before, git(repo, "rev-parse", "HEAD")
 
@@ -234,8 +250,9 @@ def serve_command(record: dict[str, Any] | None) -> list[str]:
 
 def update(serve: bool = True, force: bool = False, say: Callable[[str], None] = print,
            installer: Callable[[Path], None] = install,
-           launch: Callable[[list[str]], Any] = lambda cmd: os.execv(cmd[0], cmd)) -> int:
-    """Run the update. Returns the exit status (0 done). With ``serve``, it ends by becoming the app."""
+           launch: Callable[[list[str]], Any] = lambda cmd: os.execv(cmd[0], cmd), branch: str = BRANCH) -> int:
+    """Run the update to the latest ``branch``. Returns the exit status (0 done). With ``serve``, it ends by
+    becoming the app."""
     repo = repo_root()
     running = servers()
     if not running and unrecorded() and not force:
@@ -254,14 +271,17 @@ def update(serve: bool = True, force: bool = False, say: Callable[[str], None] =
         if not stop(record):
             raise UpdateError(f"the app on port {record['port']} (process {record['pid']}) did not stop; stop it "
                               "by hand and give this command again. Nothing was updated.")
-    say(f"Fetching the latest {BRANCH} ...")
-    before, after = pull(repo)
+    say(f"Fetching the latest {branch} ...")
+    before, after = pull(repo, branch)
     if before == after:
-        say(f"Already up to date ({after[:7]}).")
+        say(f"Already up to date with {branch} ({after[:7]}).")
     else:
-        say(f"Updated {before[:7]} to {after[:7]}:")
+        say(f"Now on {branch}: {before[:7]} to {after[:7]}.")
         for line in git(repo, "log", "--format=  %h %s", f"{before}..{after}").splitlines()[:20]:
             say(line)
+        back = int(git(repo, "rev-list", "--count", f"{after}..{before}") or 0)
+        if back:  # the branch left behind was ahead: say so, since data it wrote may be newer than this version
+            say(f"  ({back} commit{'' if back == 1 else 's'} of the version you had are not in this one.)")
         say("Installing ...")
         installer(repo)
     if not serve:

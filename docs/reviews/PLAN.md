@@ -400,3 +400,28 @@ Notes on stages 2 and 3:
 - 3.6: `speed/R7` (small repeats) needs no change after 3.5: the Notes front page takes 0.09 s and a search 0.04 s with 50 books.
 - 3.7: the walk, the kept map of joins and the snippets are done: 28 ms for the walk and 40 ms for a search at 10,000 notes. The checks of one file only (`get`, the token, `save`) are left out: with the quick walk they would save little, and they change when an outside change is seen.
 - 3.8: a document of a book may be 16 MB, an entry 64 MB, a book 1 GB. Pictures: 150 addresses, not 80, so that a page with many small images before its real pictures keeps them.
+
+### Stages 4, 5 and 6 (done 2026-11-22)
+
+- 4.1: The Process view draws a long list in parts, and a choice changes two rows
+- 4.2: One element builder and one API call for every script of the pages, in `base.js`
+- 4.3: The library replaces only the rows that changed
+- 4.5: The graph and the Process view are scripts of their own (`graph.js`, `process.js`)
+- 5.1, 5.2, 5.3: the twelve clean-ups, one commit each ("plan 5.1, S4" to "plan 5.3, N1"): four new small modules, `asking.py`, `bookinfo.py`, `frontmatter.py`, `notetext.py`
+- 5.4: The routes are grouped by area and each is three steps
+- 5.5: `Jobs` is five parts in five files (`library.py`, `runs.py`, `study.py`, `questions.py`, `notes_folder.py`), with `common.py` for what they share; `server.py` went from 2,702 lines to 704
+- 6.2: the fixture generator's check, the linter and the editor's build run in CI
+- 6.3: the README's module table, the stale docstrings, `DEFERRED.md`
+
+Each commit names its plan item in its subject; `git log --grep "plan 4\."` and the like list them.
+
+Notes on stages 4, 5 and 6:
+
+- 4.1: the request still sends the items of all three states; the page uses them (the item just processed stays on show).
+- 4.2: the two notices at the edge of the window are not merged; the two pages style them apart.
+- 4.4 (a shared card for a highlight's questions, one style sheet, the panels of a note's page) is not done, as the plan says: no fault depends on it.
+- 5.5: the parts are mix-in classes, not objects that hold each other. Every method moved with its text unchanged, which a script compared (137 of 140 the same; the other three took their route's checks in 5.4). A split into objects would have meant editing every call between the parts, for the same files.
+- 5.2: as decided, the check of a note's question and the run's own check are not merged with the other two.
+- 6.2: the fixture is kept byte for byte as the firmware repository has it, so the generator writes that repository's paths into it again; the inventory README and `prepared.py` are not kept here.
+- Found on the way and fixed: an article taken out of the library had its file moved to `Books/`; a model's reply for a note's question that left a member out ended in a fault; a path with `~name` for an unknown user ended in "Unexpected error".
+- CI showed two things that only Windows shows. A new test of file writes hung the whole run there (Windows does not replace a file that is open, and the test did not stop its reader thread when it failed); it is fixed and skipped on Windows, and the retry has a test of its own. And git gave the generated fixture files Windows line ends, which the new check caught; `.gitattributes` pins them.

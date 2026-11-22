@@ -20,7 +20,8 @@ from typing import Any
 from . import forms as qforms
 from . import prompts
 from .llm import Backend, BackendError
-from .pipeline import BookIndex, clean_text, normal_question, question_problems
+from .pipeline import (BookIndex, clean_text, kept, new_question, next_checkpoint, normal_question, question_problems,
+                       sort_questions)
 from .store import now
 from .prep.epub import Block, Book, SpineDoc
 from .settings import Settings
@@ -104,7 +105,7 @@ def view(book: Book, state: dict[str, Any], qid: str) -> dict[str, Any]:
     section = section_of(state, q["section"])
     return {"id": q["id"], "section": {"id": section["id"], "label": section["label"]},
             **qforms.as_question(q), "status": q["status"],
-            "kept": q["status"] in ("passed", "unchecked", "unverified", "edited") and not q.get("removed"),
+            "kept": kept(q),
             "edited": q.get("edited"), "added": bool(q.get("added")), "has_original": "original" in q,
             "left_out_because": q["problem"] if q["status"] in ("failed", "withdrawn") else "",
             "verdict": q.get("verdict"), "supporting_paragraphs": q["supporting_paragraphs"],
@@ -165,15 +166,12 @@ def add(state: dict[str, Any], book: Book, sid: Any, raw: dict[str, Any]) -> dic
         raise EditError("the kinds of question are: " + ", ".join(qforms.NAMES.values()))
     made = _wording(raw, {b.ref for b in blocks}, _passage(raw.get("supporting_paragraphs"), inside, inside))
     if section["checkpoint"] is None:  # a section that had no questions gets its checkpoint now
-        section["checkpoint"] = f"c{state['next']['checkpoint']:04d}"
-        state["next"]["checkpoint"] += 1
+        section["checkpoint"] = next_checkpoint(state)
     taken = [int(x["id"].rsplit("-p", 1)[1]) for x in state["questions"] if x["section"] == section["id"]]
-    q = {"id": f"{section['checkpoint']}-p{max(taken, default=0) + 1}", "section": section["id"], **made, "status": "edited",
-         "checks": 0, "criteria": {}, "citations": [], "evidence": "", "problem": "", "suggested_fix": "", "minor_note": "",
-         "history": [], "removed": False, "added": now(), "edited": now()}
+    q = new_question(f"{section['checkpoint']}-p{max(taken, default=0) + 1}", section["id"], made, status="edited",
+                     added=now(), edited=now())
     state["questions"].append(q)
-    position = {s["id"]: n for n, s in enumerate(state["sections"])}
-    state["questions"].sort(key=lambda x: (position[x["section"]], int(x["id"].rsplit("-p", 1)[1])))
+    sort_questions(state)
     return q
 
 
@@ -260,8 +258,7 @@ def rewrite(backend: Backend, book: Book, state: dict[str, Any], qid: str, wish:
         current = {**{k: v for k, v in q.items() if k not in qforms.MEMBERS},
                    **_wording({**draft, "form": {**qforms.members(q), **(draft.get("form") or {})}}, inside, q["supporting_paragraphs"])}
     only = replace(settings, forms=(qforms.form_of(q),))  # the form stays what it is
-    others = [x for x in state["questions"] if x["section"] == q["section"] and x["id"] != qid and
-              x["status"] in ("passed", "unchecked", "unverified", "edited") and not x.get("removed")]
+    others = [x for x in state["questions"] if x["section"] == q["section"] and x["id"] != qid and kept(x)]
     message = prompts.rewrite_message(book, {**item, "question": {**current, "id": qid}, "others": others}, only, wish)
     feedback = ""
     for _ in range(2):

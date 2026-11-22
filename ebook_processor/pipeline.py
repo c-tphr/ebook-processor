@@ -422,6 +422,27 @@ def kept(q: dict[str, Any]) -> bool:
     return q["status"] in KEPT and not q.get("removed")
 
 
+def next_checkpoint(state: dict[str, Any]) -> str:
+    """A new checkpoint id, for a section that gets its first question."""
+    made = f"c{state['next']['checkpoint']:04d}"
+    state["next"]["checkpoint"] += 1
+    return made
+
+
+def new_question(qid: str, section_id: str, wording: dict[str, Any], **more: Any) -> dict[str, Any]:
+    """A question as the state keeps it from its first moment: its id, its section, its wording, and the members
+    a check fills in later. ``more`` sets members to something else, or adds some."""
+    return {"id": qid, "section": section_id, **wording, "status": "unchecked", "checks": 0,
+            "criteria": {}, "citations": [], "evidence": "", "problem": "", "suggested_fix": "",
+            "minor_note": "", "history": [], "removed": False, **more}
+
+
+def sort_questions(state: dict[str, Any]) -> None:
+    """Put the questions in reading order: by their section, then by their number at its checkpoint."""
+    position = {s["id"]: n for n, s in enumerate(state["sections"])}
+    state["questions"].sort(key=lambda q: (position[q["section"]], int(q["id"].rsplit("-p", 1)[1])))
+
+
 # --------------------------------------------------------------------------
 # The run
 
@@ -653,20 +674,15 @@ class Run:
             section = {"id": sid, **base, "label": entry["label"], "checkpoint": None, "judged": False,
                        "natural_boundary": None, "boundary_note": "", **carried}
             if entry["prompts"]:
-                section["checkpoint"] = f"c{state['next']['checkpoint']:04d}"
-                state["next"]["checkpoint"] += 1
+                section["checkpoint"] = next_checkpoint(state)
             state["sections"].append(section)
             for n, q in enumerate(entry["prompts"], start=1):
                 found = q.get("carried") or {}
-                state["questions"].append({
-                    "id": f"{section['checkpoint']}-p{n}", "section": sid,
-                    **{k: v for k, v in q.items() if k != "carried"}, "status": "unchecked", "checks": 0,
-                    "criteria": {}, "citations": [], "evidence": "", "problem": "", "suggested_fix": "",
-                    "minor_note": "", "history": [], "removed": False, **copy.deepcopy(found)})
+                state["questions"].append(new_question(f"{section['checkpoint']}-p{n}", sid,
+                                                       {k: v for k, v in q.items() if k != "carried"}, **copy.deepcopy(found)))
         state["sections"].sort(key=self.index.order)
         state["excluded"].sort(key=self.index.order)
-        position = {s["id"]: n for n, s in enumerate(state["sections"])}
-        state["questions"].sort(key=lambda q: (position[q["section"]], int(q["id"].rsplit("-p", 1)[1])))
+        sort_questions(state)
 
     def assemble(self) -> None:
         with self.lock:

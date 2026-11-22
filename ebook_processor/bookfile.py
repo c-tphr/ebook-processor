@@ -109,8 +109,7 @@ def text(job_id: str, book: ReadingBook, store: dict[str, Any], kind: str = "boo
         for s in c["sections"]:
             part = (_entry(s["note"]["text"], s["note"]["id"]) if s["note"] else []) + items(s["items"])
             if part:
-                single = len(c["sections"]) == 1 and s["label"] == c["title"]
-                body += ([] if single else [f"### {_escape(_one_line(s['label']))}", ""]) + part
+                body += ([] if notes.single_section(c, s) else [f"### {_escape(_one_line(s['label']))}", ""]) + part
         if body:
             lines += [f"## {_escape(_one_line(c['title']))}", ""] + body
     return vault.compose(props, "\n".join(lines).rstrip() + "\n")

@@ -1,5 +1,5 @@
 """Facts about a book that the reader, the review page and the exports all need: who wrote it, and what its
-chapters are called."""
+chapters are called. Also the lines that name a book at the top of a task for a model."""
 
 from __future__ import annotations
 
@@ -23,3 +23,9 @@ def chapter_titles(book: Book) -> dict[str, str]:
 
 def authors(book: Book) -> list[str]:
     return [squash(el.text()) for el in book.opf.root.find_all(DC_NS, "creator") if squash(el.text())]
+
+
+def book_line(book: Book) -> str:
+    """The head of a task message: which book it is about. Every task that names its book opens with these
+    lines, to the letter."""
+    return f"BOOK\nTitle: {book.title or '(no title)'}\nLanguage: {book.language or 'unknown'}"

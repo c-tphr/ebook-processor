@@ -43,32 +43,18 @@ KEY = "font-weight: bold; line-height: 1.4; margin: 0 0 0.8em 0; text-indent: 0;
 LETTERS = "ABCD"
 
 
-def insertion_point(block: Block) -> tuple[int, Element, bool] | None:
+def insertion_point(block: Block, before: bool = False) -> tuple[int, Element, bool] | None:
     """(byte offset, element whose namespace prefix the new tags take, whether the place is further out than the
-    block), or ``None`` when no element around the block may hold a ``div``."""
+    block), or ``None`` when no element around the block may hold a ``div``. The place is after the block; with
+    ``before`` it is in front of it, for a ``div`` that goes before the first block of a section."""
     el = block.element
     moved = False
     while True:
         parent = el.parent
         if parent is not None and parent.local in FLOW:
-            return el.end_end, parent, moved
+            return el.start if before else el.end_end, parent, moved
         if el.local in FLOW and not el.is_empty_tag:
-            return el.end, el, moved
-        if parent is None:
-            return None
-        el, moved = parent, True
-
-
-def insertion_point_before(block: Block) -> tuple[int, Element, bool] | None:
-    """As ``insertion_point``, for a ``div`` that goes before the block: the first of a section."""
-    el = block.element
-    moved = False
-    while True:
-        parent = el.parent
-        if parent is not None and parent.local in FLOW:
-            return el.start, parent, moved
-        if el.local in FLOW and not el.is_empty_tag:
-            return el.start_end, el, moved
+            return el.start_end if before else el.end, el, moved
         if parent is None:
             return None
         el, moved = parent, True
@@ -171,7 +157,7 @@ def build_visible(book: Book, draft: dict[str, Any], plan: list[PlannedSection],
             (offset, 2 * number, checkpoint_html(host, checkpoint, section.label, number, more)))
         placed.append(checkpoint["id"])
         if preview:
-            before = insertion_point_before(section.blocks[0])
+            before = insertion_point(section.blocks[0], before=True)
             if before is None:
                 notes.append(f"The preview of checkpoint {checkpoint['id']} is missing from the book with visible "
                              f"checkpoints: nothing around {section.blocks[0].ref} can hold it.")

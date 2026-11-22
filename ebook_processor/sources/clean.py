@@ -224,24 +224,26 @@ def replace(el: Any, text: str) -> None:
     parent.remove(el)
 
 
+def _paragraph(group: list[Any]) -> Any:
+    """A paragraph that holds texts and elements, in the order they are given."""
+    p = ET.Element("p")
+    last = None
+    for item in group:
+        if not isinstance(item, str):
+            p.append(item)
+            last = item
+        elif last is None:
+            p.text = (p.text or "") + item
+        else:
+            last.tail = (last.tail or "") + item
+    return p
+
+
 def _breaks(root: Any) -> None:
     """Two line breaks in a row mean a new paragraph in pages written without ``p``."""
 
     def is_break(item: Any) -> bool:
         return not isinstance(item, str) and item.tag == "br"
-
-    def paragraph(group: list[Any]) -> Any:
-        p = ET.Element("p")
-        last = None
-        for item in group:
-            if not isinstance(item, str):
-                p.append(item)
-                last = item
-            elif last is None:
-                p.text = (p.text or "") + item
-            else:
-                last.tail = (last.tail or "") + item
-        return p
 
     for el in [root] + list(root.iter("div", "blockquote", "li", "dd", "td", "p")):
         kids = list(el)
@@ -272,7 +274,7 @@ def _breaks(root: Any) -> None:
             for item in run + [None]:
                 if item is None or (not isinstance(item, str) and item.tag in BLOCK):
                     if any(not isinstance(x, str) or x.strip() for x in group):
-                        made.append(paragraph(group))
+                        made.append(_paragraph(group))
                     group = []
                     if item is not None:
                         made.append(item)
@@ -398,16 +400,8 @@ def loose(root: Any) -> None:
     for item in items + [None]:
         if item is None or (not isinstance(item, str) and item.tag in BLOCK):
             if any(not isinstance(x, str) or x.strip() for x in group):
-                p = ET.SubElement(root, "p")
-                last = None
-                for x in group:
-                    if not isinstance(x, str):
-                        p.append(x)
-                        last = x
-                    elif last is None:
-                        p.text = (p.text or "") + x
-                    else:
-                        last.tail = (last.tail or "") + x
+                p = _paragraph(group)
+                root.append(p)
                 p.text = (p.text or "").lstrip() or None
             group = []
             if item is not None:

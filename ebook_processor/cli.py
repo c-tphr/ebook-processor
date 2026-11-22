@@ -318,11 +318,15 @@ def _say(made: sources.Made) -> sources.Made:
     return made
 
 
+def _how(args: argparse.Namespace) -> dict[str, Any]:
+    """How the options say a file or a page is converted: cut into chapters or not, and how much of a page."""
+    return {"split_how": "none" if args.one_piece else "auto", "whole": True if args.whole_page else None}
+
+
 def converted(path: Path, args: argparse.Namespace) -> sources.Made:
     """A file that is no EPUB, as the EPUB that is processed in its place."""
     try:
-        return _say(sources.convert(path.name, path.read_bytes(), folder=path.parent, split_how="none" if args.one_piece else "auto",
-                                    whole=True if args.whole_page else None))
+        return _say(sources.convert(path.name, path.read_bytes(), folder=path.parent, **_how(args)))
     except (sources.SourceError, OSError) as exc:
         raise PipelineError(str(exc)) from exc
 
@@ -331,7 +335,7 @@ def fetched(url: str, args: argparse.Namespace, out_dir: Path | None) -> tuple[s
     """The page at a web address as an EPUB, and the folder of its run. The page is kept in that folder, and a
     later run with the same address reads it from there: the same page gives the same EPUB, so a run that was
     stopped goes on, whatever the site shows by then."""
-    how = {"split_how": "none" if args.one_piece else "auto", "whole": True if args.whole_page else None}
+    how = _how(args)
     try:
         kept = out_dir / "source" / "page.json" if out_dir is not None else None
         page = None
@@ -421,7 +425,7 @@ def cmd_estimate(args: argparse.Namespace) -> int:
         try:
             page = sources.fetch_page(args.epub)
             book = _say(sources.convert(page.name, page.data, url=page.url, fetched=page.fetched, charset=page.charset,
-                                        split_how="none" if args.one_piece else "auto", whole=True if args.whole_page else None)).book
+                                        **_how(args))).book
         except sources.SourceError as exc:
             raise PipelineError(str(exc)) from exc
         named = args.epub

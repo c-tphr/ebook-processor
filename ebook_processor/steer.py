@@ -19,6 +19,7 @@ from pathlib import Path
 from string import Template
 from typing import Any
 
+from .bookinfo import book_line
 from .llm import Backend, BackendError, Completion
 from .prep.epub import Book
 from .settings import INSTRUCTIONS_VERSION, Settings
@@ -289,7 +290,7 @@ def skim(book: Book) -> str:
 
 def reading_message(book: Book, steer: Steer, previous: dict[str, Any] | None = None, feedback: str = "",
                     answers: list[tuple[str, str]] | None = None) -> str:
-    parts = [f"BOOK\nTitle: {book.title or '(no title)'}\nLanguage: {book.language or 'unknown'}", "",
+    parts = [book_line(book), "",
              "THE READER'S WORDS"]
     for label, text in (("Why I read this book and what I want to keep from it", steer.purpose),
                         ("What matters to me and what I work on", steer.about),

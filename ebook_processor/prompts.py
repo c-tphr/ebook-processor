@@ -7,6 +7,7 @@ from string import Template
 from typing import Any
 
 from . import forms as qforms
+from .bookinfo import book_line
 from .content import clipped, render_blocks
 from .prep.checkpoints import ANSWER_MAX_CHARS, PROMPT_MAX_CHARS
 from .prep.epub import Block, Book, SpineDoc
@@ -326,7 +327,7 @@ def question_lines(q: dict[str, Any], mark: str, prompt: str | None = None, answ
 
 
 def book_header(book: Book, current: set[int]) -> str:
-    lines = [f"BOOK\nTitle: {book.title or '(no title)'}\nLanguage: {book.language or 'unknown'}",
+    lines = [book_line(book),
              "Documents in reading order (-> marks the ones this task is about):"]
     for sd in book.spine:
         if not sd.is_xhtml:

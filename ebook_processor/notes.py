@@ -223,6 +223,12 @@ def _quote(text: str) -> list[str]:
     return ["> " + line if line else ">" for line in text.split("\n")]
 
 
+def single_section(chapter: dict[str, Any], section: dict[str, Any]) -> bool:
+    """Whether a chapter of the notebook is one section that carries the chapter's name. Its entries then stand
+    under the chapter's heading, with no heading for the section."""
+    return len(chapter["sections"]) == 1 and section["label"] == chapter["title"]
+
+
 def markdown(data: dict[str, Any], answers: bool = True) -> str:
     """The notebook as one Markdown file. Sections and chapters with nothing written or marked are left out."""
     lines = [f"# {data['title']}", ""]
@@ -279,8 +285,7 @@ def markdown(data: dict[str, Any], answers: bool = True) -> str:
                     part += ["  - Reference: " + reference.replace("\n", " ")]
                 part += [""]
             if part:
-                single = len(c["sections"]) == 1 and s["label"] == c["title"]
-                body += ([] if single else [f"### {s['label']}", ""]) + part
+                body += ([] if single_section(c, s) else [f"### {s['label']}", ""]) + part
         if body:
             lines += [f"## {c['title']}", ""] + body
     return "\n".join(lines).rstrip() + "\n"

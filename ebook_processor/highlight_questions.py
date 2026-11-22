@@ -33,6 +33,7 @@ from typing import Any
 
 from . import forms as qforms
 from . import prompts
+from .bookinfo import book_line
 from .content import render_blocks
 from .llm import Backend, BackendError
 from .store import now
@@ -263,7 +264,7 @@ def propose_schema(settings: Settings) -> dict[str, Any]:
 def propose_message(book: ReadingBook, place: dict[str, Any], highlight: dict[str, Any], asked: list[str],
                     settings: Settings, instruction: str = "") -> str:
     sd: SpineDoc = place["doc"]
-    parts = [f"BOOK\nTitle: {book.book.title or '(no title)'}\nLanguage: {book.book.language or 'unknown'}", "",
+    parts = [book_line(book.book), "",
              f"SECTION \"{place['section']['label']}\" ({sd.href})", "",
              render_blocks(sd, place["blocks"], settings.content if settings.content != "figures" else "text"), "",
              f"HIGHLIGHT (in {', '.join(b.ref for b in place['marked'])})", highlight["text"]]

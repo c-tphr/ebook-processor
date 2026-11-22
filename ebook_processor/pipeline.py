@@ -312,6 +312,11 @@ def fallback_ranges(groups: list[tuple[SpineDoc, list[Block]]], settings: Settin
 # State
 
 
+def _totals() -> dict[str, Any]:
+    """The totals of the calls to the models, before the first call: of a run, or of one role in it."""
+    return {"calls": 0, "cost_usd": 0.0, "input_tokens": 0, "output_tokens": 0, "seconds": 0.0}
+
+
 def new_state(book: Book, settings: Settings, steer: Steer | None = None,
               only: set[int] | None = None) -> dict[str, Any]:
     return {
@@ -337,8 +342,7 @@ def new_state(book: Book, settings: Settings, steer: Steer | None = None,
         "next": {"section": 1, "checkpoint": 1},
         "exclusions_reviewed": False,
         "warnings": [],
-        "usage": {"calls": 0, "cost_usd": 0.0, "input_tokens": 0, "output_tokens": 0, "seconds": 0.0, "by_role": {},
-                  "models": {}},
+        "usage": {**_totals(), "by_role": {}, "models": {}},
     }
 
 
@@ -357,8 +361,7 @@ def load_state(work: Path) -> dict[str, Any] | None:
 
 def count_call(usage: dict[str, Any], role: str, completion: Completion) -> None:
     """Add one call to a run's totals."""
-    per = usage["by_role"].setdefault(role, {"calls": 0, "cost_usd": 0.0, "input_tokens": 0, "output_tokens": 0,
-                                             "seconds": 0.0})
+    per = usage["by_role"].setdefault(role, _totals())
     for target in (usage, per):
         target["calls"] += 1
         target["cost_usd"] = round(target["cost_usd"] + completion.cost_usd, 6)
@@ -381,8 +384,7 @@ def add_usage(usage: dict[str, Any], other: dict[str, Any]) -> None:
 
     add(usage, other)
     for role, per in other.get("by_role", {}).items():
-        add(usage["by_role"].setdefault(role, {"calls": 0, "cost_usd": 0.0, "input_tokens": 0, "output_tokens": 0,
-                                               "seconds": 0.0}), per)
+        add(usage["by_role"].setdefault(role, _totals()), per)
     if other.get("unpriced_calls"):
         usage["unpriced_calls"] = usage.get("unpriced_calls", 0) + other["unpriced_calls"]
     for role, model in other.get("models", {}).items():

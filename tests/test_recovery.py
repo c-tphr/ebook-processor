@@ -307,3 +307,39 @@ def test_a_number_inside_a_longer_number_is_no_error_code():
     for login in (llm._LOGIN_RE, llm._CODEX_LOGIN_RE):
         assert not login.search("Prompt is too long: 240100 tokens")
         assert login.search("API Error: 401 Unauthorized")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a signal sent to oneself is not Ctrl-C on Windows")
+def test_ctrl_c_gives_up_the_calls_that_are_running(tmp_path):
+    """Ctrl-C reaches the main thread while it waits for the calls of a step. Leaving that step used to wait for
+    every call, up to its limit of half an hour, before the stop event was set."""
+    import signal
+    exe, pids = hanging(tmp_path, "claude")
+    cancel = threading.Event()
+    backend = Backends(claude=ClaudeCodeBackend(executable=exe, cancel=cancel), codex=ScriptedBackend(lambda *a: {}))
+    threading.Timer(0.8, lambda: os.kill(os.getpid(), signal.SIGINT)).start()
+    started = time.monotonic()
+    with pytest.raises(KeyboardInterrupt):
+        run_book(FIXTURE, tmp_path / "out", from_options(density="short"), backend=backend, cancel=cancel)
+    assert cancel.is_set() and time.monotonic() - started < 8
+    assert all(gone(pid) for pid in wait_for(pids))
+    assert (tmp_path / "out" / "work" / "state.json").is_file()  # the run can be continued
+
+
+def test_the_app_ending_stops_its_runs_and_they_save_themselves_as_stopped(tmp_path):
+    holder: dict = {}
+
+    def reply(role, system, prompt, schema):
+        while not any(e.is_set() for e in list(holder["jobs"].cancels.values())):
+            time.sleep(0.02)
+        raise BackendCancelled("stopped")
+    jobs = holder["jobs"] = Jobs(tmp_path / "data", backend_factory=lambda settings: ScriptedBackend(reply))
+    job = jobs.create(FIXTURE.name, FIXTURE.read_bytes(), from_options(density="short"))
+    for _ in range(100):
+        if jobs.get(job["id"])["status"] == "running":
+            break
+        time.sleep(0.05)
+    started = time.monotonic()
+    jobs.stop_all()
+    assert time.monotonic() - started < 4 and jobs.stopping.is_set()
+    assert jobs.get(job["id"])["status"] == "stopped" and not jobs.cancels

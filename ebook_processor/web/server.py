@@ -153,6 +153,7 @@ class Jobs:
         self.turn = threading.Lock()  # held by the run that is being processed
         self.jobs: dict[str, dict[str, Any]] = {}
         self.cancels: dict[str, threading.Event] = {}
+        self.stopping = threading.Event()  # set when the app ends: every model call still running gives up
         self.books: dict[str, tuple[int, reading.ReadingBook]] = {}
         self.backend_factory = backend_factory
         # questions being written from highlights: book id -> what is under way (see ``propose``)
@@ -382,7 +383,7 @@ class Jobs:
         settings = Settings.from_json(job["settings"])
         if self.backend_factory:
             return settings, self.backend_factory(settings), self._run_steer(job)
-        backend = default_backend(settings)
+        backend = default_backend(settings, cancel=self.stopping)
         backend.check_available([settings.checker_model or settings.model if r == "check" else settings.model for r in roles])
         return settings, backend, self._run_steer(job)
 
@@ -1036,7 +1037,7 @@ class Jobs:
         if self.backend_factory:
             return settings, self.backend_factory(settings)
         try:
-            backend = default_backend(settings)
+            backend = default_backend(settings, cancel=self.stopping)
             backend.check_available([settings.checker_model or settings.model if r == "check" else settings.model for r in roles])
         except BackendError as exc:
             raise ApiError(HTTPStatus.BAD_GATEWAY, f"The model could not be asked: {exc}") from exc
@@ -1784,6 +1785,22 @@ class Jobs:
             self._store(job)
         threading.Thread(target=self._work, args=(job_id,), name=f"run-{job_id}", daemon=True).start()
 
+    def stop_all(self, wait: float = 5.0) -> None:
+        """The app is ending: give up every model call, so that no model process is left behind and the runs save
+        themselves as stopped. Waits a few seconds for the runs to do that."""
+        self.stopping.set()
+        with self.lock:
+            for event in self.cancels.values():
+                event.set()
+            for asking in self.asks.values():
+                asking["cancel"].set()
+        until = time.monotonic() + wait
+        while time.monotonic() < until:
+            with self.lock:
+                if not self.cancels:
+                    return
+            time.sleep(0.05)
+
     def cancel(self, job_id: str) -> None:
         with self.lock:
             self.get(job_id)
@@ -2452,5 +2469,6 @@ def serve(data: Path, host: str, port: int, open_browser: bool, notes_folder: Pa
     except KeyboardInterrupt:
         print("\nStopping. Unfinished runs can be continued the next time.")
     finally:
+        library.stop_all()
         server.server_close()
         update.remove_record(port, os.getpid())

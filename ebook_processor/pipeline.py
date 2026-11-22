@@ -509,11 +509,15 @@ class Run:
 
         with ThreadPoolExecutor(max_workers=self.settings.jobs) as pool:
             futures = [pool.submit(guarded, job) for job in jobs]
-            for future in as_completed(futures):
-                exc = future.exception()
-                if exc is not None and first is None:
-                    first = exc
-                    stop.set()
+            try:
+                for future in as_completed(futures):
+                    exc = future.exception()
+                    if exc is not None and first is None:
+                        first = exc
+                        stop.set()
+            except BaseException:  # Ctrl-C: give up the calls that are running, or leaving the pool waits for them
+                self.cancel.set()
+                raise
         if first is not None:
             raise first
         if self.cancel.is_set():

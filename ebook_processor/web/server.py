@@ -39,6 +39,7 @@ from .. import steer as steering
 from ..llm import BackendCancelled, BackendError, ClaudeCodeBackend, CodexBackend, Completion, UsageLimitError, available_models
 from ..outputs import load_report, stem_of
 from ..pipeline import STATE_FILE, now, write_json
+from ..prompts import CRITERIA_WORDS
 from ..prep.epub import EpubError, load_book_bytes
 from ..prep.limits import MAX_PROMPTS
 from ..runner import (Cancelled, PipelineError, change_run, default_backend, rebuild, review_data, run_book, trial_dir,
@@ -2075,7 +2076,7 @@ class Handler(BaseHTTPRequestHandler):
             case ("GET", ["info"]):
                 defaults = Settings()
                 return self.send_json({"version": __version__, "claude": self.claude, "codex": self.codex, "data": str(jobs.data),
-                                       "densities": DENSITIES, "defaults": defaults.as_json(), "max_questions": MAX_QUESTIONS,
+                                       "densities": DENSITIES, "criteria": CRITERIA_WORDS, "defaults": defaults.as_json(), "max_questions": MAX_QUESTIONS,
                                        "limits": {"text": steering.TEXT_MAX, "instruction": steering.INSTRUCTION_MAX},
                                        "models": self.models})
             case ("GET", ["jobs"]):

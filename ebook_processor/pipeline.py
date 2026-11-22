@@ -10,7 +10,7 @@ Steps:
    stretch of a long one. For each part Claude returns sections, excluded ranges and questions. The reply is
    checked mechanically (every paragraph in exactly one range, limits, citations inside the section) and sent back
    with the list of problems when it fails. Parts of different documents run side by side.
-2. **Check.** A separate call, which sees only the section text and the questions, judges each question on five
+2. **Check.** A separate call, which sees only the section text and the questions, judges each question on five or six
    criteria and each section's break. One more call reviews what was excluded.
 3. **Revise.** Failed questions go back to the drafter with the checker's finding, then to the checker again, up
    to ``rounds`` checks per question. A question that still fails is left out of the outputs and listed in the

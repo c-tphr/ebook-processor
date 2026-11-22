@@ -190,7 +190,7 @@ def checker_rules(steer: Steer | None) -> str:
         return ""
     return ("\n## The reader's wishes\n\nThe reader asked for questions written like this:\n\n" + _fenced(steer.manner())
             + "\n\nA question in that manner is as the reader wants it: do not give it a `minor_note` for it (for "
-              "example for asking a date when the reader wants dates). The five criteria are unchanged, and you do "
+              "example for asking a date when the reader wants dates). The criteria are unchanged, and you do "
               "not judge whether a question follows the reader's wishes.\n")
 
 

@@ -86,7 +86,7 @@ def test_the_number_of_questions_is_the_models_to_choose_up_to_the_limit():
 def test_the_checker_learns_the_manner_only_and_judges_the_same_five_things():
     assert prompts.checker_system(SHORT) == prompts.checker_system(SHORT, Steer(purpose="Only a purpose."))
     told = prompts.checker_system(SHORT, WANT)
-    assert "I do want the dates" in told and "The five criteria are unchanged" in told
+    assert "I do want the dates" in told and "The criteria are unchanged" in told
     assert "I keep a lighthouse" not in told and "how the lamp is kept" not in told
 
 

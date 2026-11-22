@@ -205,3 +205,18 @@ def test_the_kinds_are_ticked_in_settings_and_a_highlights_question_can_be_edite
     expect(entry.locator(".ans[data-status=accepted]")).to_have_count(1)
     kept = formed.call("GET", f"/jobs/{formed.id}/questions")["questions"][0]
     assert kept["form"] == "choice" and kept["choices"][kept["correct"]] == "A choice I wrote" and kept["by"] == "you"
+
+
+def test_the_page_words_a_question_as_plain_text_as_the_files_do(page: Page, book: App):
+    """forms.py as_text and forms.js plain are two copies of one rule; the page's had lost a case."""
+    from ebook_processor import forms
+    page.goto(book.url + "/")
+    page.wait_for_function("() => !!window.QForms")
+    cases = [{"form": "truefalse", "truth": True, "prompt": "The lamp is lit at dusk.", "answer": "True, because the rule says so."},
+             {"form": "truefalse", "truth": False, "prompt": "The lamp is lit at noon.", "answer": "It is lit at dusk."},
+             {"form": "choice", "choices": ["Dusk", "Noon"], "correct": 0, "prompt": "When is the lamp lit?", "answer": "The rule names dusk."},
+             {"form": "cloze", "accept": ["dusk"], "prompt": "The lamp is lit at ____.", "answer": "The rule names it."},
+             {"prompt": "When is the lamp lit?", "answer": "At dusk."}]
+    for q in cases:
+        shown = page.evaluate("(q) => QForms.plain(q)", q)
+        assert (shown["question"], shown["answer"]) == forms.as_text(q), q

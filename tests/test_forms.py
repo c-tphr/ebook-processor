@@ -427,3 +427,10 @@ def test_the_command_line_takes_the_forms(capsys):
     with pytest.raises(SystemExit):
         cli.main(["estimate", str(FIXTURE), "--forms", "essay"])
     assert "unknown form of question: essay" in capsys.readouterr().err
+
+
+def test_every_criterion_has_its_plain_wording_and_the_page_gets_them():
+    """The sixth criterion had none: the report printed 'One_right_answer.' and the page the raw name."""
+    from ebook_processor import outputs, prompts
+    assert set(prompts.CRITERIA_WORDS) == {*prompts.CRITERIA, prompts.ONE_RIGHT}
+    assert outputs.CRITERIA_WORDS is prompts.CRITERIA_WORDS and all(" " in w for w in prompts.CRITERIA_WORDS.values())

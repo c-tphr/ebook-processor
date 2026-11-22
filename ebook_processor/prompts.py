@@ -271,6 +271,16 @@ EXCLUSION_SCHEMA = _obj(exclusions={"type": "array", "items": _obj(
 CRITERIA = ("supported_by_section", "accepts_paraphrase", "answerable_from_section", "does_not_give_away_answer",
             "stands_alone")
 ONE_RIGHT = "one_right_answer"
+# What a failed criterion means, in the words the report and the pages show. One table, so that a new criterion
+# cannot be left without its wording in one of them.
+CRITERIA_WORDS = {
+    "supported_by_section": "the answer says something its section does not",
+    "accepts_paraphrase": "the answer is too vague, thin or detailed to grade against",
+    "answerable_from_section": "the question cannot be answered from its section alone",
+    "does_not_give_away_answer": "the question gives its answer away",
+    "stands_alone": "the question cannot be understood without the page",
+    ONE_RIGHT: "more than one answer is right, or the one marked as right is not",
+}
 
 _FORM_MEMBERS = {"correct_choice": _STR, "wrong_choices": {"type": "array", "items": _STR}, "truth": _BOOL, "blank": _STR,
                  "also_accept": {"type": "array", "items": _STR}}
@@ -426,8 +436,7 @@ def revise_message(book: Book, items: list[dict[str, Any]], settings: Settings,
         for q in item["others"]:
             parts += [f"OTHER QUESTION OF THIS SECTION (do not change or repeat it): {q['prompt']}"]
         for q in item["failed"]:
-            failed = [c for c in CRITERIA if q.get("criteria", {}).get(c) is False]
-            failed += [ONE_RIGHT] if q.get("criteria", {}).get(ONE_RIGHT) is False else []
+            failed = [c for c in (*CRITERIA, ONE_RIGHT) if q.get("criteria", {}).get(c) is False]
             parts += [*question_lines(q, f"QUESTION TO FIX [{q['id']}]"),
                       f"Failed: {', '.join(failed) or 'see the finding'}",
                       f"Checker's finding: {q.get('problem') or '(none given)'}",

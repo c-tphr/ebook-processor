@@ -359,7 +359,7 @@ function wikiAt(state, pos) {
   return null;
 }
 
-const KINDS = { idea: "Idea note", index: "Index note", quick: "Quick note", "project-note": "Project note", project: "Project", book: "Book" };
+const KINDS = { idea: "Idea note", index: "Index note", quick: "Quick note", "project-note": "Project note", project: "Project", book: "Book", article: "Article" };
 
 function footnoteAt(state, pos) {
   for (let node = syntaxTree(state).resolveInner(pos, 1); node; node = node.parent) {

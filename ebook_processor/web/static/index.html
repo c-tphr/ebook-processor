@@ -373,13 +373,6 @@ const band = (title, ...kids) => h("section", { class: "band" }, h("h2", {}, tit
 const STATUS = { queued: "Waiting", running: "Working", done: "Finished", failed: "Failed", stopped: "Stopped", asking: "Waiting for you", tried: "Waiting for you" };
 const STATUS_LAB = { queued: "lab", running: "lab blue", done: "lab inv", failed: "lab", stopped: "lab", asking: "lab blue", tried: "lab blue" };
 const STAGES = [["draft", "Draft"], ["check", "Check"], ["revise", "Revise"], ["build", "Build"]];
-const CRITERIA = {
-  supported_by_section: "answer says something its section does not",
-  accepts_paraphrase: "answer too vague, thin or detailed to grade against",
-  answerable_from_section: "cannot be answered from its section alone",
-  does_not_give_away_answer: "question gives its answer away",
-  stands_alone: "cannot be understood without the page",
-};
 const FILES = [
   ["visible", "Book with visible checkpoints", "For any reading app: each question on its own page, its answer on the next."],
   ["prepared", "Book for the Picco firmware", "Invisible markers and a checkpoint data file. The text is untouched."],
@@ -1945,7 +1938,7 @@ async function showRun(id) {
       h("label", { class: "qt", for: "q-" + q.id }, QForms.plain(q).question), QForms.choices(q), h("div", { class: "at" }, q.answer),
       h("div", { class: "meta" }, tags, h("button", { class: "text", type: "button", style: "padding:0 0 0 6px", "aria-label": "Edit question " + q.id,
         onclick: () => QForms.openEditor({ job: id, id: q.id, onChange: changed }) }, "Edit")),
-      q.failed_criteria.length ? h("p", { class: "note" }, "Why: " + q.failed_criteria.map((k) => CRITERIA[k] || k).join("; ") + ". " + (q.problem || "")) : null,
+      q.failed_criteria.length ? h("p", { class: "note" }, "Why: " + q.failed_criteria.map((k) => (info.criteria || {})[k] || k).join("; ") + ". " + (q.problem || "")) : null,
       q.verdict ? h("p", { class: "note" }, q.verdict.passed ? "You had it checked: it passed." + (q.verdict.minor_note ? " " + q.verdict.minor_note : "") : "You had it checked, and the check objects: " + q.verdict.problem) : null,
       q.minor_note ? h("p", { class: "note" }, "Checker's remark: " + q.minor_note) : null));
     return row;

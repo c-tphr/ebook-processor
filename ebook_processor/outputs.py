@@ -20,6 +20,7 @@ from . import __version__, exports, reading
 from . import highlight_questions as hq
 from . import notes as notes_mod
 from .pipeline import KEPT, draft_bytes, kept, now, write_json
+from .prompts import CRITERIA_WORDS
 from .prep import epubcheck as epubcheck_mod
 from .prep.build import BuildError, build_bytes
 from .prep.draft import check_draft
@@ -29,13 +30,6 @@ from .visible import build_visible
 
 OUTPUT_SUFFIXES = (".prepared.epub", ".checkpoints.epub", ".questions.json", ".anki.apkg", ".cards.tsv",
                    ".report.md", ".report.json")
-CRITERIA_WORDS = {
-    "supported_by_section": "the answer says something its section does not",
-    "accepts_paraphrase": "the answer is too vague, thin or detailed to grade against",
-    "answerable_from_section": "the question cannot be answered from its section alone",
-    "does_not_give_away_answer": "the question gives its answer away",
-    "stands_alone": "the question cannot be understood without the page",
-}
 
 
 def stem_of(source_file: str) -> str:

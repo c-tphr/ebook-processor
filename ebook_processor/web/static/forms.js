@@ -53,7 +53,9 @@ function key(q) {
 function plain(q) {
   const f = form(q), ends = (s) => (/[.!?]$/.test(s.trim()) ? s.trim() : s.trim() + ".");
   if (f === "open") return { question: text(q), answer: q.answer };
-  return { question: (f === "truefalse" ? "True or false: " : "") + text(q), answer: `${ends(key(q))} ${q.answer}`.trim() };
+  const question = (f === "truefalse" ? "True or false: " : "") + text(q);
+  if (f === "truefalse" && /^(true|false)\b/i.test(q.answer)) return { question, answer: q.answer };   // an explanation that opens with the verdict; forms.py as_text has the same rule
+  return { question, answer: `${ends(key(q))} ${q.answer}`.trim() };
 }
 function heading(q, filled) {
   if (form(q) !== "cloze") return [text(q)];

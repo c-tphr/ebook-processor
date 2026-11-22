@@ -944,7 +944,7 @@ class Jobs:
             job = self.jobs[job_id]
             kind = self.type_of(job)
             vault.put_book(bookfile.book_id(job_id), job.get("title") or stem_of(job["file"]),
-                           lambda name: bookfile.text(name, job_id, book, store, kind, job.get("origin")), kind)
+                           bookfile.text(job_id, book, store, kind, job.get("origin")), kind)
             self.filed[job_id] = made_from
         except (ApiError, VaultError, OSError) as exc:
             if not quiet:
@@ -975,8 +975,7 @@ class Jobs:
             vault = self.vault()
             note = vault.book(bookfile.book_id(job_id)) if vault.exists else None
             if note is not None:
-                current = compose(note.props, note.body)
-                vault.put_book(note.id, note.title, lambda name: bookfile.mark_removed(current))
+                vault.put_book(note.id, note.title, bookfile.mark_removed(compose(note.props, note.body)))
         except (VaultError, OSError):
             pass
 

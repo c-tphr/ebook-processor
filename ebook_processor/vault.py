@@ -1416,10 +1416,10 @@ class Vault:
             note = self.by_id.get(book_id)
             return note if note is not None and note.source else None
 
-    def put_book(self, book_id: str, title: str, write: Any, kind: str = "book") -> Note:
-        """Write a book's or an article's file. ``write(name)`` gives its text for the file name it has or is
-        given. The file is left alone when the text is what it already holds, and moves to the other folder when
-        the reader says a book is an article, or the other way."""
+    def put_book(self, book_id: str, title: str, text: str, kind: str = "book") -> Note:
+        """Write a book's or an article's file, which holds ``text``. The file is left alone when the text is what
+        it already holds, and moves to the other folder when the reader says a book is an article, or the other
+        way."""
         self.ensure()
         folder = SOURCES[kind]
         with self.lock:
@@ -1434,9 +1434,8 @@ class Vault:
                 self.refresh(force=True)
                 note = self.book(book_id)
             rel = note.path if note is not None else self._free(folder, safe_title(title, "Book" if kind == "book" else "Article"))
-            self._inside(rel).parent.mkdir(parents=True, exist_ok=True)
-            text = write(_nfc(rel.rsplit("/", 1)[-1][:-3]))
             path = self._inside(rel)
+            path.parent.mkdir(parents=True, exist_ok=True)
             if not path.is_file() or path.read_bytes().decode("utf-8", errors="replace") != text:
                 self._write(path, text)
                 self._reread(rel)

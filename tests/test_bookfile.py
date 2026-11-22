@@ -33,7 +33,7 @@ def test_the_file_holds_what_was_marked_and_written_in_reading_order(book):
     store = marked(book)
     first, second = store["highlights"]
     ids = {n["on"]: n["id"] for n in store["notes"]}
-    text = bookfile.text("The Lighthouse Keeper's Almanac", JOB, book, store)
+    text = bookfile.text(JOB, book, store)
     assert text.startswith(f"---\nid: b-{JOB}\nkind: book\ntitle: The Lighthouse Keeper's Almanac\nauthors: [Mara Ellery Quill]\n---\n"
                            f"{bookfile.KEPT}\n\nAbout the book. ^{ids['book']}\n\n## The Lamp Room\n\n### Arrival at Gannet Rock\n\n"
                            f"**My summary**\n\nIn my words. ^{ids['section']}\n\n> {first['text']} ^{first['id']}\n\n"
@@ -41,7 +41,7 @@ def test_the_file_holds_what_was_marked_and_written_in_reading_order(book):
     assert f"A margin note\n\n- with a list\n- of two\n\n^{ids['place']}\n\n> {second['text']} ^{second['id']}\n" in text
     assert text.endswith(f"## The Fog Season\n\n```\ncode at the end\n```\n\n^{ids['chapter']}\n")
     assert "Winding the Clockwork" not in text and "Checkpoint" not in text and "/read/" not in text
-    empty = bookfile.text("x", JOB, book, notes.load(Path("/nowhere")))
+    empty = bookfile.text(JOB, book, notes.load(Path("/nowhere")))
     assert empty.endswith(f"---\n{bookfile.KEPT}\n")
 
 
@@ -49,7 +49,7 @@ def test_the_file_reads_back_as_blocks_that_links_can_point_to(book):
     store = marked(book)
     first = store["highlights"][0]
     ids = {n["on"]: n["id"] for n in store["notes"]}
-    note = V.read_text(bookfile.text("The Almanac", JOB, book, store), "Books/The Almanac.md", (1, 1))
+    note = V.read_text(bookfile.text(JOB, book, store), "Books/The Almanac.md", (1, 1))
     assert note.kind == "book" and V.prop(note.props, "id") == bookfile.book_id(JOB) and note.links == [] and note.tags == []
     assert note.headings == ["The Lamp Room", "Arrival at Gannet Rock", "The Fog Season"]
     assert note.blocks[first["id"]] == first["text"]

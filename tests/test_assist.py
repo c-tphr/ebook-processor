@@ -19,7 +19,7 @@ SETTINGS = from_options()
 def folder(tmp_path: Path) -> Vault:
     vault = Vault(tmp_path / "notes")
     vault.ensure()
-    vault.put_book("b-20261118-101500-almanac", "The Almanac", lambda name: BOOK)
+    vault.put_book("b-20261118-101500-almanac", "The Almanac", BOOK)
     return vault
 
 

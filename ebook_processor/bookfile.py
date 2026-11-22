@@ -74,10 +74,10 @@ def _entry(text: str, block: str) -> list[str]:
     return lines[:-1] + [f"{last.rstrip()} ^{block}", ""]
 
 
-def text(name: str, job_id: str, book: ReadingBook, store: dict[str, Any], kind: str = "book",
+def text(job_id: str, book: ReadingBook, store: dict[str, Any], kind: str = "book",
          origin: dict[str, Any] | None = None) -> str:
-    """The file of one book or article. ``name`` is the file's name without ``.md``. ``origin`` says where an
-    article came from; what is known of it goes into the file's properties."""
+    """The file of one book or article. ``origin`` says where an article came from; what is known of it goes into
+    the file's properties."""
     data = notes.notebook(book, store, None)
     props = [vault.Prop("id", book_id(job_id)), vault.Prop("kind", kind), vault.Prop("title", _one_line(data["title"]))]
     if data["authors"]:

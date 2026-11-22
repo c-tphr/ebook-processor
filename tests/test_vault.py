@@ -347,27 +347,21 @@ A note on a paragraph about wicks. ^n81c2
 
 
 def test_a_books_file_is_written_once_and_found_by_its_id(vault):
-    calls = []
-
-    def write(name):
-        calls.append(name)
-        return BOOK
-
-    note = vault.put_book("b-20261118-101500-almanac", "The Almanac: a keeper's year?", write)
-    assert note.path == "Books/The Almanac a keeper's year.md" and note.kind == "book" and calls == ["The Almanac a keeper's year"]
+    note = vault.put_book("b-20261118-101500-almanac", "The Almanac: a keeper's year?", BOOK)
+    assert note.path == "Books/The Almanac a keeper's year.md" and note.kind == "book"
     stamp = note.stamp
-    assert vault.put_book("b-20261118-101500-almanac", "Another title now", write).stamp == stamp  # same text: not written
-    assert vault.put_book("b-20261118-101500-almanac", "x", lambda name: BOOK + "\nMore. ^n1\n").stamp != stamp
+    assert vault.put_book("b-20261118-101500-almanac", "Another title now", BOOK).stamp == stamp  # same text: not written
+    assert vault.put_book("b-20261118-101500-almanac", "x", BOOK + "\nMore. ^n1\n").stamp != stamp
     assert [p.name for p in (vault.root / "Books").iterdir()] == ["The Almanac a keeper's year.md"]
     vault.create("The Other", "")
-    assert vault.put_book("b-2", "the other", lambda name: f"---\nid: b-2\nkind: book\n---\n{name}\n").path == "Books/the other 2.md"
+    assert vault.put_book("b-2", "the other", "---\nid: b-2\nkind: book\n---\nAnother book.\n").path == "Books/the other 2.md"
     assert vault.book("b-2").title == "the other 2" and vault.book("b-none") is None
     with pytest.raises(VaultError):
         vault.rename("b-2", "Mine now")
 
 
 def test_search_covers_notes_and_the_passages_of_books(vault):
-    vault.put_book("b-20261118-101500-almanac", "The Almanac", lambda name: BOOK)
+    vault.put_book("b-20261118-101500-almanac", "The Almanac", BOOK)
     lamp = vault.create("Lamps need tending", "A lamp left alone goes out. See [[The Almanac#^h3f9a]]. #keeping")
     wick = vault.create("Wicks", "Trim the wick; the LAMP burns clean. " + "filler " * 80 + "the end mentions sunrise.", props={"tags": ["keeping", "craft"]})
     quick = vault.create("", "lamp oil to buy", "quick")
@@ -411,7 +405,7 @@ def test_nothing_is_written_outside_the_folder(vault, tmp_path):
 
 
 def test_the_notes_that_cite_an_entry_of_a_book_are_known(vault):
-    book = vault.put_book("b-20261118-101500-almanac", "The Almanac", lambda name: BOOK)
+    book = vault.put_book("b-20261118-101500-almanac", "The Almanac", BOOK)
     a = vault.create("One", "From [[The Almanac#^h3f9a]].")
     b = vault.create("Two", "About the note on it: [[the almanac#^h3f9a-note]], and [[The Almanac#^n81c2|the wicks]].", props={"sources": ["[[The Almanac#^h3f9a]]"]})
     vault.create("Three", "Only the book: [[The Almanac]], and a part [[The Almanac#The Lamp Room]].")
@@ -423,7 +417,7 @@ def test_the_notes_that_cite_an_entry_of_a_book_are_known(vault):
 
 
 def test_related_notes_share_uncommon_words_or_tags_and_say_which(vault):
-    vault.put_book("b-20261118-101500-almanac", "The Almanac", lambda name: BOOK)
+    vault.put_book("b-20261118-101500-almanac", "The Almanac", BOOK)
     lamp = vault.create("Lamps need tending", "A lamp left alone goes out before sunrise. The keeper trims the wick.", props={"tags": ["keeping"]})
     vault.create("Markets", "Prices carry information that no trader holds alone.")
     tagged = vault.create("Routine", "Doing the same thing daily.", props={"tags": ["keeping", "habits"]})
@@ -455,7 +449,7 @@ def test_the_app_adds_a_source_or_words_to_a_note_and_sets_its_own_properties(va
     aside = vault.set_props(quick["id"], {"aside": True})
     assert {"key": "aside", "value": True} in aside["props"] and aside["body"] == "a thought" and aside["id"] == quick["id"]
     assert {"key": "aside", "value": True} not in vault.set_props(quick["id"], {"aside": None})["props"]
-    book = vault.put_book("b-1", "A Book", lambda name: "---\nid: b-1\nkind: book\n---\n> words ^h1\n")
+    book = vault.put_book("b-1", "A Book", "---\nid: b-1\nkind: book\n---\n> words ^h1\n")
     with pytest.raises(VaultError):
         vault.add_to(book.id, "mine")
 
@@ -478,7 +472,7 @@ def test_a_section_of_a_file_is_found_by_its_heading_and_added_to():
 
 
 def test_a_project_gathers_notes_keeps_its_own_and_exports_its_outline(vault):
-    vault.put_book("b-20261118-101500-almanac", "The Almanac", lambda name: BOOK.replace("title: The Almanac", "title: The Almanac of Lights"))
+    vault.put_book("b-20261118-101500-almanac", "The Almanac", BOOK.replace("title: The Almanac", "title: The Almanac of Lights"))
     rule = vault.create("A duty is kept by rule", "The keeper lights the lamp *whatever the weather*. See [[Decide once|deciding once]] and [[Nowhere]]. ^b1\n\n"
                                                   "```\n[[kept in code]]\n```\n\nSource: [[The Almanac#^h3f9a]]\n")
     once = vault.create("Decide once", "A decision made in advance is cheaper. #habits")
@@ -528,7 +522,7 @@ def test_an_embed_shows_the_note_a_part_of_it_or_one_block(vault):
 
 
 def test_the_graph_joins_notes_and_books_and_a_neighbourhood_is_two_steps(vault):
-    vault.put_book("b-20261118-101500-almanac", "The Almanac", lambda name: BOOK)
+    vault.put_book("b-20261118-101500-almanac", "The Almanac", BOOK)
     a = vault.create("A", "Links to [[B]] and [[B]] again, and cites [[The Almanac#^h3f9a]].")
     b = vault.create("B", "Links to [[C]] and back to [[A]].")
     c = vault.create("C", "Links to [[D]].")
@@ -552,7 +546,7 @@ def test_the_graph_joins_notes_and_books_and_a_neighbourhood_is_two_steps(vault)
 
 
 def test_unlinked_and_old_notes_are_brought_back_a_few_each_day(vault):
-    vault.put_book("b-20261118-101500-almanac", "The Almanac", lambda name: BOOK)
+    vault.put_book("b-20261118-101500-almanac", "The Almanac", BOOK)
     linked = vault.create("Linked", "To [[Other]].")
     other = vault.create("Other", "x")
     cites = vault.create("Cites only", "From [[The Almanac#^h3f9a]].")           # a source is not a link to another idea

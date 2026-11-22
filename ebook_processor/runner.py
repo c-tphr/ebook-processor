@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import threading
 from pathlib import Path
 from typing import Any, Iterable
 
 from . import forms as qforms
+from . import sources
+from .bookinfo import chapter_titles
+from .exports import CARD_CHOICES
 from .llm import PROVIDERS, Backend, Backends, ClaudeCodeBackend, CodexBackend, Completion, Connection, service_urls
 from .outputs import build_outputs, try_build
-from .pipeline import KEPT, SOURCE_COPY, STATE_FILE, Cancelled, PipelineError, Progress, kept, load_state, process
+from .pipeline import KEPT, SOURCE_COPY, STATE_FILE, Cancelled, PipelineError, Progress, kept, load_state, process, steer_key
 from .prep.epub import EpubError, load_book_bytes
 from .prep.limits import MAX_PROMPTS, MAX_PROMPTS_PER_CHECKPOINT
 from .settings import Settings
@@ -23,7 +27,6 @@ __all__ = ["Cancelled", "PipelineError", "change_run", "default_out_dir", "run_b
 
 
 def default_out_dir(epub: Path) -> Path:
-    from . import sources
     known = epub.name.lower().endswith(".epub") or sources.is_source(epub.name)
     return epub.resolve().parent / f"{epub.stem if known else epub.name}-processed"
 
@@ -113,8 +116,6 @@ def try_chapter(epub: Path, out_dir: Path, settings: Settings, chapter: int, bac
     """Write and check the questions of one document of the book (``chapter`` is its spine index), and nothing
     else: no books are built. Returns what ``review_data`` gives for it. A trial that was made of another chapter,
     or in another way, is replaced."""
-    import shutil
-
     epub, backend = _ready(epub, settings, backend, progress, cancel)
     folder = trial_dir(out_dir)
     work = work_dir(folder)
@@ -123,7 +124,6 @@ def try_chapter(epub: Path, out_dir: Path, settings: Settings, chapter: int, bac
     except PipelineError:
         old = None
     if old is not None:
-        from .pipeline import steer_key
         same = old.get("only") == [chapter] and steer_key(old) == (steer.key() if steer and not steer.empty else "") \
             and Settings.from_json(old["settings"]).drafting_key() == settings.drafting_key()
         if not same:
@@ -176,7 +176,6 @@ def rebuild(out_dir: Path, remove: Iterable[str] = (), restore: Iterable[str] = 
         if q["id"] in set(restore):
             q["removed"] = False
     if cards is not None:
-        from .exports import CARD_CHOICES
         if cards not in CARD_CHOICES:
             raise PipelineError(f"cards must be one of {', '.join(CARD_CHOICES)}")
         state["cards"] = cards
@@ -236,8 +235,6 @@ def change_run(out_dir: Path, change: Any, build: bool = True) -> Any:
 
 def review_data(out_dir: Path) -> dict[str, Any]:
     """Every section with its questions and the checker's verdicts, for the review page."""
-    from .exports import chapter_titles
-
     book, _, state = _open_run(out_dir)
     titles = chapter_titles(book)
     where = {b.ref: b for sd in book.spine for b in sd.blocks}

@@ -27,6 +27,7 @@ from .prep.build import BuildError, build_bytes
 from .prep.draft import check_draft
 from .prep.epub import Book
 from .prep.validate import NOT_RUN, PASS, validate_bytes
+from .steer import Steer
 from .visible import build_visible
 
 OUTPUT_SUFFIXES = (".prepared.epub", ".checkpoints.epub", ".questions.json", ".anki.apkg", ".cards.tsv",
@@ -211,8 +212,6 @@ def make_report(state: dict[str, Any], doc: dict[str, Any], files: dict[str, str
 
 
 def _steer(state: dict[str, Any]) -> dict[str, Any] | None:
-    from .steer import Steer
-
     steer = Steer.from_json(state.get("steer"))
     if steer.empty:
         return None

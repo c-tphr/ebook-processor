@@ -13,10 +13,11 @@ from typing import Any
 
 from . import forms as qforms
 from . import __version__
+from .bookinfo import authors, chapter_titles
 from .content import passage_text
 from .pipeline import KEPT as KEPT_STATUSES, BookIndex, kept
 from .store import now, put_in_place
-from .prep.epub import DC_NS, Book, squash
+from .prep.epub import Book
 
 QUESTIONS_FORMAT = "ebook-processor-questions"
 QUESTIONS_VERSION = 1
@@ -28,25 +29,6 @@ LEFT_OUT_REASONS = {
     "withdrawn": "The drafter withdrew it after the check failed it.",
     "removed": "You removed it.",
 }
-
-
-def chapter_titles(book: Book) -> dict[str, str]:
-    """A name for each spine document: its table-of-contents label, else its <title>, else its first heading."""
-    out: dict[str, str] = {}
-    for entry in book.toc:
-        href = entry.href.split("#")[0]
-        if href and href not in out and entry.label.strip():
-            out[href] = squash(entry.label)
-    for sd in book.spine:
-        if sd.href in out:
-            continue
-        heading = next((b for b in sd.blocks if b.kind == "heading" and b.words), None)
-        out[sd.href] = sd.title or (" ".join(heading.words) if heading else sd.href.rsplit("/", 1)[-1])
-    return out
-
-
-def authors(book: Book) -> list[str]:
-    return [squash(el.text()) for el in book.opf.root.find_all(DC_NS, "creator") if squash(el.text())]
 
 
 def slug(text: str) -> str:

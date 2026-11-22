@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from . import forms as qforms
-from .exports import authors, chapter_titles
+from .bookinfo import authors, chapter_titles
 from .prep import checkpoints as cp
 from .prep import words as W
 from .prep.build import CHECKPOINTS_ID

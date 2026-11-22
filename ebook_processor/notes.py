@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from . import forms as qforms
+from . import highlight_questions
 from .store import load_json, now
 from .reading import ReadingBook
 
@@ -83,7 +84,6 @@ def add_highlight(store: dict[str, Any], book: ReadingBook, chapter: Any, start:
     store["highlights"] = [h for h in store["highlights"] if h not in touching] + [merged]
     store["highlights"].sort(key=lambda h: (h["chapter"], h["start"]))
     if len(touching) > 1 and store.get("questions"):  # highlights that became one: their questions go with it
-        from . import highlight_questions
         highlight_questions.highlights_joined(store, [h["id"] for h in touching], merged["id"])
     return merged
 

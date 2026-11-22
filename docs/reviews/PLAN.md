@@ -350,7 +350,7 @@ If one of these matters to you, it can be a fourth review of its own. The first 
 
 One line for each item when it is done, with its commit.
 
-### Stage 1 (done 2026-11-22; 920 tests outside the browser and 67 in Chromium pass)
+### Stage 1 (done 2026-11-22; 876 tests outside the browser and 67 in Chromium pass; the nine jobs of CI are green on `89dde24`)
 
 - 1.10: A number inside a longer number is no error code (`fe43e63`)
 - 1.4: A new entry's id gets a counter, so the loop always ends (`5dc659d`)
@@ -373,3 +373,30 @@ Notes on stage 1:
 - 1.7: the test of Ctrl-C sends a real signal and is skipped on Windows, where a signal sent to oneself is not Ctrl-C. Ctrl-C on Windows is not verified.
 - 1.8: the browser test runs in the clock of the test machine (UTC in CI), so it cannot show the difference there; the rule is one line.
 - 1.14: done by writing the run's state only when it changed, not by a second function for reads.
+
+### Stages 2 and 3 (done 2026-11-22; 895 tests outside the browser and 67 in Chromium pass)
+
+- 2.1: One module for the files the app keeps (`168b5e4`)
+- 2.2: One way to make a backend; short limits for a call the reader waits for (`4cac8ba`)
+- 2.4: Tests: the ones that run the real EPUBCheck are marked, and fetch nothing unless told (`1b68800`)
+- 3.1, 3.2: A book's edits and rebuilds use the book's own lock; a model is asked with no lock held (`fdff6a8`)
+- 3.4: The engine asks 'is there a word' with one pattern (`78ab7dd`)
+- 3.3, in part: An edit makes the e-reader book once, not twice (`37b6587`)
+- 3.5: A book's outline is kept in a small file; its EPUB is read only for its text (`5a4d5d4`)
+- 3.6: The library keeps each book's summary until its files change (`64c5d6d`)
+- 3.7: The notes folder is listed five times as fast, and search makes only the snippets it shows (`e308e15`)
+- 3.8, first part: A small file can no longer unpack to gigabytes (`dffde50`)
+- 3.8, second part: Limits on picture requests, a day of the timeline and held files (`a376f74`)
+
+Notes on stages 2 and 3:
+
+- **Stage 1 is not on `main`.** The push was refused by the session's permission check. Everything is on `claude/dreamy-allen-6un3tt`.
+- 2.2: a call the reader waits for gets 300 seconds and one more try, not the 120 seconds of the plan: a question written with a high effort setting can take more than two minutes.
+- 2.3 (shared tools for the tests) is moved behind stage 5, so that it does not cross the many tests the stages before it add.
+- 2.4: the quick run (`-m "not epubcheck"`) takes 77 seconds here. Ten tests carry the mark; the broken books that EPUBCheck has no part in use a stand-in.
+- 3.2: built as planned, with one difference. A check is worked out on a copy of the run and then kept by a second, short step; `editing.check` itself is not cut in two. A verdict for a question changed meanwhile is refused.
+- 3.3: done in part. With 3.4 a rebuild of a 53,000-word book takes 1.1 s here (2.5 to 3.0 before) and the editor opens in 0.12 s (0.33 to 0.5). A kept copy of the opened run, and parsed books handed to the validator, would save about 0.3 s more and need changes inside the engine's validator. Left out.
+- 3.5: the outline is made from the prepared book alone and kept by that book's time and size, so it cannot disagree with `questions.json`. It is made the first time a book is asked for, not by the build. Measured with 50 books of 53,000 words: Practice opens in 0.15 s and reads no book (21 s before); the app holds 71 to 90 MB (688 to 975 MB before). The first start after the change makes the outlines once (7.7 s for the 50).
+- 3.6: `speed/R7` (small repeats) needs no change after 3.5: the Notes front page takes 0.09 s and a search 0.04 s with 50 books.
+- 3.7: the walk, the kept map of joins and the snippets are done: 28 ms for the walk and 40 ms for a search at 10,000 notes. The checks of one file only (`get`, the token, `save`) are left out: with the quick walk they would save little, and they change when an outside change is seen.
+- 3.8: a document of a book may be 16 MB, an entry 64 MB, a book 1 GB. Pictures: 150 addresses, not 80, so that a page with many small images before its real pictures keeps them.

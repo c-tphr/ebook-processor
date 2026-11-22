@@ -1,4 +1,4 @@
-"""The local web app: pick an EPUB, watch the run, review the questions, download the results.
+"""The local web app: add a book or an article, watch the run, review the questions, download the results.
 
 It is a small HTTP server from the standard library plus its own pages (the files in ``static/``). It listens on this computer only
 (127.0.0.1) unless told otherwise, and runs one book at a time.
@@ -74,10 +74,6 @@ class ApiError(Exception):
     def __init__(self, status: HTTPStatus, message: str):
         super().__init__(message)
         self.status = status
-
-
-def void(_: Any) -> None:
-    return None
 
 
 def _slug(name: str) -> str:
@@ -326,7 +322,7 @@ class Jobs:
             for pid in srs.queue(store, today, order, None):
                 card = store["cards"][pid]
                 kind = srs.kind_of(card, today)
-                key = srs._shuffle(pid, today) if kind in ("due", "first") else card["reviews"][-1]["at"] if card["reviews"] else ""
+                key = srs.shuffle_key(pid, today) if kind in ("due", "first") else card["reviews"][-1]["at"] if card["reviews"] else ""
                 lists[kind].append((card["due"] or "", key, job_id, pid))
         limit = settings["new_per_day"]
         room = None if limit is None else max(0, limit - new_done)
@@ -341,24 +337,22 @@ class Jobs:
             store, manifest, prompts = stores[job_id]
             section, prompt = prompts[pid]
             state = store["cards"][pid]
+
+            def shown(book: str, chapter: str, label: str, go: str | None, **own: Any) -> dict[str, Any]:
+                """The card as the page gets it. ``own`` is what differs between a book's card and a note's."""
+                return {"job": job_id, "id": pid, "book": book, "chapter": chapter, "section": label,
+                        "question": prompt["prompt"], "answer": prompt["answer"], **qforms.members(prompt), **own,
+                        "state": state["state"], "again": state["again"], "interval": round(state["interval"], 1),
+                        "first": srs.kind_of(state, today) == "first", "times": len(state["reviews"]), "go": go,
+                        "preview": srs.preview(state, today, settings)}
             if job_id == assist.DECK:  # a card from a note: the note is its passage, and where it leads
                 note = section
-                card = {"job": job_id, "id": pid, "book": "Your notes", "chapter": "", "section": "A note without a title" if note.untitled else note.title,
-                        "question": prompt["prompt"], "answer": prompt["answer"], **qforms.members(prompt), "editable": False, "note": note.id,
-                        "passage": [[{"t": " ".join(part.split()), "h": False}] for part in note.body.split("\n\n") if part.strip()][:12],
-                        "state": state["state"], "again": state["again"], "interval": round(state["interval"], 1),
-                        "first": srs.kind_of(state, today) == "first", "times": len(state["reviews"]), "go": None,
-                        "preview": srs.preview(state, today, settings)}
-                return {"counts": total, "left": len(line), "card": card, "settings": settings, "today": srs.day(today)}
-            chapter = next((c["title"] for c in manifest["chapters"] if c["index"] == section["chapter"]), "")
-            card = {"job": job_id, "id": pid, "book": manifest["title"], "chapter": chapter, "section": section["label"],
-                    "question": prompt["prompt"], "answer": prompt["answer"], **qforms.members(prompt),
-                    "editable": not prompt.get("hq") and self.editable(job_id),
-                    "passage": self.passage(job_id, pid),
-                    "state": state["state"], "again": state["again"], "interval": round(state["interval"], 1),
-                    "first": srs.kind_of(state, today) == "first",
-                    "times": len(state["reviews"]), "go": f"{section['chapter']}:{section['start']}",
-                    "preview": srs.preview(state, today, settings)}
+                card = shown("Your notes", "", "A note without a title" if note.untitled else note.title, None, editable=False, note=note.id,
+                             passage=[[{"t": " ".join(part.split()), "h": False}] for part in note.body.split("\n\n") if part.strip()][:12])
+            else:
+                chapter = next((c["title"] for c in manifest["chapters"] if c["index"] == section["chapter"]), "")
+                card = shown(manifest["title"], chapter, section["label"], f"{section['chapter']}:{section['start']}",
+                             editable=not prompt.get("hq") and self.editable(job_id), passage=self.passage(job_id, pid))
         return {"counts": total, "left": len(line), "card": card, "settings": settings, "today": srs.day(today)}
 
     def passage(self, job_id: str, pid: str) -> list[list[dict[str, Any]]]:
@@ -369,10 +363,8 @@ class Jobs:
         if mine is not None:  # made from a highlight: the paragraphs the highlight lies in
             refs = [{"ref": b.ref, "text": " ".join(b.words)} for _, b in hq.passage_refs(self.book(job_id), mine)]
         else:
-            path = self.folder(job_id) / f"{stem_of(self.jobs[job_id]['file'])}.questions.json"
-            try:
-                doc = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
+            doc = self._questions_doc(job_id)
+            if doc is None:
                 return []
             refs = next((q["passage"] for q in doc.get("questions", []) if q["id"] == pid), [])
         book = self.book(job_id)
@@ -400,12 +392,18 @@ class Jobs:
             out.append(runs)
         return out
 
-    def sources(self, job_id: str) -> dict[str, dict[str, int]]:
-        """For each question, where the passage behind its answer begins: ``{"chapter", "word"}``."""
+    def _questions_doc(self, job_id: str) -> Any:
+        """The book's ``questions.json`` as it is on disk; None when it is not there or cannot be read."""
         path = self.folder(job_id) / f"{stem_of(self.jobs[job_id]['file'])}.questions.json"
         try:
-            doc = json.loads(path.read_text(encoding="utf-8"))
+            return json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
+            return None
+
+    def sources(self, job_id: str) -> dict[str, dict[str, int]]:
+        """For each question, where the passage behind its answer begins: ``{"chapter", "word"}``."""
+        doc = self._questions_doc(job_id)
+        if doc is None:
             return {}
         where = self.book(job_id).blocks
         out = {}
@@ -512,7 +510,7 @@ class Jobs:
             self.looked[models] = time.monotonic()
         return backend
 
-    def _asked(self, job_id: str, call: Any) -> Any:
+    def _asked(self, call: Any) -> Any:
         try:
             return call()
         except UsageLimitError as exc:
@@ -549,7 +547,7 @@ class Jobs:
         mode = raw.get("passage") if raw.get("passage") in editing.PASSAGES else "section"
         if raw.get("supporting_paragraphs") is None and mode in ("model", "model_review"):
             settings, backend, _ = self._models(job_id, ["draft"])
-            chosen = self._asked(job_id, lambda: self._look(
+            chosen = self._asked(lambda: self._look(
                 job_id, lambda book, state: editing.choose_passage(backend, book, state, raw.get("section"), raw, settings)))
             if mode == "model_review":
                 return {"review": chosen}
@@ -606,14 +604,14 @@ class Jobs:
 
         def ask(book: Any, state: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             return editing.wording_of(editing.find(state, qid)), editing.check(backend, book, state, qid, settings, steer)
-        was, verdict = self._asked(job_id, lambda: self._look(job_id, ask))  # the model is asked with no lock held
+        was, verdict = self._asked(lambda: self._look(job_id, ask))  # the model is asked with no lock held
         self._edit(job_id, lambda book, state: editing.keep_verdict(state, qid, verdict, was), build=False)
         return self.book_question(job_id, qid)
 
     def rewrite_question(self, job_id: str, qid: str, raw: dict[str, Any]) -> dict[str, Any]:
         settings, backend, steer = self._models(job_id, ["draft"])
         draft = raw.get("draft") if isinstance(raw.get("draft"), dict) else None
-        return self._asked(job_id, lambda: self._look(
+        return self._asked(lambda: self._look(
             job_id, lambda book, state: editing.rewrite(backend, book, state, qid, raw.get("wish"), settings, steer, draft)))
 
     # ---- questions from highlights
@@ -934,8 +932,7 @@ class Jobs:
             if not vault.exists or not self._readable(job_id):
                 return
             book = self.book(job_id)
-            marks = self.folder(job_id) / notes.FILE
-            made_from = (self.prepared(job_id).stat().st_mtime_ns, marks.stat().st_mtime_ns if marks.is_file() else 0)
+            made_from = self._made_from(job_id)
             store = notes.load(self.folder(job_id))
             job = self.jobs[job_id]
             kind = self.type_of(job)
@@ -946,12 +943,17 @@ class Jobs:
             if not quiet:
                 raise exc if isinstance(exc, ApiError) else ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
 
+    def _made_from(self, job_id: str) -> tuple[int, int]:
+        """What a book's file in the notes folder is made from: when the prepared book was written, and when what
+        is marked in it last changed."""
+        marks = self.folder(job_id) / notes.FILE
+        return (self.prepared(job_id).stat().st_mtime_ns, marks.stat().st_mtime_ns if marks.is_file() else 0)
+
     def file_books(self) -> None:
         """Every book of the library has its file, made again when the book or what is marked in it changed."""
         for job_id in [j for j in list(self.jobs) if self._readable(j)]:
-            marks = self.folder(job_id) / notes.FILE
             try:
-                made_from = (self.prepared(job_id).stat().st_mtime_ns, marks.stat().st_mtime_ns if marks.is_file() else 0)
+                made_from = self._made_from(job_id)
             except OSError:
                 continue
             note = self.vault().book(bookfile.book_id(job_id))
@@ -1173,7 +1175,7 @@ class Jobs:
 
     def _helped(self, call: Any) -> Any:
         try:
-            return self._asked("", lambda: self._vaulted(call))
+            return self._asked(lambda: self._vaulted(call))
         except (assist.AssistError, hq.QuestionError) as exc:
             raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
 
@@ -1295,7 +1297,8 @@ class Jobs:
                     mine.update(checked=verdict, problem=verdict["problem"], made_from=assist.mark_of(note))
                     if mine["status"] == "held" and verdict["passed"]:
                         mine["status"] = "proposed"
-                return void(self._note_questions(checked))
+                self._note_questions(checked)
+                return
             if any(k in r for k in ("question", "answer", "form")):
                 self._note_questions(lambda store: assist.reword(store, note, qid, r.get("question"), r.get("answer"), r.get("form")))
             if r.get("accept") is True:
@@ -1470,7 +1473,7 @@ class Jobs:
                 title = r.get("title")
                 if isinstance(title, str) and title.strip():
                     title = clean_title(title)  # refused before anything is written
-                    taken = vault._taken(title, but=note)
+                    taken = vault.taken(title, but=note)
                     if taken is not None:
                         raise VaultError(f"There is already a note called {taken.title}.")
                 out = vault.save(note_id, r.get("body"), r.get("props"), r.get("token"), force=r.get("force") is True)
@@ -1675,14 +1678,26 @@ class Jobs:
                       job.get("confirmed") if state == "confirmed" else None)
         return None if steer.empty else steer
 
+    @staticmethod
+    def _steer_of(job: dict[str, Any]) -> Steer:
+        """The reader's own words for a book that waits for them, as the entry keeps them."""
+        mine = job["steer"]
+        return Steer(mine["purpose"], mine["about"], mine["style"])
+
+    @staticmethod
+    def _own_texts(ui: dict[str, Any], interests: Any) -> dict[str, str]:
+        """The reader's two texts from the settings: ``about``, what matters to them (empty when their interests do
+        not apply to this book), and ``style``, how they like questions."""
+        return {"about": str(ui.get("steer_about") or "") if interests else "", "style": str(ui.get("steer_style") or "")}
+
     def steer_for(self, job_id: str) -> Steer | None:
         """What the writer of a question on a highlight is told: the reader's words as they are now. The reading
         confirmed for the book's run stands for them for as long as they are the words it was made from."""
         job = self.get(job_id)
         ui = self.ui_settings()
         mine = job.get("steer") or {}
-        now_ = Steer(mine.get("purpose", ""), str(ui.get("steer_about") or "") if mine.get("interests", True) else "",
-                     str(ui.get("steer_style") or ""))
+        own = self._own_texts(ui, mine.get("interests", True))
+        now_ = Steer(mine.get("purpose", ""), own["about"], own["style"])
         if job.get("reading_state") == "confirmed" and job.get("confirmed") and job.get("confirmed_for") == now_.raw_key():
             return Steer(now_.purpose, now_.about, now_.style, job["confirmed"])
         return None if now_.empty else now_
@@ -1727,13 +1742,12 @@ class Jobs:
                 job["again"] = {"previous": steering.clean_reading(edited), "feedback": feedback, "answers": answers}
                 job["reading_state"] = "wanted"
             elif action == "confirm":
-                mine = job["steer"]
                 try:
-                    job["confirmed"] = steering.confirm(Steer(mine["purpose"], mine["about"], mine["style"]), edited, answers).reading
+                    job["confirmed"] = steering.confirm(self._steer_of(job), edited, answers).reading
                 except SteerError as exc:
                     raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
                 job["reading_state"] = "confirmed"
-                job["confirmed_for"] = Steer(mine["purpose"], mine["about"], mine["style"]).raw_key()
+                job["confirmed_for"] = self._steer_of(job).raw_key()
             elif action == "without":
                 job["reading_state"] = "without"
             else:
@@ -1769,7 +1783,7 @@ class Jobs:
                 mine["interests"] = request["interests"]
             if waiting:
                 ui = self.ui_settings()
-                mine.update(about=str(ui.get("steer_about") or "") if mine["interests"] else "", style=str(ui.get("steer_style") or ""))
+                mine.update(self._own_texts(ui, mine["interests"]))
                 steered = bool(purpose or mine["about"] or mine["style"])
                 job.update(read_as=None, confirmed=None,
                            reading_state="wanted" if steered and ui.get("steer_confirm") is not False else "none")
@@ -1849,7 +1863,7 @@ class Jobs:
             self.held[token] = entry
             for old in sorted(self.held, key=lambda t: self.held[t]["time"])[:-self.HELD]:
                 del self.held[old]
-        return self._seen(token, entry, made, split_how)
+        return self._seen(token, made, split_how)
 
     def _held(self, token: Any) -> dict[str, Any]:
         with self.lock:
@@ -1863,9 +1877,9 @@ class Jobs:
     def look_held(self, token: Any, split_how: str, whole: Any = None) -> dict[str, Any]:
         """A held file converted again, with another choice for its chapters or for how much of a page is taken."""
         entry = self._held(token)
-        return self._seen(token, entry, self._convert(entry, split_how, whole=_whole(whole)), split_how)
+        return self._seen(token, self._convert(entry, split_how, whole=_whole(whole)), split_how)
 
-    def _seen(self, token: str, entry: dict[str, Any], made: sources.Made, split_how: str) -> dict[str, Any]:
+    def _seen(self, token: str, made: sources.Made, split_how: str) -> dict[str, Any]:
         origin = made.origin
         with self.lock:
             same = [j for j in self.jobs.values() if isinstance(j.get("origin"), dict)
@@ -1924,8 +1938,7 @@ class Jobs:
         plan = plan if isinstance(plan, dict) else {}
         ui = self.ui_settings()
         interests = plan.get("interests") is not False
-        mine = {"purpose": _text(plan.get("purpose")), "interests": interests,
-                "about": str(ui.get("steer_about") or "") if interests else "", "style": str(ui.get("steer_style") or "")}
+        mine = {"purpose": _text(plan.get("purpose")), "interests": interests, **self._own_texts(ui, interests)}
         steered = bool(mine["purpose"] or mine["about"] or mine["style"])
         chapters = steering.chapter_list(book)
         trial = plan.get("trial")
@@ -2015,10 +2028,10 @@ class Jobs:
                           "message": "Reading what you want from the book, with a look at each chapter"})
         if backend is None:
             backend = self._backend(settings, ["draft"], cancel, lambda e: self._event(job, e), waiting=False)
-        mine, again = job["steer"], job.get("again") or {}
+        again = job.get("again") or {}
         try:
             book = load_book_bytes(epub.read_bytes(), job["file"])
-            shown, done = steering.read(backend, book, Steer(mine["purpose"], mine["about"], mine["style"]), settings,
+            shown, done = steering.read(backend, book, self._steer_of(job), settings,
                                         again.get("previous"), again.get("feedback", ""),
                                         [tuple(a) for a in again.get("answers", [])])
         except BackendCancelled:
@@ -2366,8 +2379,6 @@ class Handler(BaseHTTPRequestHandler):
             case ("GET", ["vault", "peek"]):
                 one = lambda name: (query.get(name) or [""])[0][:300]
                 return self.send_json(jobs.vault_peek(one("target"), one("anchor"), one("from") or None, one("full") == "1"))
-            case ("GET", ["vault", "tags"]):
-                return self.send_json({"tags": jobs.vault().tags()})
             case ("GET", ["vault", "trash"]):
                 return self.send_json({"notes": jobs.vault().trash()})
             case ("POST", ["vault", "trash", "restore"]):

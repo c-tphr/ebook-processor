@@ -257,7 +257,7 @@ def counts(store: dict[str, Any], today: _dt.date, known: set[str] | None = None
             "next_count": upcoming.count(upcoming[0]) if upcoming else 0}
 
 
-def _shuffle(pid: str, today: _dt.date) -> str:
+def shuffle_key(pid: str, today: _dt.date) -> str:
     """A key that orders cards due the same day at random, the same way all day."""
     return hashlib.sha256(f"{day(today)}:{pid}".encode()).hexdigest()
 
@@ -287,10 +287,10 @@ def queue(store: dict[str, Any], today: _dt.date, order: dict[str, int], new_lef
         if kind:
             groups[kind].append(pid)
     last_at = lambda pid: cards[pid]["reviews"][-1]["at"] if cards[pid]["reviews"] else ""  # noqa: E731
-    groups["due"].sort(key=lambda pid: (cards[pid]["due"], _shuffle(pid, today)))
+    groups["due"].sort(key=lambda pid: (cards[pid]["due"], shuffle_key(pid, today)))
     groups["again"].sort(key=lambda pid: (last_at(pid), order[pid]))
     groups["new"].sort(key=lambda pid: (len(cards[pid]["reviews"]), last_at(pid), order[pid]))
-    groups["first"].sort(key=lambda pid: _shuffle(pid, today))
+    groups["first"].sort(key=lambda pid: shuffle_key(pid, today))
     groups["later"].sort(key=lambda pid: (last_at(pid), order[pid]))
     if new_left is not None:
         groups["new"] = groups["new"][:max(0, new_left)]

@@ -1130,7 +1130,7 @@ class Vault:
 
     # ---- writing
 
-    def _taken(self, title: str, but: Note | None = None) -> Note | None:
+    def taken(self, title: str, but: Note | None = None) -> Note | None:
         return next((n for n in self.by_name.get(key(title), []) if n is not but), None)
 
     def _free(self, folder: str, name: str) -> str:
@@ -1138,7 +1138,7 @@ class Vault:
         n, candidate = 1, name
         while True:
             rel = f"{folder}/{candidate}.md" if folder else f"{candidate}.md"
-            if not (self.root / rel).exists() and not self._taken(candidate):
+            if not (self.root / rel).exists() and not self.taken(candidate):
                 return rel
             n += 1
             candidate = f"{name[:TITLE_MAX - 4]} {n}"
@@ -1226,7 +1226,7 @@ class Vault:
         self.refresh(force=True)
         with self.lock:
             if title and kind != "quick":
-                taken = self._taken(title)
+                taken = self.taken(title)
                 if taken is not None or (self.root / f"{title}.md").exists():
                     raise VaultError(f"There is already a note called {taken.title if taken else title}.")
                 rel = f"{title}.md"
@@ -1309,7 +1309,7 @@ class Vault:
                 note = self.by_id[saved["id"]]
             if title == note.title and not note.inbox:
                 return self.detail(note)
-            taken = self._taken(title, but=note)
+            taken = self.taken(title, but=note)
             folder = "" if note.inbox or "/" not in note.path else note.path.rsplit("/", 1)[0]
             rel = f"{folder}/{title}.md" if folder else f"{title}.md"
             if taken is not None or (key(rel) != key(note.path) and (self.root / rel).exists()):
@@ -1392,7 +1392,7 @@ class Vault:
             rel = source.resolve().relative_to(trash).as_posix()
             folder, stem = (rel.rsplit("/", 1)[0], rel.rsplit("/", 1)[1][:-3]) if "/" in rel else ("", rel[:-3])
             target, n = (f"{folder}/{stem}.md" if folder else f"{stem}.md"), 1
-            while (self.root / target).exists() or self._taken(target.rsplit("/", 1)[-1][:-3]):
+            while (self.root / target).exists() or self.taken(target.rsplit("/", 1)[-1][:-3]):
                 label = "restored" if n == 1 else f"restored {n}"
                 target = f"{folder}/{stem} ({label}).md" if folder else f"{stem} ({label}).md"
                 n += 1

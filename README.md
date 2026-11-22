@@ -500,6 +500,12 @@ python3 -m pip install -e '.[test]' && python3 -m pytest -q
 
 The tests never call a model: `tests/scripted.py` is a stand-in that answers from the task message alone, and small stand-in programs take the place of Claude Code and Codex.
 
+About twenty of the tests start Java to run the real EPUBCheck, and take more than half of the time. Without Java, or without EPUBCheck (it is fetched from the web once, by `--epubcheck` or with `EBOOK_PROCESSOR_TESTS_MAY_DOWNLOAD=1`, and then kept), they are skipped and say so. For a quick run that leaves them out:
+
+```bash
+python3 -m pytest -q -m "not epubcheck"
+```
+
 The browser tests (`tests/browser/`) drive the app itself: reading in the three views, checkpoints, highlights and notes, the notebook and the reader beside it, settings, adding a book, previews, practice, and the Notes area with its editor. They need Playwright and are left out without it:
 
 ```bash

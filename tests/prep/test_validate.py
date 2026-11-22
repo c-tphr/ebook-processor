@@ -14,7 +14,8 @@ from ebook_processor.prep.epub import load_book_bytes
 from tests.prep.bookmaker import make_epub, xhtml
 from tests.prep.prepkit import (CH1, CH2, CH3, CP, DRAFT, DRAFT_MANIFEST, MANIFEST, NEGATIVE, OPF, ORIGINAL,
                                       ORIGINAL_BYTES, PREPARED, PREPARED_BYTES, TS, edit, edit_checkpoints,
-                                      error_epubcheck, failing, ok_epubcheck, real_epubcheck, replace_once, run_prep,
+                                      epubchecked, error_epubcheck, failing, needs_epubcheck, ok_epubcheck, real_epubcheck, replace_once,
+                                      run_prep,
                                       span, status, unavailable_epubcheck, without_member)
 
 DRAFT_BYTES = DRAFT.read_bytes()
@@ -37,6 +38,7 @@ def only_failure(prepared: bytes, check: str, codes: set[str], **kw) -> V.Outcom
 # The prepared fixture passes everything
 
 
+@epubchecked
 def test_prepared_fixture_passes_every_check_with_real_epubcheck():
     out = V.validate_files(ORIGINAL, PREPARED, epubcheck=real_epubcheck, created=TS)
     assert out.passed, failing(out.result)
@@ -388,6 +390,7 @@ def test_whole_body_document_fails_even_under_the_limit(monkeypatch):
     assert failing(out.result) == {"exclusions": {"excluded-body-document"}}  # 44.2% is under 50%
 
 
+@epubchecked
 def test_draft_negative_fixtures_fail_exactly_their_checks():
     assert DRAFT_MANIFEST["format"] == "rsvp-negative-drafts" and DRAFT_MANIFEST["drafts"]
     for entry in DRAFT_MANIFEST["drafts"]:
@@ -456,9 +459,12 @@ def test_negative_manifest_lists_every_file():
         assert set(entry["failing_checks"]) <= {name for name, _ in V.CHECKS}
 
 
-@pytest.mark.parametrize("entry", MANIFEST["prepared"], ids=lambda e: e["file"])
+@pytest.mark.parametrize("entry", [pytest.param(e, marks=epubchecked) if "epubcheck" in e["failing_checks"] else e
+                                   for e in MANIFEST["prepared"]], ids=lambda e: e["file"])
 def test_negative_fixture_fails_exactly_its_checks(entry):
-    out = V.validate_files(ORIGINAL, NEGATIVE / entry["file"], epubcheck=real_epubcheck, created=TS)
+    # the real EPUBCheck only where its finding is the fault; elsewhere a stand-in that finds nothing, as it would
+    check = real_epubcheck if "epubcheck" in entry["failing_checks"] else ok_epubcheck
+    out = V.validate_files(ORIGINAL, NEGATIVE / entry["file"], epubcheck=check, created=TS)
     got = failing(out.result)
     assert set(got) == set(entry["failing_checks"]), got
     assert set().union(*got.values()) == set(entry["codes"]), got
@@ -466,6 +472,7 @@ def test_negative_fixture_fails_exactly_its_checks(entry):
     assert all(s in ("pass", "incomplete") for name, s in status(out.result).items() if name not in got)
 
 
+@epubchecked
 @pytest.mark.parametrize("entry", MANIFEST["checker"], ids=lambda e: e["file"])
 def test_checker_fixture_passes_the_validator(entry):
     """Structurally valid, so only the AI checker can catch its planted fault."""
@@ -479,7 +486,9 @@ def test_checker_fixture_passes_the_validator(entry):
 # Command line
 
 
+@epubchecked
 def test_cli_passes_on_the_fixture_and_writes_json(tmp_path):
+    needs_epubcheck()
     result = run_prep("validate", ORIGINAL, PREPARED, "--json", tmp_path / "v.json", "--timestamp", TS)
     assert result.returncode == 0, result.stdout + result.stderr
     assert "PASSED: all 13 checks passed." in result.stdout
@@ -492,7 +501,9 @@ def test_cli_passes_on_the_fixture_and_writes_json(tmp_path):
     assert (tmp_path / "v.json").read_bytes() == (tmp_path / "w.json").read_bytes()
 
 
+@epubchecked
 def test_cli_rejects_the_broken_link(tmp_path):
+    needs_epubcheck()
     result = run_prep("validate", ORIGINAL, NEGATIVE / "broken-link.prepared.epub", "--json", tmp_path / "v.json")
     assert result.returncode == 1
     assert "anchor-missing at OEBPS/text/chapter-2.xhtml#rsvp-s0004-end" in result.stderr
@@ -500,14 +511,18 @@ def test_cli_rejects_the_broken_link(tmp_path):
     assert json.loads((tmp_path / "v.json").read_text(encoding="utf-8"))["passed"] is False
 
 
+@epubchecked
 def test_cli_work_dir_supplies_the_draft(tmp_path):
+    needs_epubcheck()
     (tmp_path / "draft.json").write_bytes(DRAFT_BYTES)
     result = run_prep("validate", ORIGINAL, PREPARED, "--work-dir", tmp_path, "--json", tmp_path / "v.json")
     assert result.returncode == 0, result.stderr
     assert json.loads((tmp_path / "v.json").read_text(encoding="utf-8"))["coverage_mode"] == "draft"
 
 
+@epubchecked
 def test_cli_timestamp_from_source_date_epoch(tmp_path):
+    needs_epubcheck()
     env = dict(os.environ, SOURCE_DATE_EPOCH="1767225600")
     result = run_prep("validate", ORIGINAL, PREPARED, "--json", tmp_path / "v.json", env=env)
     assert result.returncode == 0

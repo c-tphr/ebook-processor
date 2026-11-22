@@ -35,4 +35,5 @@ ebook_processor = ["instructions/*.md", "prep/schema/*.json", "schema/*.json", "
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["epubcheck: starts Java for the real EPUBCheck, seconds each; leave them out with -m 'not epubcheck'"]
 filterwarnings = ["ignore:Session-scoped fixtures defined as instance methods:pytest.PytestRemovedIn10Warning"]  # from pytest-playwright

@@ -16,11 +16,12 @@ import pytest
 from ebook_processor.prep import build as build_module
 from ebook_processor.prep import checkpoints as cp
 from ebook_processor.prep import epub as epub_module
-from ebook_processor.prep import epubcheck, words
+from ebook_processor.prep import words
 from ebook_processor.prep.build import build_file
 from ebook_processor.prep.epub import load_book, load_book_bytes, all_text
 from ebook_processor.prep.epubzip import Archive
 from tests.prep.fixture import generate as gen
+from tests.prep import prepkit
 from tests.prep.bookmaker import make_draft, make_epub, xhtml
 
 REPO = Path(__file__).resolve().parents[2]
@@ -309,13 +310,10 @@ def test_prepared_book_cannot_be_prepared_again(prepared, tmp_path):
     assert "already-prepared" in result.stderr and "source-mismatch" in result.stderr
 
 
-def _epubcheck(path: Path):
-    try:
-        return epubcheck.run_epubcheck(path)
-    except epubcheck.EpubcheckUnavailable as exc:
-        pytest.skip(f"EPUBCheck unavailable, prepared EPUB NOT checked: {exc}")
+_epubcheck = prepkit.real_epubcheck
 
 
+@prepkit.epubchecked
 def test_prepared_fixture_passes_epubcheck(prepared):
     report = _epubcheck(prepared)
     assert report.errors == [], [str(m) for m in report.errors]
@@ -599,6 +597,7 @@ def test_footnote_marks_and_text_in_no_word(tmp_path):
     assert "\nOne.[^1] Two.[^2] Threerd web4 five six end.\n" in text
 
 
+@prepkit.epubchecked
 def test_anchors_around_non_prose_blocks_pass_epubcheck(tmp_path):
     epub = make_epub(tmp_path / "book.epub", [("text/edge.xhtml", EDGE_CHAPTER), ("text/plain.xhtml", PLAIN_CHAPTER)],
                      with_image=True, compression=zipfile.ZIP_DEFLATED)

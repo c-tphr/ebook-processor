@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import subprocess
 import sys
 import zipfile
@@ -52,11 +53,32 @@ def error_epubcheck(path: Path) -> epubcheck.Report:
                                                            ("OEBPS/text/chapter-1.xhtml:9:3",))])
 
 
+# The real EPUBCheck needs Java, and its release, which is fetched from the web once and then kept. A test fetches it
+# only when this is set (the checks on GitHub set it): the tests otherwise never reach the web.
+MAY_DOWNLOAD = os.environ.get("EBOOK_PROCESSOR_TESTS_MAY_DOWNLOAD") == "1"
+MUST_RUN = os.environ.get("EBOOK_PROCESSOR_TESTS_NEED_EPUBCHECK") == "1"  # there, a test without it fails: it is not skipped
+epubchecked = pytest.mark.epubcheck  # a test that starts Java for the real EPUBCheck: seconds each
+
+
+def _unchecked(exc: Exception) -> None:
+    text = f"EPUBCheck unavailable, NOT checked: {exc}"
+    pytest.fail(text) if MUST_RUN else pytest.skip(text)
+
+
 def real_epubcheck(path: Path) -> epubcheck.Report:
     try:
-        return epubcheck.run_epubcheck(path)
+        return epubcheck.run_epubcheck(path, download=MAY_DOWNLOAD)
     except epubcheck.EpubcheckUnavailable as exc:
-        pytest.skip(f"EPUBCheck unavailable, NOT checked: {exc}")
+        _unchecked(exc)
+
+
+def needs_epubcheck() -> None:
+    """For a test that runs the command line, which runs EPUBCheck itself: skip when it could not."""
+    try:
+        epubcheck.find_java()
+        epubcheck.ensure_epubcheck(download=MAY_DOWNLOAD)
+    except epubcheck.EpubcheckUnavailable as exc:
+        _unchecked(exc)
 
 
 def edit(data: bytes, changes: dict[str, Callable[[bytes], bytes]] | None = None,

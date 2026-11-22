@@ -13,7 +13,10 @@ import pytest  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def no_web(monkeypatch):
-    """No test reaches the web: a picture or a page is fetched from this computer only (a server the test starts)."""
+    """No test fetches a page or a picture from the web: only from this computer (a server the test starts).
+
+    This guards ``sources.fetch``. The one other thing a test could fetch is the release of EPUBCheck, and
+    ``tests/prep/prepkit.py`` allows that only where an environment variable says so."""
     from ebook_processor.sources import fetch
 
     real = fetch.check

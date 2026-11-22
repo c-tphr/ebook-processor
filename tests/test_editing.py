@@ -368,3 +368,35 @@ def test_a_book_made_elsewhere_cannot_be_edited_and_a_highlights_own_question_ca
         "form": {"form": "truefalse", "truth": True}})
     assert status == 200 and state["questions"][0]["form"] == "truefalse" and state["questions"][0]["status"] == "accepted"
     assert app("POST", f"/jobs/{app.id}/questions", json_body={"highlight": hid, "question": "Did it?", "answer": "Yes.", "form": {"form": "truefalse", "truth": True}})[0] == 400
+
+
+def test_a_question_too_many_for_a_section_is_refused_and_the_book_stays(app):
+    """The e-reader's file holds 32 questions for one checkpoint. The 33rd used to be written into the run, the
+    build then failed, and the book's file was deleted: the book could no longer be opened."""
+    folder = app.data / app.id
+    sid = app("GET", f"/jobs/{app.id}/book")[1]["sections"][0]["id"]
+    state_file = folder / "work" / "state.json"
+    before = state_file.read_bytes()
+
+    def many(book, state):
+        for n in range(32):
+            editing.add(state, book, sid, {"question": f"What is point {n}?", "answer": f"It is point {n} of the text."})
+    with pytest.raises(pipeline.PipelineError, match="A section can have 32 questions"):
+        change_run(folder, many)
+    assert state_file.read_bytes() == before and (folder / "fixture.prepared.epub").is_file()
+    assert app("GET", f"/jobs/{app.id}/book")[0] == 200
+    status, made = app("POST", f"/jobs/{app.id}/book-questions", json_body={"section": sid, "question": "One more?", "answer": "Yes, one."})
+    assert status == 201 or status == 200, made
+
+
+def test_looking_at_a_question_writes_nothing(app):
+    """Opening the editor went through the path that writes the run's state, and could undo a change made meanwhile."""
+    state_file = app.data / app.id / "work" / "state.json"
+    stamp = state_file.stat().st_mtime_ns
+    sid = app("GET", f"/jobs/{app.id}/book")[1]["sections"][0]["id"]
+    assert app("GET", f"/jobs/{app.id}/book-questions/c0002-p1")[0] == 200
+    assert app("GET", f"/jobs/{app.id}/sections/{sid}/paragraphs")[0] == 200
+    assert app("GET", f"/jobs/{app.id}/review")[0] == 200
+    assert state_file.stat().st_mtime_ns == stamp
+    assert app("POST", f"/jobs/{app.id}/book-questions/c0002-p1/check")[0] == 200   # a check is kept with the question
+    assert state_file.stat().st_mtime_ns != stamp

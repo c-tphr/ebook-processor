@@ -59,6 +59,20 @@ def _epubcheck_line(data: bytes, name: str, folder: Path) -> str:
     return f"EPUBCheck {report.version}: no errors, {len(report.warnings)} warning(s)."
 
 
+def unbuildable(book: Book, state: dict[str, Any]) -> list[str]:
+    """Why the book for the e-reader cannot be made from this state; empty when it can. A change to a finished
+    run is tried here before it is written, so that a change the format cannot hold is refused and not kept."""
+    draft_raw = draft_bytes(state)
+    _, issues, _ = check_draft(draft_raw, book)
+    if issues:
+        return [str(i) for i in issues[:5]]
+    try:
+        build_bytes(book, draft_raw)
+    except BuildError as exc:
+        return [str(i) for i in exc.issues[:5]]
+    return []
+
+
 def build_outputs(book: Book, original: bytes, state: dict[str, Any], out_dir: Path,
                   epubcheck: bool = False) -> dict[str, Any]:
     """Write every output file and return the report."""
@@ -82,11 +96,12 @@ def build_outputs(book: Book, original: bytes, state: dict[str, Any], out_dir: P
     try:
         prepared = build_bytes(book, draft_raw).data
     except BuildError as exc:
-        (out_dir / name).unlink(missing_ok=True)
-        files["prepared"] = None
+        # A book built earlier stays: it is what the reader opens, and an older book is better than none.
+        files["prepared"] = name if (out_dir / name).is_file() else None
         notes.append("The firmware-format book could not be built: " + "; ".join(str(i) for i in exc.issues[:5])
                      + ". A book this size exceeds what the firmware's checkpoint file can hold; a longer section "
-                       "length gives fewer sections.")
+                       "length gives fewer sections."
+                     + (" The book built before this is kept, without the last changes." if files["prepared"] else ""))
     else:
         (out_dir / name).write_bytes(prepared)
         files["prepared"] = name

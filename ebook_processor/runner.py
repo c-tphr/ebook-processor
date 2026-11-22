@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import threading
 from pathlib import Path
 from typing import Any, Iterable
 
 from . import forms as qforms
 from .llm import PROVIDERS, Backend, Backends, ClaudeCodeBackend, CodexBackend, Completion, Connection, service_urls
-from .outputs import build_outputs
+from .outputs import build_outputs, unbuildable
 from .pipeline import KEPT, SOURCE_COPY, STATE_FILE, Cancelled, PipelineError, Progress, kept, load_state, now, process, write_json
 from .prep.epub import EpubError, load_book_bytes
+from .prep.limits import MAX_PROMPTS, MAX_PROMPTS_PER_CHECKPOINT
 from .settings import Settings
 from .steer import Steer
 
@@ -165,14 +167,38 @@ def rebuild(out_dir: Path, remove: Iterable[str] = (), restore: Iterable[str] = 
                          state["settings"].get("epubcheck", False) if epubcheck is None else epubcheck)
 
 
+def _fits(book: Any, state: dict[str, Any]) -> None:
+    """Refuse a state from which the book for the e-reader cannot be made, with the reason in plain words."""
+    in_section: dict[str, int] = {}
+    for q in state["questions"]:
+        if kept(q):
+            in_section[q["section"]] = in_section.get(q["section"], 0) + 1
+    most = max(in_section.values(), default=0)
+    if most > MAX_PROMPTS_PER_CHECKPOINT:
+        raise PipelineError(f"A section can have {MAX_PROMPTS_PER_CHECKPOINT} questions, the most the e-reader's file "
+                            f"holds for one checkpoint, and this one would have {most}. Take a question out of it first.")
+    if sum(in_section.values()) > MAX_PROMPTS:
+        raise PipelineError(f"A book can have {MAX_PROMPTS:,} questions, the most the e-reader's file holds, and this "
+                            f"one would have {sum(in_section.values()):,}. Take a question out first.")
+    problems = unbuildable(book, state)
+    if problems:
+        raise PipelineError("This change cannot be kept, because the book for the e-reader could not be made with it: "
+                            + "; ".join(p[:200] for p in problems[:3]))
+
+
 def change_run(out_dir: Path, change: Any, build: bool = True) -> Any:
     """Apply ``change(book, state)`` to a finished run and build its outputs again, so that every file and the
-    reader hold the questions as they now are. Returns what ``change`` returns. Nothing is written when it raises."""
+    reader hold the questions as they now are. Returns what ``change`` returns. Nothing is written when it raises,
+    or when ``change`` only looked."""
     book, original, state = _open_run(out_dir)
     if state["stage"] != "done":
         raise PipelineError(f"the run in {out_dir} is not finished")
+    before = json.dumps(state, sort_keys=True)
     result = change(book, state)
-    write_json(work_dir(out_dir) / STATE_FILE, state)
+    if build:  # before anything is written: a change the e-reader's format cannot hold is refused, not half kept
+        _fits(book, state)
+    if json.dumps(state, sort_keys=True) != before:  # a look at the run writes nothing: it could undo a change made meanwhile
+        write_json(work_dir(out_dir) / STATE_FILE, state)
     if build:
         build_outputs(book, original, state, out_dir, state["settings"].get("epubcheck", False))
     return result

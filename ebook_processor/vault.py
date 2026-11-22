@@ -43,6 +43,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
+from .store import now
+
 BOOKS, ARTICLES, INBOX, TRASH = "Books", "Articles", "Inbox", ".trash"
 KINDS = ("idea", "index", "quick", "project-note", "project", "book", "article")
 # What was read, as the app keeps it: one file each, in its own folder. Everywhere else a note is the reader's.
@@ -72,10 +74,6 @@ class Conflict(VaultError):
     def __init__(self, message: str, current: dict[str, Any]):
         super().__init__(message)
         self.current = current
-
-
-def now() -> str:
-    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _nfc(text: str) -> str:

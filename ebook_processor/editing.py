@@ -19,7 +19,8 @@ from typing import Any
 from . import forms as qforms
 from . import prompts
 from .llm import Backend, BackendError
-from .pipeline import BookIndex, clean_text, normal_question, now, question_problems
+from .pipeline import BookIndex, clean_text, normal_question, question_problems
+from .store import now
 from .prep.epub import Block, Book, SpineDoc
 from .settings import Settings
 from .steer import INSTRUCTION_MAX, Steer

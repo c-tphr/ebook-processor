@@ -6,6 +6,7 @@ import csv
 import hashlib
 import io
 import re
+import secrets
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -13,8 +14,9 @@ from typing import Any
 from . import forms as qforms
 from . import __version__
 from .content import passage_text
-from .pipeline import KEPT as KEPT_STATUSES, BookIndex, kept, now
-from .prep.epub import DC_NS, Book, SpineDoc, squash
+from .pipeline import KEPT as KEPT_STATUSES, BookIndex, kept
+from .store import now, put_in_place
+from .prep.epub import DC_NS, Book, squash
 
 QUESTIONS_FORMAT = "ebook-processor-questions"
 QUESTIONS_VERSION = 1
@@ -243,5 +245,10 @@ def write_anki(doc: dict[str, Any], path: Path, cards: str = "all") -> int:
             guid=genanki.guid_for(source, doc["run_id"], q["id"]),
             tags=q["tags"]))
     path.parent.mkdir(parents=True, exist_ok=True)
-    genanki.Package(deck).write_to_file(str(path))
+    tmp = path.with_name(f".tmp-{secrets.token_hex(4)}{path.suffix}")  # through a temporary file, as every output is
+    try:
+        genanki.Package(deck).write_to_file(str(tmp))
+        put_in_place(str(tmp), path)
+    finally:
+        tmp.unlink(missing_ok=True)
     return len(deck.notes)

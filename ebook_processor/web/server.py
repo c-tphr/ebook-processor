@@ -38,7 +38,7 @@ from .. import highlight_questions as hq
 from .. import steer as steering
 from ..llm import BackendCancelled, BackendError, ClaudeCodeBackend, CodexBackend, Completion, UsageLimitError, available_models
 from ..outputs import load_report, stem_of
-from ..pipeline import STATE_FILE, now, write_json
+from ..pipeline import STATE_FILE
 from ..prompts import CRITERIA_WORDS
 from ..prep.epub import EpubError, load_book_bytes
 from ..prep.limits import MAX_PROMPTS
@@ -46,6 +46,7 @@ from ..runner import (Cancelled, PipelineError, change_run, default_backend, reb
                       try_chapter, work_dir)
 from ..settings import DENSITIES, MAX_QUESTIONS, Settings, SettingsError, from_options
 from ..steer import Steer, SteerError
+from ..store import now, write_json
 from ..vault import SOURCES as SOURCE_KINDS
 from ..vault import Conflict, Missing, Vault, VaultError, clean_title, compose
 

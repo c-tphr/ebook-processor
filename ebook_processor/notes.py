@@ -21,13 +21,12 @@ the highlights and notes in reading order, and the answers given at its checkpoi
 
 from __future__ import annotations
 
-import json
 import secrets
 from pathlib import Path
 from typing import Any
 
 from . import forms as qforms
-from .pipeline import now
+from .store import load_json, now
 from .reading import ReadingBook
 
 FILE = "notes.json"
@@ -42,16 +41,8 @@ class NotesError(ValueError):
 
 
 def load(folder: Path) -> dict[str, Any]:
-    path = folder / FILE
-    if path.is_file():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and data.get("version") == VERSION and isinstance(data.get("highlights"), list) \
-                    and isinstance(data.get("notes"), list):
-                return data
-        except ValueError:
-            pass
-    return {"version": VERSION, "highlights": [], "notes": []}
+    return load_json(folder / FILE, VERSION, lambda: {"version": VERSION, "highlights": [], "notes": []},
+                     lambda d: isinstance(d.get("highlights"), list) and isinstance(d.get("notes"), list))
 
 
 def _text(value: Any) -> str:

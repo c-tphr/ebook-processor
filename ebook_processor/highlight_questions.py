@@ -35,7 +35,7 @@ from . import forms as qforms
 from . import prompts
 from .content import render_blocks
 from .llm import Backend, BackendError
-from .pipeline import now
+from .store import now
 from .prep.epub import Block, SpineDoc
 from .prep.checkpoints import ANSWER_MAX_CHARS, PROMPT_MAX_CHARS, plain_text_problem
 from .reading import ReadingBook

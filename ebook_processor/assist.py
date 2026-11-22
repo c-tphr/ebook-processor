@@ -22,7 +22,6 @@ was made, by which a later change of the note is seen.
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import secrets
 from dataclasses import replace
@@ -34,7 +33,7 @@ from . import forms as qforms
 from . import highlight_questions as hq
 from . import prompts
 from .llm import Backend, BackendError
-from .pipeline import now
+from .store import load_json, now
 from .prep.checkpoints import ANSWER_MAX_CHARS, PROMPT_MAX_CHARS
 from .settings import Settings
 from .vault import Note, Vault, key, mask_code
@@ -234,15 +233,8 @@ def answer_markdown(question: str, got: dict[str, Any], day: str) -> str:
 
 
 def load(data: Path) -> dict[str, Any]:
-    path = data / FOLDER / FILE
-    if path.is_file():
-        try:
-            got = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(got, dict) and got.get("version") == VERSION and isinstance(got.get("questions"), list):
-                return got
-        except ValueError:
-            pass
-    return {"version": VERSION, "questions": []}
+    return load_json(data / FOLDER / FILE, VERSION, lambda: {"version": VERSION, "questions": []},
+                     lambda d: isinstance(d.get("questions"), list))
 
 
 def mark_of(note: Note) -> str:

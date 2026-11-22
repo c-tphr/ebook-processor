@@ -19,7 +19,8 @@ from typing import Any
 from . import __version__, exports, reading
 from . import highlight_questions as hq
 from . import notes as notes_mod
-from .pipeline import KEPT, draft_bytes, kept, now, write_json
+from .pipeline import KEPT, draft_bytes, kept
+from .store import now, write_bytes, write_json, write_text
 from .prompts import CRITERIA_WORDS
 from .prep import epubcheck as epubcheck_mod
 from .prep.build import BuildError, build_bytes
@@ -78,7 +79,7 @@ def build_outputs(book: Book, original: bytes, state: dict[str, Any], out_dir: P
 
     draft_raw = draft_bytes(state)
     work.mkdir(parents=True, exist_ok=True)
-    (work / "draft.json").write_bytes(draft_raw)
+    write_bytes(work / "draft.json", draft_raw)
     draft, issues, plan = check_draft(draft_raw, book)
     if issues:  # cannot happen after a completed run; a hand-edited state can do it
         raise ValueError("the saved run no longer fits the book:\n" + "\n".join(f"  {i}" for i in issues[:20]))
@@ -97,7 +98,7 @@ def build_outputs(book: Book, original: bytes, state: dict[str, Any], out_dir: P
                        "length gives fewer sections."
                      + (" The book built before this is kept, without the last changes." if files["prepared"] else ""))
     else:
-        (out_dir / name).write_bytes(prepared)
+        write_bytes(out_dir / name, prepared)
         files["prepared"] = name
         outcome = validate_bytes(original, state["source"]["file"], prepared, name, draft_raw, "draft.json",
                                  epubcheck=None if epubcheck else _no_epubcheck, created=now())
@@ -110,7 +111,7 @@ def build_outputs(book: Book, original: bytes, state: dict[str, Any], out_dir: P
     name = f"{stem}.checkpoints.epub"
     visible, visible_notes = build_visible(book, draft, plan, state["settings"].get("title_suffix", " (checkpoints)"),
                                            preview=bool(state["settings"].get("preview")))
-    (out_dir / name).write_bytes(visible)
+    write_bytes(out_dir / name, visible)
     files["visible"] = name
     notes += visible_notes
     if epubcheck:
@@ -129,7 +130,7 @@ def build_outputs(book: Book, original: bytes, state: dict[str, Any], out_dir: P
                      + ("those you missed on the first try." if cards == "missed" else "those you have met while reading."))
     write_json(out_dir / f"{stem}.questions.json", doc)
     files["questions"] = f"{stem}.questions.json"
-    (out_dir / f"{stem}.cards.tsv").write_text(exports.tsv_text(doc, cards), encoding="utf-8", newline="")
+    write_text(out_dir / f"{stem}.cards.tsv", exports.tsv_text(doc, cards), newline="")
     files["tsv"] = f"{stem}.cards.tsv"
     try:
         exports.write_anki(doc, out_dir / f"{stem}.anki.apkg", cards)
@@ -143,7 +144,7 @@ def build_outputs(book: Book, original: bytes, state: dict[str, Any], out_dir: P
     files["report_json"] = f"{stem}.report.json"
     report = make_report(state, doc, files, checks, prepared_ok, notes)
     write_json(out_dir / f"{stem}.report.json", report)
-    (out_dir / f"{stem}.report.md").write_text(report_markdown(report), encoding="utf-8", newline="\n")
+    write_text(out_dir / f"{stem}.report.md", report_markdown(report))
     return report
 
 

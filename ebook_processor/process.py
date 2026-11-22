@@ -15,12 +15,11 @@ section, a chapter or the book. Each item ends in one of three ways:
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
 from . import notes
-from .pipeline import now
+from .store import load_json, now
 from .reading import ReadingBook
 
 FILE = "process.json"
@@ -28,15 +27,7 @@ VERSION = 1
 
 
 def load(folder: Path) -> dict[str, Any]:
-    path = folder / FILE
-    if path.is_file():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and data.get("version") == VERSION and isinstance(data.get("aside"), dict):
-                return data
-        except ValueError:
-            pass
-    return {"version": VERSION, "aside": {}}
+    return load_json(folder / FILE, VERSION, lambda: {"version": VERSION, "aside": {}}, lambda d: isinstance(d.get("aside"), dict))
 
 
 def items(book: ReadingBook, store: dict[str, Any]) -> list[dict[str, Any]]:

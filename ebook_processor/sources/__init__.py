@@ -19,6 +19,7 @@ from typing import Any, Callable
 import lxml.etree as ET
 
 from ..prep.epub import EpubError, load_book_bytes
+from ..store import now
 from . import clean as C
 from . import fetch, pack, split
 from .chars import declared_in_html, decode
@@ -91,7 +92,6 @@ def tidy(url: str) -> str:
 
 def fetch_page(url: str) -> Page:
     """Ask a web address for its page. What comes back is converted like a file (``convert`` with ``url``)."""
-    import datetime
 
     url = url.strip()
     if url and "://" not in url and re.match(r"^[\w.-]+\.[a-z]{2,}(/|$)", url, re.I):
@@ -121,7 +121,7 @@ def fetch_page(url: str) -> Page:
         name = "page.txt"
     else:
         raise SourceError(f"This address gives a file that is not a web page ({got.kind}).")
-    return Page(name, got.data, tidy(got.url), got.charset, datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    return Page(name, got.data, tidy(got.url), got.charset, now())
 
 
 def _getter(base: str | None, folder: Path | None, web: bool, parts: dict[str, bytes] | None = None) -> Callable[[str], bytes | None]:

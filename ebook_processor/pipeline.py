@@ -20,13 +20,10 @@ Steps:
 from __future__ import annotations
 
 import copy
-import datetime as _dt
 import json
-import os
 import re
 import secrets
 import shutil
-import tempfile
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -46,6 +43,7 @@ from .prep.limits import MAX_LABEL_CHARS
 from .prep.validate import exclusion_category
 from .settings import INSTRUCTIONS_VERSION, Settings
 from .steer import Steer
+from .store import now, write_json  # noqa: F401  kept here too: older code and tests take them from this module
 
 STATE_FORMAT = "ebook-processor-state"
 STATE_VERSION = 1
@@ -64,25 +62,6 @@ class PipelineError(Exception):
 
 class Cancelled(Exception):
     """The run was stopped on request; its state is saved."""
-
-
-def now() -> str:
-    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def write_json(path: Path, data: Any) -> None:
-    """Write through a temporary file, so that a stop in the middle never leaves half a file."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=".tmp-", suffix=".json", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-            f.write("\n")
-        os.replace(tmp, path)
-    except BaseException:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
 
 
 def clean_text(value: Any) -> str:
@@ -471,7 +450,7 @@ class Run:
     def save(self) -> None:
         with self.lock:
             self.state["updated"] = now()
-            write_json(self.work / STATE_FILE, self.state)
+            write_json(self.work / STATE_FILE, self.state, sync=True)  # on the disk: a power cut must not cost the run
 
     def warn(self, message: str) -> None:
         with self.lock:

@@ -36,10 +36,11 @@ from __future__ import annotations
 
 import datetime as _dt
 import hashlib
-import json
 import random
 from pathlib import Path
 from typing import Any
+
+from .store import load_json
 
 FILE = "srs.json"
 VERSION = 1
@@ -170,15 +171,8 @@ def preview(card: dict[str, Any], today: _dt.date, settings: dict[str, Any]) -> 
 
 
 def load(folder: Path) -> dict[str, Any]:
-    path = folder / FILE
-    if path.is_file():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and data.get("version") == VERSION and isinstance(data.get("cards"), dict):
-                return data
-        except ValueError:
-            pass
-    return {"version": VERSION, "taken": {}, "cards": {}}
+    return load_json(folder / FILE, VERSION, lambda: {"version": VERSION, "taken": {}, "cards": {}},
+                     lambda d: isinstance(d.get("cards"), dict))
 
 
 def _taken(store: dict[str, Any], reading_state: dict[str, Any] | None) -> dict[str, str]:

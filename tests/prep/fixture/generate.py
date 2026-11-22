@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the synthetic fixture book under ``fixtures/books/``.
+"""Generate the synthetic fixture book under ``tests/data/books/``.
 
     python3 tests/prep/fixture/generate.py            # write the files
     python3 tests/prep/fixture/generate.py --check    # exit 1 if the committed files are stale
@@ -10,22 +10,21 @@ compression library involved, fixed timestamps, ids and file order):
 
 - ``fixture.epub``           EPUB 3 with a nav document and an NCX
 - ``fixture.draft.json``     the draft a drafter session would produce
-                             (schema: tests/prep/schema/draft.schema.json)
+                             (schema: ebook_processor/prep/schema/draft.schema.json)
 - ``fixture.expected.json``  ground truth word streams for other layers
-- ``README.md``              inventory and word counts
 
 The book's text, the draft and the deliberate tokenisation cases live in
 ``content.py``.
 
 Words follow the firmware's definition (docs/spikes/S1-word-stream.md
-section 5, plus NOTE regions), implemented once for the tools in
-``tests/prep/words.py``. The expected data is NOT produced by that word pass:
+section 5, plus NOTE regions; a document of eink-learner-aid), implemented once
+for the tools in ``ebook_processor/prep/words.py``. The expected data is NOT produced by that word pass:
 ``build_model`` derives it from the content model below, with its own small
 text splitter (``source_words``), because it knows what markup it writes.
 ``generate_files`` then runs the word pass on every XHTML document it wrote
 and refuses to write anything if the two routes disagree;
-``tests/test_fixture.py`` repeats the comparison through ``prep extract`` and
-``prep build``.
+``tests/prep/test_extract_build.py`` repeats the comparison through ``prep extract``
+and ``prep build``.
 """
 
 from __future__ import annotations
@@ -57,7 +56,12 @@ EPUB_NAME = "fixture.epub"
 DRAFT_NAME = "fixture.draft.json"
 EXPECTED_NAME = "fixture.expected.json"
 README_NAME = "README.md"
-OUTPUT_NAMES = (EPUB_NAME, DRAFT_NAME, EXPECTED_NAME, README_NAME)
+# The fixture is shared with c-tphr/eink-learner-aid, where this generator comes from (its tools/prep/fixture). The
+# three files below are kept here byte for byte as that repository has them, so the texts inside
+# ``fixture.expected.json`` that name files (``tools/prep/words.py`` and others) are that repository's paths: here
+# the same code is ``ebook_processor/prep/``. The inventory README of that repository's fixture folder is not kept
+# here, and neither is ``prepared.py``, which makes the prepared book and the broken books under ``negative/``.
+OUTPUT_NAMES = (EPUB_NAME, DRAFT_NAME, EXPECTED_NAME)
 
 OPF_DIR = "OEBPS"
 PROSE_ELEMENTS = {"h1": "heading", "h2": "heading", "p": "paragraph"}
@@ -77,7 +81,7 @@ RULES_VERSION = 1
 RULES = {
     "source": "Words follow docs/spikes/S1-word-stream.md section 5 ('What a word is'), the contract between "
     "lib/WordIndex and the preparation tools, plus one decision beyond it: footnote and endnote bodies are NOTE "
-    "regions. tests/prep/words.py implements the rules; this file is derived independently from the generator's "
+    "regions. tools/prep/words.py implements the rules; this file is derived independently from the generator's "
     "content model and cross-checked against that word pass.",
     "rules_version": "rules_version counts changes to these word rules. Any change that can move a word index "
     "raises it, and the firmware's WordIndex rulesVersion should carry the same number.",
@@ -105,7 +109,7 @@ RULES = {
     "epub:type footnote, endnote or endnotes, or role doc-footnote, doc-endnote or doc-endnotes; RSVP passes over "
     "it, page view shows it), each as [start, end).",
     "blocks": "'blocks' lists every block prep extract numbers, in document order: 'paragraph' is the reference a "
-    "draft cites (tests/prep/refs.py: 'd' and the 1-based spine position, '-p' and the block number; footnote "
+    "draft cites (tools/prep/refs.py: 'd' and the 1-based spine position, '-p' and the block number; footnote "
     "paragraphs '-n' and their own count), 'id' the XHTML id, 'kind' as in structure.json, and 'first_word' and "
     "'word_count' the block's words [first_word, first_word + word_count).",
     "noterefs": "'noterefs' lists every footnote reference mark with its text ('mark'), its markup form, its "
@@ -985,7 +989,7 @@ def build_expected(docs, epub_sha256: str) -> dict[str, Any]:
         "format": "rsvp-fixture-expected",
         "version": 2,
         "rules_version": RULES_VERSION,
-        "generated_by": "tests/prep/fixture/generate.py",
+        "generated_by": "tools/prep/fixture/generate.py",
         "epub": EPUB_NAME,
         "epub_sha256": epub_sha256,
         "rules": RULES,
@@ -1245,7 +1249,6 @@ def generate_files() -> dict[str, bytes]:
         EPUB_NAME: epub,
         DRAFT_NAME: _json_bytes(build_draft(docs, sha)),
         EXPECTED_NAME: _json_bytes(expected),
-        README_NAME: build_readme(docs, expected).encode("utf-8"),
     }
 
 

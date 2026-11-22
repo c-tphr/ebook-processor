@@ -65,7 +65,7 @@ On Windows itself (not WSL), npm installs Codex as a `codex.cmd` script. The too
 ebook-processor update
 ```
 
-This stops the app if it is running, fetches the latest `main` into the git checkout the tool was installed from, installs it, and starts the app again on the same port and data folder, in the terminal where you gave the command. With `--no-serve` it updates and stops there.
+This looks at the git checkout the tool was installed from and fetches the latest `main`. Then it stops the app if it is running, installs the new version, and starts the app again on the same port and data folder, in the terminal where you gave the command. With `--no-serve` it updates and stops there. When the update cannot be made (see below, or no network), the app is left running; when it fails after the app was stopped, the app is started again as it was.
 
 - The checkout must have no uncommitted changes to tracked files; otherwise nothing is touched and the message says what to do.
 - If the checkout is on another branch, it is switched to `main`. A branch that holds commits found on no branch of the remote (work of your own) is not left: the message says so and nothing is touched.
@@ -223,7 +223,8 @@ A book's questions are yours to change. **Edit question** is on the book's page 
 - **A question the check left out** can be edited too. The window says what the check objected to; once you have changed the question it is kept.
 - **Your results stay.** Editing does not touch the grade or the practice schedule. When an edit changes what is asked, **Start this card over** makes the question count as never answered: it is asked again at its checkpoint, or is a new card in Practice if you are past it. What you answered before stays in the notebook.
 - **Add a question** is beside each section on the book's page. You pick the kind and write it. Its passage is the whole section unless Settings says otherwise (Your questions, "A question you add yourself"): you pick the paragraphs, or the model picks them in one short call, with or without showing you its choice first. An added question is asked at its section's checkpoint, or goes straight to Practice when you have read past it. **Write my own** on a highlight offers the four kinds as well.
-- **At once.** A saved change is in the reader, Practice, the notebook and every file straight away; saving takes a second or two because the files are written again. Taking questions out still waits for **Rebuild files**.
+- **At once.** A saved change is in the reader, Practice, the notebook and every file straight away; saving takes a second or two because the files are written again. The rest of the app goes on meanwhile, also while a model checks or rewrites a question. Taking questions out still waits for **Rebuild files**.
+- **How many.** A section can have 32 questions and a book 1,024: the most the e-reader's file holds. One more is refused, and says so.
 
 A book added as a ready-made prepared EPUB has no run behind it, so its questions cannot be edited.
 
@@ -516,12 +517,20 @@ python3 -m pip install -e '.[browser]' && python3 -m playwright install
 python3 -m pytest tests/browser --browser firefox
 ```
 
-After every push GitHub runs both (`.github/workflows/tests.yml`): the test suite on Linux, Windows and macOS, and the browser tests in Chromium and Firefox on Linux and Windows and in WebKit, the engine of Safari, on macOS.
+After every push GitHub runs both (`.github/workflows/tests.yml`): the test suite on Linux, Windows and macOS, and the browser tests in Chromium and Firefox on Linux and Windows and in WebKit, the engine of Safari, on macOS. One more job runs the linter (`ruff check`, with the few rules set in `pyproject.toml`) and builds the note editor from its source, and fails when the committed `editor.js` is not that build.
 
 | Path | Contents |
 | --- | --- |
 | `ebook_processor/prep/` | The EPUB engine, ported from `tools/prep` of eink-learner-aid: reading and numbering (`epub.py`, `words.py`), byte-exact rewriting (`epubzip.py`, `xmltree.py`), the draft's checks (`draft.py`), the firmware-format build (`build.py`) and its validator (`validate.py`). `python3 -m ebook_processor.prep` runs `extract`, `build` and `validate` on their own |
-| `ebook_processor/sources/` | What is no EPUB, turned into one at the door: any HTML made clean (`clean.py`), chapters cut at headings (`split.py`), the EPUB written (`pack.py`), a reader for each format (`from_markdown.py`, `from_text.py`, `from_html.py`, which also finds the article in a page with trafilatura, `from_docx.py` with mammoth, `saved.py` for `.mhtml`), one web request with limits (`fetch.py`). `fetch_page()` and `convert()` are all the rest of the app calls. Design: `docs/SOURCES-PLAN.md` |
+| `ebook_processor/sources/` | What is no EPUB, turned into one at the door: any HTML made clean (`clean.py`), chapters cut at headings (`split.py`), the EPUB written (`pack.py`), a reader for each format (`from_markdown.py`, `from_text.py`, `from_html.py`, which also finds the article in a page with trafilatura, `from_docx.py` with mammoth, `saved.py` for `.mhtml`), one web request with limits (`fetch.py`), the encoding of a file worked out (`chars.py`). The rest of the app calls `fetch_page()` and `convert()`, and asks `is_source()` whether a file is one of these. Design: `docs/SOURCES-PLAN.md` |
+| `ebook_processor/cli.py` | The command line: every command and its options |
+| `ebook_processor/runner.py` | Where the command line and the web app meet: run a book, try a chapter, rebuild the files, change a finished run, make a backend and look for its tools |
+| `ebook_processor/settings.py` | The settings of a run: their limits, their defaults and what they are saved as |
+| `ebook_processor/steer.py`, `instructions/reading.md` | What you want from a book: your texts, the model's reading of them, and what the drafter and the checker are told |
+| `ebook_processor/forms.py` | The kinds of question (open, multiple choice, true or false, fill in the blank): their members, their checks and their plain-text form |
+| `ebook_processor/editing.py` | Changes to a finished run's questions: edit, add, delete, restore, check, rewrite |
+| `ebook_processor/content.py` | What of a section is sent to a model: its text, its pictures, its tables |
+| `ebook_processor/store.py` | The files the app keeps: the time, writes through a temporary file, the loading of a stored JSON file |
 | `ebook_processor/pipeline.py` | The run: parts, drafting, checking, revising, the saved state |
 | `ebook_processor/prompts.py`, `instructions/` | What is sent to Claude, and the reply shapes |
 | `ebook_processor/llm.py` | Claude Code without a terminal (`claude -p`, with no tools, no settings and no session history), Codex the same way (`codex exec`), and the router that sends each call to the tool its model setting names. A backend that calls an API directly would go here |
@@ -538,7 +547,7 @@ After every push GitHub runs both (`.github/workflows/tests.yml`): the test suit
 | `editor/` | The source of the note editor: CodeMirror 6 with the additions a notes folder needs (see below) |
 | `ebook_processor/reading.py` | A prepared EPUB as the reader needs it (clean chapter HTML with word positions, sections, search) and the saved reading state |
 | `ebook_processor/update.py` | `ebook-processor update` and `beta`: find and stop the running app, bring the checkout to the latest `main` or development branch, install, start again |
-| `ebook_processor/web/` | The local web app: a standard-library HTTP server, the library page (`index.html`), the reader (`reader.html`, which is also the reader beside the notebook when opened with `?pane=1` in a frame), and the scripts both share: the settings window (`settings.js`), the questions' forms (`forms.js`), a note's page and the Quick note box (`notes.js`) and the built editor (`editor.js`) |
+| `ebook_processor/web/` | The local web app: a standard-library HTTP server, the library page (`index.html`), the reader (`reader.html`, which is also the reader beside the notebook when opened with `?pane=1` in a frame), and the scripts both share: the element builder and the call to the app (`base.js`), the settings window (`settings.js`), the questions' forms (`forms.js`), a note's page and the Quick note box (`notes.js`) and the built editor (`editor.js`). Two views of the library page are scripts of their own: the graph (`graph.js`) and the Process view (`process.js`) |
 | `tests/data/` | A small made-up book with its expected results, broken prepared books the validator must reject, and Thomas Paine's *Essays* (Standard Ebooks, CC0) |
 
 **The note editor** is the one part of the app that is built from other people's code in the browser: [CodeMirror 6](https://codemirror.net) and the Lezer Markdown parser, both MIT. Its source is `editor/src/index.js`; the file the app serves, `ebook_processor/web/static/editor.js`, is built from it with esbuild and committed, so that installing and running the app needs no Node. To change the editor (Node 20 or later):

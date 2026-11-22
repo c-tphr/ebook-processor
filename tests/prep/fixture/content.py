@@ -2,7 +2,7 @@
 
 Everything the generator writes (the EPUB, the draft and the expected word
 data) is derived from the constants in this file. Edit here, then run
-``python3 tools/prep/fixture/generate.py`` and commit the regenerated files.
+``python3 tests/prep/fixture/generate.py`` and commit the regenerated files.
 
 Inline markup inside ``("p", ...)`` and heading strings:
 

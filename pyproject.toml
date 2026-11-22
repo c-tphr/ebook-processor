@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ebook-processor"
-version = "0.1.0"
+dynamic = ["version"]  # the one place it is written is ebook_processor/__init__.py
 description = "Add retrieval-practice checkpoints to a book or an article and export the questions for spaced repetition."
 readme = "README.md"
 license = { text = "MIT" }
@@ -22,6 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
+lint = ["ruff>=0.6"]
 browser = ["pytest>=7", "pytest-playwright>=0.5", "playwright>=1.49"]  # the app in Chromium, Firefox and WebKit
 
 [project.scripts]
@@ -32,6 +33,18 @@ include = ["ebook_processor*"]
 
 [tool.setuptools.package-data]
 ebook_processor = ["instructions/*.md", "prep/schema/*.json", "schema/*.json", "web/static/*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "ebook_processor.__version__" }
+
+# The linter looks for real faults (a name that does not exist, an import or a variable nobody uses) and for the
+# few rules the code already marks its exceptions to with "noqa". It does not judge the style of the code.
+[tool.ruff]
+line-length = 160
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["F", "E4", "E7", "E9", "N802", "BLE001"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

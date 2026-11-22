@@ -19,6 +19,7 @@ from ebook_processor.settings import Settings
 from ebook_processor.web import server as web
 from tests.paths import FIXTURE, PREPARED
 from tests.scripted import Script
+from tests.webapp import wait_for_run
 
 
 @pytest.fixture(scope="module")
@@ -191,11 +192,7 @@ def app(tmp_path):
     stand = Stand()
     jobs = web.Jobs(tmp_path / "data", backend_factory=stand.backend)
     job = jobs.create("fixture.epub", FIXTURE.read_bytes(), web.from_options(density="short"))
-    for _ in range(400):
-        if jobs.get(job["id"])["status"] not in ("queued", "running"):
-            break
-        time.sleep(0.05)
-    assert jobs.get(job["id"])["status"] == "done"
+    assert wait_for_run(jobs, job["id"])["status"] == "done"
     return jobs, job["id"], stand
 
 

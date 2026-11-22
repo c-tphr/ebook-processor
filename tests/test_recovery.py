@@ -22,8 +22,8 @@ from ebook_processor.pipeline import Cancelled
 from ebook_processor.runner import default_backend, run_book
 from ebook_processor.settings import from_options
 from ebook_processor.web.server import Jobs
-from tests.programs import gone, make_program
 from tests.paths import FIXTURE
+from tests.programs import gone, make_program
 
 
 class Clock:

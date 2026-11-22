@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import threading
-import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -13,46 +11,18 @@ from pathlib import Path
 import pytest
 
 from ebook_processor import cli, runner
-from ebook_processor.web import server as web
+from tests.paths import FIXTURE
 from tests.scripted import Script
 from tests.sources.test_convert import MARKDOWN, PAGE, body
-from tests.paths import FIXTURE
 
 TEXT_BOOK = "The Lamp Book\n\n" + "\n\n".join(f"CHAPTER {r}\n\n{body(2500)}" for r in ("I", "II", "III"))
 
 
 @pytest.fixture
-def app(tmp_path):
-    server = web.make_server(tmp_path / "data", "127.0.0.1", 0, backend_factory=lambda settings: Script().backend(),
-                             claude={"ok": True, "version": "test"}, models=[])
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{server.server_address[1]}"
-
-    def call(method: str, path: str, json_body=None, body: bytes | None = None):
-        if json_body is not None:
-            body = json.dumps(json_body).encode()
-        request = urllib.request.Request(base + "/api" + path, data=body, method=method, headers={"X-Ebook-Processor": "1"})
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return response.status, json.loads(response.read())
-        except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read())
-
-    def done(job_id: str) -> dict:
-        for _ in range(600):
-            job = call("GET", f"/jobs/{job_id}")[1]
-            if job["status"] not in ("queued", "running"):
-                return job
-            time.sleep(0.05)
-        raise AssertionError("the run did not end")
-
-    call.done = done
-    call.jobs = server.RequestHandlerClass.jobs
-    call.data = tmp_path / "data"
-    call.folder = tmp_path / web.NOTES_FOLDER
-    yield call
-    server.shutdown()
-    server.server_close()
+def app(make_web_app):
+    call = make_web_app().function("/api")
+    call.done, call.folder = call.wait, call.notes_folder
+    return call
 
 
 def test_a_markdown_file_is_looked_at_held_and_processed(app):

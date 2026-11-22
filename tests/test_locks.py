@@ -13,8 +13,9 @@ import pytest
 
 from ebook_processor.web import runs
 from ebook_processor.web import server as web
-from tests.scripted import Script
 from tests.paths import FIXTURE
+from tests.scripted import Script
+from tests.webapp import wait_for_run
 
 
 @pytest.fixture
@@ -32,11 +33,7 @@ def lib(tmp_path):
 
     jobs = web.Jobs(tmp_path / "data", backend_factory=lambda settings: Held())
     job = jobs.create("fixture.epub", FIXTURE.read_bytes(), web.from_options(density="short"))
-    for _ in range(400):
-        if jobs.get(job["id"])["status"] not in ("queued", "running"):
-            break
-        time.sleep(0.05)
-    assert jobs.get(job["id"])["status"] == "done"
+    assert wait_for_run(jobs, job["id"])["status"] == "done"
     ids = [p["id"] for s in jobs.manifest(job["id"])["sections"] for p in s["prompts"]]
     return jobs, job["id"], ids, gate
 

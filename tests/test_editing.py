@@ -4,11 +4,6 @@ question of the reader's own, the model's help on request, and the app's side of
 from __future__ import annotations
 
 import json
-import threading
-import time
-import urllib.error
-import urllib.parse
-import urllib.request
 import zipfile
 from pathlib import Path
 
@@ -19,9 +14,8 @@ from ebook_processor.llm import BackendError, ScriptedBackend
 from ebook_processor.runner import change_run, rebuild, review_data, run_book
 from ebook_processor.settings import from_options
 from ebook_processor.steer import Steer
-from ebook_processor.web.server import make_server
-from tests.scripted import Script
 from tests.paths import FIXTURE
+from tests.scripted import Script
 
 ALL = from_options(density="short", forms="all")
 
@@ -266,33 +260,11 @@ def test_an_overruled_verdict_and_a_question_started_over_survive_a_later_save()
 
 
 @pytest.fixture
-def app(tmp_path):
-    script = Script()
-    server = make_server(tmp_path / "data", "127.0.0.1", 0, backend_factory=lambda settings: script.backend(),
-                         claude={"ok": True, "version": "test"}, models=[])
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{server.server_address[1]}/api"
-
-    def call(method: str, path: str, body: bytes | None = None, json_body=None):
-        if json_body is not None:
-            body = json.dumps(json_body).encode()
-        request = urllib.request.Request(base + path, data=body, method=method, headers={"X-Ebook-Processor": "1"})
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return response.status, json.loads(response.read())
-        except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read())
-
-    query = urllib.parse.urlencode({"name": "fixture.epub", "settings": json.dumps({"density": "short", "forms": "all"})})
-    job_id = call("POST", f"/jobs?{query}", FIXTURE.read_bytes())[1]["id"]
-    for _ in range(400):
-        if call("GET", f"/jobs/{job_id}")[1]["status"] not in ("queued", "running"):
-            break
-        time.sleep(0.05)
-    call.id, call.script, call.jobs, call.data = job_id, script, server.RequestHandlerClass.jobs, tmp_path / "data"
-    yield call
-    server.shutdown()
-    server.server_close()
+def app(make_web_app):
+    """The app with one processed book, whose id is ``app.id``. Paths are given without "/api"."""
+    call = make_web_app(model=Script()).function("/api")
+    call.id = call.process_fixture(density="short", forms="all")["id"]
+    return call
 
 
 def test_the_app_edits_adds_checks_and_rewrites(app):

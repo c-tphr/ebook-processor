@@ -4,7 +4,6 @@ is kept, what each output shows, and the app's side. No test calls a model."""
 from __future__ import annotations
 
 import json
-import threading
 import time
 import urllib.error
 import urllib.parse
@@ -18,9 +17,8 @@ from ebook_processor import cli, forms, pipeline, prompts, reading, steer
 from ebook_processor import highlight_questions as hq
 from ebook_processor.runner import review_data, run_book
 from ebook_processor.settings import Settings, SettingsError, from_options
-from ebook_processor.web.server import make_server
-from tests.scripted import EMPTY_FORM, Script, formed
 from tests.paths import FIXTURE
+from tests.scripted import EMPTY_FORM, Script, formed
 
 ALL = from_options(density="short", forms="all")
 CHOICE = {"prompt": "What did the keeper wind each evening?", "answer": "The log says the clockwork had to be wound.",
@@ -310,41 +308,12 @@ def test_a_question_on_a_highlight_can_take_an_allowed_form_and_be_changed():
 
 
 @pytest.fixture
-def app(tmp_path):
-    script = Script()
-    server = make_server(tmp_path / "data", "127.0.0.1", 0, backend_factory=lambda settings: script.backend(),
-                         claude={"ok": True, "version": "test"}, models=[])
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{server.server_address[1]}/api"
-
-    def call(method: str, path: str, body: bytes | None = None, json_body=None):
-        if json_body is not None:
-            body = json.dumps(json_body).encode()
-        request = urllib.request.Request(base + path, data=body, method=method, headers={"X-Ebook-Processor": "1"})
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                raw = response.read()
-                return response.status, (json.loads(raw) if response.headers.get("Content-Type", "").startswith("application/json") else raw)
-        except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read())
-
-    call.script, call.jobs, call.data = script, server.RequestHandlerClass.jobs, tmp_path / "data"
-    yield call
-    server.shutdown()
-    server.server_close()
+def app(make_web_app):
+    return make_web_app(model=Script()).function("/api")
 
 
 def added(call, settings: dict) -> str:
-    query = urllib.parse.urlencode({"name": "fixture.epub", "settings": json.dumps(settings)})
-    status, job = call("POST", f"/jobs?{query}", FIXTURE.read_bytes())
-    assert status == 201, job
-    for _ in range(400):
-        status, job = call("GET", f"/jobs/{job['id']}")
-        if job["status"] not in ("queued", "running"):
-            break
-        time.sleep(0.05)
-    assert job["status"] == "done", job["message"]
-    return job["id"]
+    return call.process_fixture(**settings)["id"]
 
 
 def test_the_app_processes_reads_practises_and_notes_the_forms(app):

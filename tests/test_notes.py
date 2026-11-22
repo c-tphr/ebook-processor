@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import json
-import threading
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 import pytest
 
 from ebook_processor import notes, reading
-from ebook_processor.web.server import make_server
 from tests.paths import PREPARED
 
 
@@ -110,26 +105,9 @@ def test_the_notebook_follows_the_book_and_the_export_leaves_out_what_is_empty(b
 
 
 @pytest.fixture
-def app(tmp_path):
-    server = make_server(tmp_path / "data", "127.0.0.1", 0, claude={"ok": True, "version": "test"}, models=[])
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{server.server_address[1]}"
-
-    def call(method: str, path: str, body: bytes | None = None, json_body=None):
-        if json_body is not None:
-            body = json.dumps(json_body).encode()
-        request = urllib.request.Request(base + path, data=body, method=method, headers={"X-Ebook-Processor": "1"})
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                raw = response.read()
-                kind = response.headers.get("Content-Type", "")
-                return response.status, (json.loads(raw) if kind.startswith("application/json") else raw.decode()), response.headers
-        except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read()), exc.headers
-
-    yield call
-    server.shutdown()
-    server.server_close()
+def app(make_web_app):
+    """The answers with their headers, and what is no JSON as text."""
+    return make_web_app(model=None).function(answer=lambda r: (r.status, r.data if r.is_json else r.text, r.headers))
 
 
 def test_the_routes_keep_highlights_and_notes_and_serve_the_notebook(app):
@@ -157,14 +135,10 @@ def test_a_practice_card_shows_what_was_highlighted_in_its_passage(tmp_path):
     from ebook_processor.web import server as web
     from tests.scripted import Script
     from tests.paths import FIXTURE
-    import time
+    from tests.webapp import wait_for_run
     jobs = web.Jobs(tmp_path / "data", backend_factory=lambda settings: Script().backend())
     job = jobs.create("fixture.epub", FIXTURE.read_bytes(), web.from_options(density="short"))
-    for _ in range(200):
-        if jobs.get(job["id"])["status"] not in ("queued", "running"):
-            break
-        time.sleep(0.05)
-    assert jobs.get(job["id"])["status"] == "done"
+    assert wait_for_run(jobs, job["id"])["status"] == "done"
     jid = job["id"]
     sources = jobs.sources(jid)  # where the notebook's "Open the passage" goes: the first paragraph behind the answer
     block = next(b for sd in jobs.book(jid).book.spine for b in sd.blocks if b.start == sources["c0001-p1"]["word"] and sd.index == sources["c0001-p1"]["chapter"])

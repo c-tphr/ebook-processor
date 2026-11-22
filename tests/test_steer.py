@@ -4,7 +4,6 @@ estimate of questions, and the app's side of each. No test calls a model."""
 from __future__ import annotations
 
 import json
-import threading
 import time
 import urllib.error
 import urllib.parse
@@ -21,9 +20,8 @@ from ebook_processor.prep.epub import load_book
 from ebook_processor.runner import review_data, run_book, trial_dir, try_chapter
 from ebook_processor.settings import MAX_QUESTIONS, Settings, SettingsError, from_options
 from ebook_processor.steer import Steer
-from ebook_processor.web.server import make_server
-from tests.scripted import Script
 from tests.paths import FIXTURE
+from tests.scripted import Script
 
 SHORT = from_options(density="short")
 WANT = Steer(purpose="I want to know how the lamp is kept burning.", about="I keep a lighthouse.",
@@ -294,44 +292,16 @@ def test_a_question_on_a_highlight_follows_the_wishes_and_a_wish_for_this_one_qu
 
 
 @pytest.fixture
-def app(tmp_path):
-    script = Script()
-    server = make_server(tmp_path / "data", "127.0.0.1", 0, backend_factory=lambda settings: script.backend(),
-                         claude={"ok": True, "version": "test"}, models=[])
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{server.server_address[1]}/api"
-
-    def call(method: str, path: str, body: bytes | None = None, json_body=None):
-        if json_body is not None:
-            body = json.dumps(json_body).encode()
-        request = urllib.request.Request(base + path, data=body, method=method, headers={"X-Ebook-Processor": "1"})
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return response.status, json.loads(response.read())
-        except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read())
-
-    call.script, call.jobs, call.data = script, server.RequestHandlerClass.jobs, tmp_path / "data"
-    yield call
-    server.shutdown()
-    server.server_close()
+def app(make_web_app):
+    return make_web_app(model=Script()).function("/api")
 
 
 def add(call, plan: dict | None = None, settings: dict | None = None) -> str:
-    query = urllib.parse.urlencode({"name": "fixture.epub", "settings": json.dumps(settings or {"density": "short"}),
-                                    "plan": json.dumps(plan or {})})
-    status, job = call("POST", f"/jobs?{query}", FIXTURE.read_bytes())
-    assert status == 201, job
-    return job["id"]
+    return call.add_fixture(plan or {}, **(settings or {"density": "short"}))
 
 
 def settled(call, job_id: str) -> dict:
-    for _ in range(400):
-        status, job = call("GET", f"/jobs/{job_id}")
-        if job["status"] not in ("queued", "running"):
-            return job
-        time.sleep(0.05)
-    raise AssertionError("the run did not settle")
+    return call.wait(job_id)
 
 
 def test_the_app_looks_at_a_book_and_estimates_before_anything_runs(app):

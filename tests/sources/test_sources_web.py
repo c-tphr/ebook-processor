@@ -13,7 +13,7 @@ import pytest
 from ebook_processor import cli, runner
 from tests.paths import FIXTURE
 from tests.scripted import Script
-from tests.sources.test_convert import MARKDOWN, PAGE, body
+from tests.sources.makers import CLUTTER, FILL, MARKDOWN, PAGE, PAGES, PNG, body, make_docx, make_mhtml
 
 TEXT_BOOK = "The Lamp Book\n\n" + "\n\n".join(f"CHAPTER {r}\n\n{body(2500)}" for r in ("I", "II", "III"))
 
@@ -149,10 +149,6 @@ def test_the_command_line_estimates_and_processes_a_file(tmp_path: Path, capsys,
 # ---- step 2: web addresses, saved pages, Word files
 
 
-from tests.sources.makers import make_docx, make_mhtml  # noqa: E402
-from tests.sources.test_convert import CLUTTER, FILL, PNG, the_web  # noqa: E402, F401 - the_web is a fixture
-
-
 def test_an_address_is_fetched_once_held_and_processed(app, the_web, monkeypatch):  # noqa: F811
     from ebook_processor.sources import fetch
     asked = []
@@ -217,7 +213,7 @@ def test_the_command_line_takes_an_address(tmp_path: Path, the_web, capsys, monk
     assert said["url"] == the_web + "/essay" and said["asked"] == the_web + "/essay"
     made = (out_dir / "On Keeping Lamps.epub").read_bytes()
     # the site changes; the run's own copy is what a second run reads
-    monkeypatch.setitem(__import__("tests.sources.test_convert", fromlist=["PAGES"]).PAGES, "/essay", ("text/html", CLUTTER.replace("promise", "CHANGED").encode()))
+    monkeypatch.setitem(PAGES, "/essay", ("text/html", CLUTTER.replace("promise", "CHANGED").encode()))
     assert cli.main([the_web + "/essay", "-o", str(out_dir)]) == 0 and (out_dir / "On Keeping Lamps.epub").read_bytes() == made
     assert cli.main([the_web + "/essay", "-o", str(tmp_path / "whole"), "--whole-page"]) == 0
     assert (tmp_path / "whole" / "On Keeping Lamps.epub").stat().st_size != len(made)

@@ -4,18 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
-from ebook_processor import bookfile, notes, reading
+from ebook_processor import bookfile, notes
 from ebook_processor import vault as V
-from tests.paths import PREPARED
 
 JOB = "20261118-101500-fixture"
-
-
-@pytest.fixture(scope="module")
-def book():
-    return reading.open_reading_book(PREPARED)
 
 
 def marked(book) -> dict:

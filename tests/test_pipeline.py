@@ -18,24 +18,16 @@ from ebook_processor.prep.build import CHECKPOINTS_HREF
 from ebook_processor.prep.epub import load_book
 from ebook_processor.prep.validate import validate_files
 from ebook_processor.runner import PipelineError, rebuild, review_data, run_book
-from ebook_processor.settings import Settings, SettingsError, from_options
+from ebook_processor.settings import SettingsError, from_options
+from tests import helpers
+from tests.helpers import SHORT, run
 from tests.paths import FIXTURE
 from tests.prep.bookmaker import make_epub, xhtml
 from tests.prep.prepkit import ok_epubcheck
 from tests.scripted import Script
 
-SHORT = from_options(density="short")
-
-
-def run(tmp_path: Path, script: Script | None = None, settings: Settings = SHORT, epub: Path = FIXTURE, **kwargs):
-    script = script or Script()
-    backend = script.backend()
-    report = run_book(epub, tmp_path / "out", settings, backend=backend, **kwargs)
-    return report, backend, script
-
-
 def state_of(tmp_path: Path) -> dict:
-    return json.loads((tmp_path / "out" / "work" / "state.json").read_text(encoding="utf-8"))
+    return helpers.state_of(tmp_path / "out")
 
 
 def long_book(tmp_path: Path, paragraphs: int = 400) -> Path:

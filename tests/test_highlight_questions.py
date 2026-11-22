@@ -13,18 +13,13 @@ from pathlib import Path
 import pytest
 
 from ebook_processor import highlight_questions as hq
-from ebook_processor import notes, pipeline, reading
+from ebook_processor import notes, pipeline
 from ebook_processor.llm import BackendError, Completion, ScriptedBackend
 from ebook_processor.settings import Settings
 from ebook_processor.web import server as web
-from tests.paths import FIXTURE, PREPARED
+from tests.paths import FIXTURE
 from tests.scripted import Script
 from tests.webapp import wait_for_run
-
-
-@pytest.fixture(scope="module")
-def book():
-    return reading.open_reading_book(PREPARED)
 
 
 def marked(book, store, chapter=2, start=3, end=9, note=None):

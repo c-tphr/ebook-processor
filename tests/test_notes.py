@@ -6,13 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from ebook_processor import notes, reading
+from ebook_processor import notes
 from tests.paths import PREPARED
-
-
-@pytest.fixture(scope="module")
-def book():
-    return reading.open_reading_book(PREPARED)
 
 
 def empty() -> dict:

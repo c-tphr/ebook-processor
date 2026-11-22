@@ -12,8 +12,8 @@ import pytest
 from ebook_processor import reading
 from ebook_processor.runner import rebuild
 from ebook_processor.web import server as web
+from tests.helpers import run
 from tests.paths import FIXTURE, PREPARED
-from tests.test_pipeline import run
 
 
 def test_the_manifest_places_sections_and_questions_by_word():

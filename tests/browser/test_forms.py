@@ -4,57 +4,16 @@ shown in the notebook and on a book's page, and edited where they come from high
 from __future__ import annotations
 
 import json
-import threading
-import time
-import urllib.parse
 
 import pytest
 from playwright.sync_api import Page, expect
 
-from ebook_processor.web.server import make_server
-from tests.browser.conftest import App, Reader, two_questions
-from tests.browser.test_notes import highlight
-from tests.scripted import Script
-from tests.paths import FIXTURE
-
-ASKED = "() => cp ? (cp.review ? cp.queue[cp.index].p : cp.section.prompts[cp.index]) : null"
-
-
-@pytest.fixture(scope="module")
-def shelf(tmp_path_factory):
-    """An app of its own, whose one book has every form: the first question of a section is open, multiple
-    choice, true or false, fill in the blank, in turn; its second is open."""
-    data = tmp_path_factory.mktemp("forms")
-    server = make_server(data, "127.0.0.1", 0, backend_factory=lambda settings: Script(draft_hook=two_questions).backend(),
-                         claude={"ok": True, "version": "0.0.0 (test)"}, models=[])
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    it = App(f"http://127.0.0.1:{server.server_address[1]}", data)
-    settings = urllib.parse.quote(json.dumps({"density": "short", "forms": "all"}))
-    it.id = it.call("POST", f"/jobs?name=fixture.epub&settings={settings}", FIXTURE.read_bytes())["id"]
-    for _ in range(600):
-        job = it.call("GET", f"/jobs/{it.id}")
-        if job["status"] not in ("queued", "running"):
-            break
-        time.sleep(0.05)
-    assert job["status"] == "done", job.get("message")
-    yield it
-    server.shutdown()
-    server.server_close()
+from tests.browser.helpers import App, Reader, highlight, next_checkpoint
 
 
 @pytest.fixture
 def formed(shelf: App) -> App:
-    for name in ("reading.json", "notes.json", "srs.json"):
-        (shelf.folder / name).unlink(missing_ok=True)
-    for name in ("reader-settings.json", "srs-settings.json"):
-        (shelf.data / name).unlink(missing_ok=True)
-    return shelf
-
-
-def next_checkpoint(reader: Reader) -> dict:
-    reader.dismiss_offer()
-    reader.read_to_checkpoint()
-    return reader.page.evaluate(ASKED)
+    return shelf.never_opened()
 
 
 def test_typed_answers_are_matched_with_some_forgiveness(page: Page, formed: App):

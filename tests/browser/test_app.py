@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from playwright.sync_api import Page, expect
 
-from tests.browser.conftest import App, Reader
+from tests.browser.helpers import App, Reader
 from tests.paths import FIXTURE
 
 

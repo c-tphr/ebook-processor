@@ -7,7 +7,6 @@ import json
 import os
 import struct
 import subprocess
-import sys
 import zipfile
 from pathlib import Path
 
@@ -20,18 +19,14 @@ from ebook_processor.prep import words
 from ebook_processor.prep.build import build_file
 from ebook_processor.prep.epub import load_book, load_book_bytes, all_text
 from ebook_processor.prep.epubzip import Archive
-from tests.paths import BOOKS, DRAFT, FIXTURE, REPO
+from tests.paths import BOOKS, DRAFT, FIXTURE
 from tests.prep.fixture import generate as gen
 from tests.prep import prepkit
 from tests.prep.bookmaker import make_draft, make_epub, xhtml
+from tests.prep.prepkit import run_prep
 
 EXPECTED = json.loads((BOOKS / "fixture.expected.json").read_text(encoding="utf-8"))
 EXPECTED_DOCS = {d["href"]: d for d in EXPECTED["documents"]}
-
-
-def run_prep(*args: str) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, "-m", "ebook_processor.prep", *map(str, args)], capture_output=True, text=True,
-                          cwd=REPO)
 
 
 @pytest.fixture(scope="module")

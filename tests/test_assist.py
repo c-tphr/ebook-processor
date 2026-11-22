@@ -10,7 +10,7 @@ from ebook_processor import assist
 from ebook_processor.llm import BackendError, ScriptedBackend
 from ebook_processor.settings import from_options
 from ebook_processor.vault import Vault
-from tests.test_vault import BOOK
+from tests.helpers import BOOK_FILE as BOOK
 
 SETTINGS = from_options()
 

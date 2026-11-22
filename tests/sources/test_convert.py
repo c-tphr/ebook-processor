@@ -16,14 +16,7 @@ from ebook_processor.prep.epub import load_book_bytes
 from ebook_processor.sources import clean as C
 from ebook_processor.sources import fetch, from_text, pack
 from ebook_processor.sources.chars import decode
-from tests.prep.fixture.generate import lighthouse_png
-
-FILL = "The keeper lit the lamp at dusk and wrote the hour in the log. "
-PNG = lighthouse_png()
-
-
-def body(words: int = 300) -> str:
-    return "\n\n".join(FILL * 6 for _ in range(max(1, words // 78)))
+from tests.sources.makers import CLUTTER, FILL, MARKDOWN, PAGE, PAGES, PNG, Site, body, make_docx, make_mhtml
 
 
 def kinds(made: sources.Made, doc: int = 0) -> list[str]:
@@ -95,41 +88,6 @@ def test_a_large_file_is_cleaned_in_good_time() -> None:
 
 
 # ---- Markdown
-
-
-MARKDOWN = f"""---
-title: On Keeping Lamps
-author: Ione Hartwell
-date: 2024-03-09
-url: https://example.org/essays/lamps
----
-# On Keeping Lamps
-
-A lamp is a *promise* made to strangers. See [the almanac](https://example.org/almanac) and [[The log|the log]]. ^h3f9a
-
-## The rule
-
-1. Light at sunset.
-2. Put out at sunrise.
-
-> Whatever the weather.
-
-| Hour | Task |
-| --- | --- |
-| 18 | Trim the wick |
-
-```
-oil = [[12]]
-```
-
-A footnote follows.[^1] <script>alert(1)</script>
-
-![[Another note]]
-
-[^1]: The keeper's own words.
-
-{body(200)}
-"""
 
 
 def test_markdown() -> None:
@@ -256,15 +214,6 @@ def test_gutenberg_wrapper() -> None:
 # ---- HTML files
 
 
-PAGE = f"""<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>On Keeping Lamps | The Shore Review</title>
-<meta name="author" content="Ione Hartwell"><meta property="article:published_time" content="2024-03-09T08:00:00Z">
-<meta property="og:site_name" content="The Shore Review"><link rel="canonical" href="https://example.org/essays/lamps">
-<script>var x = 1;</script><style>p {{ color: red }}</style></head>
-<body><nav><a href="/">Home</a></nav><article><h1>On Keeping Lamps</h1><p>{FILL * 40}</p>
-<figure><img src="light.png" alt="The light"><figcaption>Gannet Rock.</figcaption></figure>
-<h2>The rule</h2><p>{FILL * 40}</p></article><footer>© The Shore Review</footer></body></html>"""
-
-
 def test_html_file() -> None:
     made = sources.convert("lamps.html", PAGE.encode(), web=False, whole=True)
     assert (made.title, made.author) == ("On Keeping Lamps", "Ione Hartwell")
@@ -310,31 +259,9 @@ def test_what_is_no_picture_is_not_kept() -> None:
     assert pack.picture_type(PNG) == "png" and pack.picture_type(b"\xff\xd8\xff\xe0") == "jpg" and pack.picture_type(b"RIFF0000WEBPVP8 ") == "webp"
 
 
-class _Site(http.server.BaseHTTPRequestHandler):
-    def do_GET(self) -> None:  # noqa: N802
-        if self.path == "/light.png":
-            self.send_response(200)
-            self.send_header("Content-Type", "image/png")
-            self.end_headers()
-            self.wfile.write(PNG)
-        elif self.path == "/moved.png":
-            self.send_response(302)
-            self.send_header("Location", "/light.png")
-            self.end_headers()
-        elif self.path == "/big.png":
-            self.send_response(200)
-            self.end_headers()
-            self.wfile.write(PNG + b"\0" * (fetch.PICTURE_LIMIT + 10))
-        else:
-            self.send_error(404)
-
-    def log_message(self, *args: object) -> None:
-        pass
-
-
 @pytest.fixture
 def site():
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Site)
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Site)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{server.server_address[1]}"
     server.shutdown()
@@ -390,24 +317,6 @@ def test_formats() -> None:
 
 
 # ---- step 2: the article in a page, saved pages, Word files, web addresses
-
-
-from tests.sources.makers import make_docx, make_mhtml  # noqa: E402
-
-CLUTTER = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><title>On Keeping Lamps | The Shore Review</title>
-<meta property="og:title" content="On Keeping Lamps"><meta name="author" content="Ione Hartwell">
-<meta property="article:published_time" content="2024-03-09T08:00:00Z"><meta property="og:site_name" content="The Shore Review">
-<script>var track = 1;</script></head>
-<body><header><nav><a href="/">Home</a> <a href="/subscribe">Subscribe now</a></nav></header>
-<div class="ad">Buy lamp oil today! Fifty percent off for new readers.</div>
-<main><article><h1>On Keeping Lamps</h1><p class="byline">By Ione Hartwell</p>
-<p>A lamp is a <em>promise</em> made to strangers. {FILL * 12}</p>
-<figure><img src="/light.png" alt="The light"><figcaption>Gannet Rock, 1911.</figcaption></figure>
-<h2>The rule</h2><p>{FILL * 14}</p><blockquote><p>Whatever the weather. {FILL * 3}</p></blockquote>
-<h2>What the log shows</h2><p>{FILL * 14}</p></article></main>
-<aside class="related"><h3>Related</h3><a href="/a">Ten lighthouses to visit</a></aside>
-<div id="comments"><h3>Comments (2)</h3><p>Great piece! Posted by reader42.</p></div>
-<footer><p>Copyright The Shore Review. <a href="/privacy">Privacy</a></p></footer></body></html>"""
 
 
 def test_the_article_is_found_in_a_page_and_the_whole_page_can_be_taken() -> None:
@@ -480,62 +389,6 @@ def test_a_word_file() -> None:
 def test_addresses_are_tidied() -> None:
     assert sources.tidy("HTTPS://Example.org/a?utm_source=x&id=3&fbclid=9#part") == "https://example.org/a?id=3"
     assert sources.tidy("https://example.org") == "https://example.org/"
-
-
-LD = '<script type="application/ld+json">{"@type": "NewsArticle", "isAccessibleForFree": false, "wordCount": 4000}</script>'
-PAGES = {
-    "/essay": ("text/html; charset=utf-8", CLUTTER.encode()),
-    "/latin": ("text/html; charset=iso-8859-1", CLUTTER.replace('<meta charset="utf-8">', "").replace("promise", "promesse naïve").encode("latin-1")),
-    "/paywalled": ("text/html", CLUTTER.replace("</head>", LD + "</head>").encode()),
-    "/shell": ("text/html", b"<html><head><title>App</title><script src='a.js'></script></head><body><noscript>Please enable JavaScript to "
-                            b"read this.</noscript><div id='root'></div></body></html>"),
-    "/thin": ("text/html", b"<html><body><nav>x</nav><article><h1>Sign in</h1><p>Sign in to read this article.</p></article></body></html>"),
-    "/paper.pdf": ("application/pdf", b"%PDF-1.4"),
-    "/notes.md": ("text/markdown", MARKDOWN.encode()),
-    "/plain.txt": ("text/plain; charset=utf-8", ("A plain piece\n\n" + body(400)).encode()),
-    "/data.zip": ("application/zip", b"PK"),
-}
-
-
-class _Web(_Site):
-    def do_GET(self) -> None:  # noqa: N802
-        path = self.path.split("?")[0]
-        if path in PAGES:
-            kind, data = PAGES[path]
-            self.send_response(200)
-            self.send_header("Content-Type", kind)
-            self.end_headers()
-            self.wfile.write(data)
-        elif path == "/moved":
-            self.send_response(301)
-            self.send_header("Location", "/essay?utm_campaign=x")
-            self.end_headers()
-        elif path in ("/forbidden", "/limited", "/gone"):
-            self.send_error({"/forbidden": 403, "/limited": 429, "/gone": 404}[path])
-        elif path == "/slow":
-            import time
-            time.sleep(1.5)
-            self.send_error(500)
-        elif path in ("/packed", "/bomb"):  # an answer sent packed: an ordinary one, and one that unpacks to 60 MB
-            import gzip
-            data = gzip.compress(PAGES["/essay"][1] if path == "/packed" else b" " * (60 * 1024 * 1024))
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Encoding", "gzip")
-            self.end_headers()
-            self.wfile.write(data)
-        else:
-            super().do_GET()
-
-
-@pytest.fixture
-def the_web(monkeypatch: pytest.MonkeyPatch):
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Web)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    monkeypatch.setattr(fetch, "is_private", lambda host: False)  # the pictures of these pages are on this computer
-    yield f"http://127.0.0.1:{server.server_address[1]}"
-    server.shutdown()
-    server.server_close()
 
 
 def from_address(url: str, **how) -> sources.Made:

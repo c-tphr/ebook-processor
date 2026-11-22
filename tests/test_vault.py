@@ -10,6 +10,7 @@ import pytest
 
 from ebook_processor import vault as V
 from ebook_processor.vault import OPAQUE, Vault, VaultError
+from tests.helpers import BOOK_FILE as BOOK
 
 
 @pytest.fixture
@@ -321,29 +322,6 @@ def test_changes_made_outside_the_app_are_seen(vault):
     vault.refresh(force=True)
     assert vault.listing() == []
     assert Vault(vault.root / "not there").listing() == [] and Vault(vault.root / "not there").search("x")["notes"] == []
-
-
-BOOK = """---
-id: b-20261118-101500-almanac
-kind: book
-title: The Almanac
----
-> [!info] This file is kept by ebook-processor. Edits made here are overwritten.
-
-About the whole book. ^n5e10
-
-## The Lamp Room
-
-### Lighting
-
-> The lamp is lit at sunset and put out at sunrise. ^h3f9a
-
-A first paragraph on that.
-
-A second one. ^h3f9a-note
-
-A note on a paragraph about wicks. ^n81c2
-"""
 
 
 def test_a_books_file_is_written_once_and_found_by_its_id(vault):

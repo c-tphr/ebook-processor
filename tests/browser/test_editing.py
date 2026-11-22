@@ -8,17 +8,13 @@ import json
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.browser.conftest import App, Reader
-from tests.browser.test_forms import ASKED, next_checkpoint, shelf  # noqa: F401  (the app whose book has every kind)
+from tests.browser.helpers import ASKED, App, Reader, highlight, next_checkpoint
 
 
 @pytest.fixture
-def edited(shelf: App) -> App:  # noqa: F811
-    """The book of every kind, as the run wrote it and never opened."""
-    for name in ("reading.json", "notes.json", "srs.json"):
-        (shelf.folder / name).unlink(missing_ok=True)
-    for name in ("reader-settings.json", "srs-settings.json"):
-        (shelf.data / name).unlink(missing_ok=True)
+def edited(shelf: App) -> App:
+    """The book of every kind (the app of ``shelf``), as the run wrote it and never opened."""
+    shelf.never_opened()
     review = shelf.call("GET", f"/jobs/{shelf.id}/review")
     for q in [q for s in review["sections"] for q in s["questions"]]:
         if q["added"]:
@@ -173,7 +169,6 @@ def test_a_card_is_edited_in_practice_and_an_answer_in_the_notebook(page: Page, 
 
 
 def test_a_highlights_own_question_can_be_of_any_kind_and_the_passage_is_set_in_settings(page: Page, edited: App):
-    from tests.browser.test_notes import highlight
     reader = Reader(page, edited)
     reader.open("2:0", "scroll")
     highlight(reader, 2, 7)

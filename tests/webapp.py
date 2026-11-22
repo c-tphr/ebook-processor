@@ -65,6 +65,10 @@ class Reply:
         """The answer read as JSON where the app says it is JSON; the bytes as they came otherwise."""
         return _json.loads(self.raw) if self.is_json else self.raw
 
+    def json(self) -> Any:
+        """The answer read as JSON, whatever the app says it is."""
+        return _json.loads(self.raw)
+
     @property
     def text(self) -> str:
         return self.raw.decode()

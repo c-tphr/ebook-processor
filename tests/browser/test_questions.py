@@ -9,8 +9,7 @@ import pytest
 from playwright.sync_api import Page, Route, expect
 
 from ebook_processor.web import server
-from tests.browser.conftest import App, Reader
-from tests.browser.test_notes import SELECT, highlight
+from tests.browser.helpers import SELECT, App, Reader, highlight
 
 
 def ask_in_reader(reader: Reader, first: int = 2, last: int = 7) -> dict:

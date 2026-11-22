@@ -4,24 +4,7 @@ from __future__ import annotations
 
 from playwright.sync_api import Page, expect
 
-from tests.browser.conftest import READY, App, Reader
-
-SELECT = """([from, to]) => {
-    // select words [from, to) of the first paragraph on show, as dragging over them would, and let go of the mouse
-    const block = [...view_root.querySelectorAll("[data-kind=paragraph]")].find((b) => wordMap(b).length > to);
-    const map = wordMap(block), range = document.createRange();
-    range.setStart(map[from].node, map[from].a); range.setEnd(map[to - 1].endNode, map[to - 1].b);
-    const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
-    block.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    return { start: +block.dataset.w + from, end: +block.dataset.w + to, text: range.toString() };
-}"""
-
-
-def highlight(reader: Reader, first: int = 2, last: int = 7) -> dict:
-    chosen = reader.page.evaluate(SELECT, [first, last])
-    reader.page.locator(".tip button", has_text="Highlight").click()
-    reader.page.wait_for_function("() => NB.highlights.length > 0")
-    return chosen
+from tests.browser.helpers import READY, App, Reader, highlight
 
 
 def test_selected_text_is_highlighted_and_kept(reader: Reader):

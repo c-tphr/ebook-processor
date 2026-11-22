@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from playwright.sync_api import Page, expect
 
-from tests.browser.conftest import Reader
+from tests.browser.helpers import Reader
 
 
 def test_the_page_view_turns_pages_and_stops_at_the_end_of_a_section(reader: Reader):

@@ -2,30 +2,23 @@
 
 from __future__ import annotations
 
-import threading
 from pathlib import Path
 
 import pytest
 from playwright.sync_api import Page, expect
 
-from ebook_processor.web.server import NOTES_FOLDER, make_server
-from tests.browser.conftest import App
-from tests.scripted import Script
-from tests.sources.test_convert import MARKDOWN, body
+from ebook_processor.web.server import NOTES_FOLDER
+from tests.browser.helpers import App, Reader
 from tests.paths import FIXTURE
+from tests.sources.makers import FILL, MARKDOWN, PNG, body, make_docx
 
 TEXT_BOOK = "The Lamp Book\n\n" + "\n\n".join(f"CHAPTER {r}\n\n{body(2500)}" for r in ("I", "II", "III"))
 
 
 @pytest.fixture
-def own(tmp_path: Path) -> App:
+def own(tmp_path: Path, make_web_app) -> App:
     """An app of this test's own, with an empty library, so that what is added here is in nobody's way."""
-    server = make_server(tmp_path / "runs", "127.0.0.1", 0, backend_factory=lambda settings: Script().backend(),
-                         claude={"ok": True, "version": "0.0.0 (test)"}, models=[])
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    yield App(f"http://127.0.0.1:{server.server_address[1]}", tmp_path / "runs")
-    server.shutdown()
-    server.server_close()
+    return App(make_web_app(data=tmp_path / "runs", claude={"ok": True, "version": "0.0.0 (test)"}))
 
 
 def add(page: Page, app: App, path: Path) -> None:
@@ -133,10 +126,6 @@ def test_a_file_that_cannot_be_taken_says_why(page: Page, own: App, tmp_path: Pa
 # ---- step 2: a web address, a Word file, a page saved by the browser
 
 
-from tests.sources.makers import make_docx  # noqa: E402
-from tests.sources.test_convert import FILL, PNG, the_web  # noqa: E402, F401 - the_web is a fixture
-
-
 def test_an_article_is_added_by_its_address(page: Page, own: App, the_web: str):  # noqa: F811
     page.goto(own.url + "/#/add")
     page.locator("#app form").wait_for()
@@ -207,15 +196,10 @@ def test_a_picture_that_stands_alone_is_shown_in_every_view(page: Page, own: App
     """An article's picture is a block of its own, not inside a figure as a book's mostly are."""
     import base64
 
-    from tests.browser.conftest import Reader
-
     inline = "data:image/png;base64," + base64.b64encode(PNG).decode()
     text = f"# Lamps\n\n{FILL * 30}\n\n![The light]({inline})\n\n{FILL * 30}"
     own.id = own.call("POST", "/jobs?name=lamps.md", text.encode())["id"]
-    for _ in range(600):
-        if own.call("GET", f"/jobs/{own.id}")["status"] not in ("queued", "running"):
-            break
-        page.wait_for_timeout(50)
+    own.wait(own.id)
     chapter = own.call("GET", f"/jobs/{own.id}/book/chapter/1")
     at = next(a for kind, a, b in chapter["markers"] if kind == "IMAGE")
     assert f'data-w="{at}" data-n="0"' in chapter["html"] and 'data-kind="image" data-src="OEBPS/images/p001.png"' in chapter["html"]

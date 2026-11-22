@@ -14,6 +14,7 @@ from ebook_processor.llm import BackendError, ScriptedBackend
 from ebook_processor.runner import change_run, rebuild, review_data, run_book
 from ebook_processor.settings import from_options
 from ebook_processor.steer import Steer
+from tests.helpers import state_of
 from tests.paths import FIXTURE
 from tests.scripted import Script
 
@@ -26,10 +27,6 @@ def out(tmp_path):
     folder = tmp_path / "out"
     run_book(FIXTURE, folder, ALL, backend=Script(fail={"c0003-p1": 9}).backend(), steer=Steer(style="Short answers."))
     return folder
-
-
-def state_of(folder: Path) -> dict:
-    return json.loads((folder / "work" / "state.json").read_text(encoding="utf-8"))
 
 
 def question(folder: Path, qid: str) -> dict:

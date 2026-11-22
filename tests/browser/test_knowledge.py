@@ -7,8 +7,7 @@ from pathlib import Path
 import pytest
 from playwright.sync_api import Page, expect
 
-from tests.browser.conftest import App, Reader
-from tests.browser.test_notes import SELECT
+from tests.browser.helpers import SELECT, App, Reader
 
 BOOK = "The Lighthouse Keeper's Almanac"   # the session's book; a test elsewhere may add a second of the same title, filed as "... 2"
 

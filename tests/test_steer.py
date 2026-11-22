@@ -8,7 +8,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from pathlib import Path
 
 import pytest
 
@@ -20,6 +19,7 @@ from ebook_processor.prep.epub import load_book
 from ebook_processor.runner import review_data, run_book, trial_dir, try_chapter
 from ebook_processor.settings import MAX_QUESTIONS, Settings, SettingsError, from_options
 from ebook_processor.steer import Steer
+from tests.helpers import state_of
 from tests.paths import FIXTURE
 from tests.scripted import Script
 
@@ -28,10 +28,6 @@ WANT = Steer(purpose="I want to know how the lamp is kept burning.", about="I ke
              style="Short answers. I do want the dates.")
 READ = {"focus": "Favour how the lamp works.", "style": "One sentence. Dates are welcome.",
         "chapters": [{"doc": "d02", "why": "It is about the lamp room."}]}
-
-
-def state_of(folder: Path) -> dict:
-    return json.loads((folder / "work" / "state.json").read_text(encoding="utf-8"))
 
 
 # --------------------------------------------------------------------------

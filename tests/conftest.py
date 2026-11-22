@@ -3,10 +3,13 @@
 The browser tests need Playwright (``pip install -e '.[browser]'`` and ``python -m playwright install``).
 Without it they are left out, and the rest of the suite runs as it is.
 
-``web_app`` and ``make_web_app`` start the app for a test (``tests/webapp.py``). Paths to the test data are in
-``tests/paths.py``."""
+``web_app`` and ``make_web_app`` start the app for a test (``tests/webapp.py``). ``book`` is the made-up book as
+the reader's side of the app opens it. ``the_web`` is a small web site on this computer, for the tests that give
+the app an address. Paths to the test data are in ``tests/paths.py``; small helpers in ``tests/helpers.py``."""
 
+import http.server
 import importlib.util
+import threading
 
 collect_ignore = [] if importlib.util.find_spec("playwright") and importlib.util.find_spec("pytest_playwright") else ["browser"]
 
@@ -17,6 +20,7 @@ from typing import Any  # noqa: E402
 
 import pytest  # noqa: E402
 
+from tests.paths import PREPARED  # noqa: E402
 from tests.webapp import WebApp, start_web_app  # noqa: E402
 
 
@@ -59,3 +63,26 @@ def make_web_app(tmp_path):
 def web_app(make_web_app) -> WebApp:
     """A running app with an empty library and the stand-in for the model."""
     return make_web_app()
+
+
+@pytest.fixture(scope="module")
+def book():
+    """The made-up book, prepared, as the reader's side of the app opens it. (The browser tests have a fixture of
+    this name of their own: the app's book as never opened.)"""
+    from ebook_processor import reading
+
+    return reading.open_reading_book(PREPARED)
+
+
+@pytest.fixture
+def the_web(monkeypatch):
+    """The address of a web site on this computer that serves the pages of ``tests/sources/makers.py``."""
+    from ebook_processor.sources import fetch
+    from tests.sources.makers import Web
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Web)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setattr(fetch, "is_private", lambda host: False)  # the pictures of these pages are on this computer
+    yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+    server.server_close()

@@ -17,6 +17,7 @@ from ebook_processor import cli, forms, pipeline, prompts, reading, steer
 from ebook_processor import highlight_questions as hq
 from ebook_processor.runner import review_data, run_book
 from ebook_processor.settings import Settings, SettingsError, from_options
+from tests.helpers import state_of
 from tests.paths import FIXTURE
 from tests.scripted import EMPTY_FORM, Script, formed
 
@@ -28,10 +29,6 @@ TRUE = {"prompt": "The lamp turned by clockwork.", "answer": "The weight drove t
 CLOZE = {"prompt": "The lens was turned by ____ driven by a falling weight.", "answer": "A weight drove the clockwork.",
          "form": "cloze", "accept": ["clockwork", "a clockwork"]}
 OPEN = {"prompt": "Why was the weight wound up?", "answer": "So that the lens kept turning."}
-
-
-def state_of(folder: Path) -> dict:
-    return json.loads((folder / "work" / "state.json").read_text(encoding="utf-8"))
 
 
 # --------------------------------------------------------------------------

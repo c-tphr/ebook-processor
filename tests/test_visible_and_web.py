@@ -363,6 +363,12 @@ def test_one_entry_that_cannot_be_read_costs_that_entry_only(tmp_path, capsys):
 
 def test_a_home_folder_that_does_not_exist_is_refused_with_a_sentence(app):
     """Python raises an error of its own for '~name' when there is no such user; it showed as a fault of the app."""
+    try:
+        Path("~no-such-user-here").expanduser()
+    except RuntimeError:
+        pass
+    else:  # Windows takes any name for a folder under C:\\Users, so there is nothing to refuse there
+        pytest.skip("on this system '~name' is a path for any name")
     for method, path, body in (("POST", "/api/jobs/local", {"path": "~no-such-user-here/book.epub"}),
                                ("POST", "/api/look/local", {"path": "~no-such-user-here/book.epub"}),
                                ("PUT", "/api/settings", {"notes_folder": "~no-such-user-here/notes"})):

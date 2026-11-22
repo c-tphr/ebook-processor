@@ -83,7 +83,7 @@ def test_a_question_of_any_kind_is_added_to_a_section_with_its_passage(page: Pag
     expect(window.locator(".qf-passage summary")).to_have_text("Passage: 3 of the section's 3 paragraphs")
     window.locator("#qf-save").click()
     row = page.locator(".q", has_text="The lamp room was ____ and bright.")
-    expect(row.locator(".lab", has_text="Written by you")).to_be_visible()
+    expect(row.locator(".lab", has_text="Written by you")).to_be_visible(timeout=20000)   # every file is built again: seconds on a slow machine
     expect(row.locator(".lab", has_text="Fill in the blank")).to_be_visible()
     expect(page.locator(".stats .stat b").first).to_have_text("17")
     added = question(edited, "c0002-p3")

@@ -493,7 +493,16 @@ def _resolve(base_dir: str, href: str, where: str) -> str:
     return joined
 
 
+# A document of the book, unpacked. The longest novels are a few megabytes as one file; reading the words of a
+# text costs time in line with its length, and nothing else runs meanwhile.
+MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
+
+
 def _parse_member(archive: Archive, name: str) -> Document:
+    entry = archive.by_name.get(name)
+    if entry is not None and entry.size > MAX_DOCUMENT_BYTES:
+        raise EpubError(f"{name} unpacks to {entry.size // (1024 * 1024)} MB of text; a document of a book may be "
+                        f"{MAX_DOCUMENT_BYTES // (1024 * 1024)} MB")
     try:
         return parse(archive.read(name), name)
     except KeyError:

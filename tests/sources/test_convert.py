@@ -516,6 +516,14 @@ class _Web(_Site):
             import time
             time.sleep(1.5)
             self.send_error(500)
+        elif path in ("/packed", "/bomb"):  # an answer sent packed: an ordinary one, and one that unpacks to 60 MB
+            import gzip
+            data = gzip.compress(PAGES["/essay"][1] if path == "/packed" else b" " * (60 * 1024 * 1024))
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Encoding", "gzip")
+            self.end_headers()
+            self.wfile.write(data)
         else:
             super().do_GET()
 
@@ -560,6 +568,10 @@ def test_other_things_at_an_address(the_web: str) -> None:
     with pytest.raises(fetch.FetchError) as caught:
         fetch.get(the_web + "/essay", limit=500)
     assert caught.value.reason == "size"
+    assert fetch.get(the_web + "/packed").data == PAGES["/essay"][1]
+    with pytest.raises(fetch.FetchError) as caught:  # 60 KB that unpack to 60 MB: unpacked up to the limit, and refused
+        fetch.get(the_web + "/bomb")
+    assert caught.value.reason == "size"
 
 
 def test_a_page_that_is_not_free_to_read_says_so(the_web: str) -> None:
@@ -578,3 +590,15 @@ def test_a_file_nested_too_deeply_is_refused_with_a_sentence() -> None:
     except sources.SourceError as exc:
         assert "nested too deeply" in str(exc)
     # a library that copes with the depth is as good: the file must only never end in a fault
+
+
+def test_a_word_file_that_unpacks_to_far_more_than_it_is_is_refused() -> None:
+    """300 KB of a Word file can unpack to 300 MB of text; the library would then work on it for minutes."""
+    from ebook_processor.sources import from_docx
+    packed = BytesIO()
+    with zipfile.ZipFile(packed, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", "<Types/>")
+        z.writestr("word/document.xml", b" " * (from_docx.MAX_TEXT_BYTES + 1))
+    assert len(packed.getvalue()) < 200_000
+    with pytest.raises(sources.SourceError, match="unpacks to more than the app reads"):
+        sources.convert("bomb.docx", packed.getvalue())

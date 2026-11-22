@@ -5,7 +5,6 @@ Used for the pictures of a document and, from step 2, for the page at an address
 
 from __future__ import annotations
 
-import gzip
 import ipaddress
 import socket
 import urllib.error
@@ -84,11 +83,11 @@ def get(url: str, limit: int = PAGE_LIMIT, seconds: float = PAGE_SECONDS, public
             if len(data) > limit:
                 raise FetchError(f"the answer is larger than {limit // (1024 * 1024)} MB", reason="size")
             encoding = (reply.headers.get("Content-Encoding") or "").lower()
-            try:
+            try:  # unpacked up to the limit and no further: half a megabyte can unpack to half a gigabyte
                 if encoding == "gzip":
-                    data = gzip.decompress(data)
+                    data = zlib.decompressobj(16 + zlib.MAX_WBITS).decompress(data, limit + 1)
                 elif encoding == "deflate":
-                    data = zlib.decompress(data) if data[:1] == b"\x78" else zlib.decompress(data, -zlib.MAX_WBITS)
+                    data = zlib.decompressobj(zlib.MAX_WBITS if data[:1] == b"\x78" else -zlib.MAX_WBITS).decompress(data, limit + 1)
             except (OSError, EOFError, zlib.error) as exc:
                 raise FetchError("the answer could not be unpacked", reason="broken") from exc
             if len(data) > limit:

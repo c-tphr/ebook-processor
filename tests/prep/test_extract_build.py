@@ -721,3 +721,32 @@ def test_anchor_inside_a_word_is_refused(tmp_path):
     assert "anchor-placement at /sections/0: the end anchor of section s0001 would fall inside the word" \
         in result.stderr
     assert "anchor-placement at /sections/1: the start anchor of section s0002" in result.stderr
+
+
+def test_an_archive_is_held_to_the_sizes_it_states():
+    """405 KB of an EPUB can unpack to 400 MB: the app then stood still for minutes."""
+    import dataclasses
+    import io
+    import time
+
+    from ebook_processor.prep import epubzip
+    packed = io.BytesIO()
+    with zipfile.ZipFile(packed, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("big.xhtml", b" " * (epubzip.MAX_ENTRY_BYTES + 1))
+    began = time.monotonic()
+    with pytest.raises(epubzip.ZipFormatError, match="an entry may be 64 MB"):
+        Archive(packed.getvalue())
+    assert time.monotonic() - began < 1 and len(packed.getvalue()) < 200_000   # refused before anything is unpacked
+    packed = io.BytesIO()
+    with zipfile.ZipFile(packed, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("chapter.xhtml", b" " * (epub_module.MAX_DOCUMENT_BYTES + 1))
+        z.writestr("small.xhtml", b"<html xmlns='http://www.w3.org/1999/xhtml'><body><p>" + b"word " * 4000 + b"</p></body></html>")
+    archive = Archive(packed.getvalue())
+    with pytest.raises(epub_module.EpubError, match="a document of a book may be 16 MB"):
+        epub_module._parse_member(archive, "chapter.xhtml")
+    assert len(archive.read("small.xhtml")) > 20000
+    # an entry that holds more than it says is not unpacked beyond what it says
+    lying = dataclasses.replace(archive.by_name["small.xhtml"], size=10)
+    archive.by_name["small.xhtml"] = lying
+    with pytest.raises(epubzip.ZipFormatError, match="size mismatch"):
+        archive.read("small.xhtml")

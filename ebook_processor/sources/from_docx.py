@@ -31,6 +31,10 @@ TITLE = '<h1 class="docx-title">'
 OLD_WORD = b"\xd0\xcf\x11\xe0"  # how a .doc of before 2007 begins
 
 
+MAX_TEXT_BYTES = 32 * 1024 * 1024       # word/document.xml, unpacked
+MAX_UNPACKED_BYTES = 300 * 1024 * 1024  # the whole file, unpacked: pictures are most of a large one
+
+
 class NotWord(ValueError):
     pass
 
@@ -56,6 +60,14 @@ def read(data: bytes) -> tuple[str, dict[str, Any], int]:
     not recognised."""
     if data.startswith(OLD_WORD):
         raise NotWord("This is a Word file of the old kind (.doc). Open it in Word and save it as .docx.")
+    try:  # what the file says it unpacks to, before the library unpacks it: the text of a long book is a few megabytes
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            sizes = {i.filename: i.file_size for i in z.infolist()}
+    except (zipfile.BadZipFile, OSError) as exc:
+        raise NotWord("This file cannot be read as a Word file.") from exc
+    if sizes.get("word/document.xml", 0) > MAX_TEXT_BYTES or sum(sizes.values()) > MAX_UNPACKED_BYTES:
+        raise NotWord("This Word file unpacks to more than the app reads: "
+                      f"{MAX_TEXT_BYTES // (1024 * 1024)} MB of text, {MAX_UNPACKED_BYTES // (1024 * 1024)} MB in all.")
     import mammoth
 
     try:

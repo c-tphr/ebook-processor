@@ -39,6 +39,11 @@ class ZipFormatError(ValueError):
     """The archive cannot be read or rewritten safely."""
 
 
+MB = 1024 * 1024
+MAX_ENTRY_BYTES = 64 * MB  # one entry, unpacked: a picture or a font of this size is already unheard of
+MAX_ARCHIVE_BYTES = 1024 * MB  # all entries together, unpacked
+
+
 @dataclass(frozen=True)
 class Entry:
     name: str
@@ -66,6 +71,13 @@ class Archive:
         self.by_name = {e.name: e for e in self.entries}
         if len(self.by_name) != len(self.entries):
             raise ZipFormatError("the archive has two entries with the same name")
+        # What the archive says it unpacks to is limited here, before anything is unpacked; ``read`` then holds
+        # each entry to what was said. A few hundred kilobytes can otherwise unpack to gigabytes.
+        large = next((e for e in self.entries if e.size > MAX_ENTRY_BYTES), None)
+        if large is not None:
+            raise ZipFormatError(f"{large.name} unpacks to {large.size // MB} MB; an entry may be {MAX_ENTRY_BYTES // MB} MB")
+        if sum(e.size for e in self.entries) > MAX_ARCHIVE_BYTES:
+            raise ZipFormatError(f"the archive unpacks to more than {MAX_ARCHIVE_BYTES // MB} MB")
 
     # -- reading ----------------------------------------------------------
 
@@ -144,8 +156,8 @@ class Archive:
         if e.method == STORED:
             out = raw
         elif e.method == DEFLATED:
-            try:
-                out = zlib.decompress(raw, -15)
+            try:  # never more than the entry says it holds: the size check below then refuses a false size
+                out = zlib.decompressobj(-15).decompress(raw, e.size + 1)
             except zlib.error as exc:
                 raise ZipFormatError(f"{name}: cannot inflate: {exc}") from exc
         else:

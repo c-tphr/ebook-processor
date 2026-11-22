@@ -44,7 +44,6 @@ from .steer import Steer, highlight_rules
 
 PROPOSE_SCHEMA = {"type": "object", "additionalProperties": False, "required": ["question", "answer"],
                   "properties": {"question": {"type": "string"}, "answer": {"type": "string"}}}
-OPEN = ("proposed", "held")  # waiting for the reader
 
 
 class QuestionError(ValueError):

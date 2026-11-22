@@ -62,7 +62,8 @@ def test_a_models_reply_becomes_the_members_that_are_kept():
     again = forms.from_model({"form": "choice", "correct_choice": "The clockwork", "wrong_choices": ["The lamp", "The bell", "The winch"]},
                              "What did the keeper wind?", clean)
     assert again == made                                                          # the same question, the same order
-    places = {forms.with_choices("right", ["a", "b", "c"], f"Question {n}?")["correct"] for n in range(40)}
+    places = {forms.from_model({"form": "choice", "correct_choice": "right", "wrong_choices": ["a", "b", "c"]}, f"Question {n}?", clean)["correct"]
+              for n in range(40)}
     assert places == {0, 1, 2, 3}                                                # the right choice has no place of its own
     assert forms.from_model({"form": "truefalse", "truth": False}, "S.", clean) == {"form": "truefalse", "truth": False}
     assert forms.from_model({"form": "cloze", "blank": "clockwork", "also_accept": ["Clockwork", "a clockwork", ""]}, "S ____.", clean) == {

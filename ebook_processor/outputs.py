@@ -30,9 +30,6 @@ from .prep.validate import NOT_RUN, PASS, validate_bytes
 from .steer import Steer
 from .visible import build_visible
 
-OUTPUT_SUFFIXES = (".prepared.epub", ".checkpoints.epub", ".questions.json", ".anki.apkg", ".cards.tsv",
-                   ".report.md", ".report.json")
-
 
 def stem_of(source_file: str) -> str:
     return source_file[:-5] if source_file.lower().endswith(".epub") else source_file
@@ -42,7 +39,7 @@ def _no_epubcheck(path: Path) -> epubcheck_mod.Report:
     raise epubcheck_mod.EpubcheckUnavailable("not asked for; run with the EPUBCheck option to include it")
 
 
-def _epubcheck_line(data: bytes, name: str, folder: Path) -> str:
+def _epubcheck_line(name: str, folder: Path) -> str:
     """EPUBCheck on the book with visible checkpoints, as one line for the report."""
     path = folder / name
     try:
@@ -117,7 +114,7 @@ def build_outputs(book: Book, original: bytes, state: dict[str, Any], out_dir: P
     files["visible"] = name
     notes += visible_notes
     if epubcheck:
-        notes.append(f"{name}: " + _epubcheck_line(visible, name, out_dir))
+        notes.append(f"{name}: " + _epubcheck_line(name, out_dir))
 
     # 3. the questions on their own
     read = reading.load_state(out_dir)

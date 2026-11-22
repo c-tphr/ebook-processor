@@ -95,7 +95,7 @@ def questions_document(book: Book, state: dict[str, Any], results: dict[str, str
         passage = []
         for ref in q["supporting_paragraphs"]:
             doc, at = index.where[ref]
-            passage.append({"ref": ref, "text": passage_text(doc, doc.blocks[at])})
+            passage.append({"ref": ref, "text": passage_text(doc.blocks[at])})
         questions.append({
             **base, "order": len(questions) + 1, "supporting_paragraphs": q["supporting_paragraphs"],
             "passage": passage, "status": q["status"],
@@ -148,7 +148,7 @@ def add_from_highlights(doc: dict[str, Any], book: Book, asked: list[dict[str, A
             "chapter_href": sd.href, "chapter": titles[sd.href], "question": q["question"], "answer": q["answer"],
             "form": qforms.form_of(q), **{k: v for k, v in qforms.members(q).items() if k != "form"},
             "supporting_paragraphs": [b.ref for b in blocks],
-            "passage": [{"ref": b.ref, "text": passage_text(sd, b)} for b in blocks],
+            "passage": [{"ref": b.ref, "text": passage_text(b)} for b in blocks],
             "status": "passed" if checked.get("passed") else "unchecked",
             "check": {"criteria": checked.get("criteria") or {}, "citations": [], "evidence": "", "minor_note": "",
                       "times_checked": 1 if checked else 0, "revisions": 0},

@@ -100,14 +100,14 @@ def render_blocks(sd: SpineDoc, blocks: list[Block], mode: str, images: dict[str
     return "\n\n".join(f"{block_header(b)}\n{block_body(sd, b, mode, images)}" for b in blocks)
 
 
-def passage_text(sd: SpineDoc, block: Block) -> str:
+def passage_text(block: Block) -> str:
     """A block as quoted on a flashcard: its words, or for a non-prose block its text or placeholder."""
     if block.placeholder is None:
         return " ".join(block.words)
     return nonprose_text(block) or block.placeholder
 
 
-def clipped(sd: SpineDoc, block: Block, words: int = 60) -> str:
+def clipped(block: Block, words: int = 60) -> str:
     """One line of context: the block's reference and its first words."""
     if block.placeholder is not None:
         return f"[{block.ref}] {block.placeholder}"

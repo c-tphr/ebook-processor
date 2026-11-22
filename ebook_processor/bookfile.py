@@ -126,10 +126,6 @@ def mark_removed(current: str) -> str:
     return vault.compose(vault.parse_props(front) if front is not None else [], REMOVED + "\n\n" + body.lstrip("\n"))
 
 
-def is_removed(note: vault.Note) -> bool:
-    return REMOVED in note.body
-
-
 def place(store: dict[str, Any], block: str, sections: list[dict[str, Any]] | None = None) -> dict[str, int] | None:
     """Where in the book the entry with this block id is, to open the reader there. ``sections`` are those of
     the book's manifest: with them, a note on a section or a chapter leads to where that begins."""

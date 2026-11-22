@@ -125,11 +125,6 @@ def from_model(raw: dict[str, Any], prompt: str, clean: Callable[[Any], str]) ->
     return {}
 
 
-def with_choices(correct: str, wrong: list[str], prompt: str) -> dict[str, Any]:
-    """The members of a multiple-choice question from its right and its wrong choices."""
-    return from_model({"form": "choice", "correct_choice": correct, "wrong_choices": wrong}, prompt, lambda t: str(t or "").strip())
-
-
 def problems(q: dict[str, Any], allowed: tuple[str, ...] | None = None,
              plain_text_problem: Callable[[str], str | None] | None = None) -> list[str]:
     """What is wrong with a question's form and its members (not with its prompt and answer as texts)."""

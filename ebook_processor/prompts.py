@@ -14,7 +14,6 @@ from .settings import INSTRUCTIONS_VERSION, Settings
 from .steer import Steer, chapter_note, checker_rules, drafter_rules
 
 _DIR = Path(__file__).resolve().parent / "instructions"
-LABEL_MAX_CHARS = 100
 
 CONTENT_RULES = {
     "prose": (
@@ -374,7 +373,7 @@ def draft_message(book: Book, groups: list[tuple[SpineDoc, list[Block]]], settin
 
 def _context(sd: SpineDoc, index: int, side: str) -> str:
     if 0 <= index < len(sd.blocks):
-        return clipped(sd, sd.blocks[index])
+        return clipped(sd.blocks[index])
     return "(the document starts here)" if side == "before" else "(the document ends here)"
 
 

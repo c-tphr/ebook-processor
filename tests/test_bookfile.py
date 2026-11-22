@@ -84,4 +84,4 @@ def test_a_removed_book_keeps_its_file_and_says_so():
     assert bookfile.mark_removed(gone) == gone
     assert bookfile.mark_removed("---\nid: b-1\n---\nedited by hand\n") == "---\nid: b-1\n---\n" + bookfile.REMOVED + "\n\nedited by hand\n"
     note = V.read_text(gone, "Books/B.md", (1, 1))
-    assert bookfile.is_removed(note) and note.blocks == {"h1": "words"} and not bookfile.is_removed(V.read_text(kept, "Books/B.md", (1, 1)))
+    assert bookfile.REMOVED in note.body and note.blocks == {"h1": "words"}

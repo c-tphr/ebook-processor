@@ -17,10 +17,8 @@ from ebook_processor import notes, pipeline, reading
 from ebook_processor.llm import BackendError, Completion, ScriptedBackend
 from ebook_processor.settings import Settings
 from ebook_processor.web import server as web
+from tests.paths import FIXTURE, PREPARED
 from tests.scripted import Script
-from tests.test_pipeline import FIXTURE
-
-PREPARED = Path(__file__).resolve().parent / "data" / "books" / "fixture.prepared.epub"
 
 
 @pytest.fixture(scope="module")

@@ -12,7 +12,7 @@ import pytest
 
 from ebook_processor import bookfile
 from ebook_processor.web import server as web
-from tests.test_reading import PREPARED
+from tests.paths import PREPARED
 
 
 @pytest.fixture

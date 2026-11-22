@@ -12,7 +12,7 @@ import pytest
 
 from ebook_processor import notes, reading
 from ebook_processor.web.server import make_server
-from tests.test_reading import PREPARED
+from tests.paths import PREPARED
 
 
 @pytest.fixture(scope="module")
@@ -156,7 +156,7 @@ def test_the_routes_keep_highlights_and_notes_and_serve_the_notebook(app):
 def test_a_practice_card_shows_what_was_highlighted_in_its_passage(tmp_path):
     from ebook_processor.web import server as web
     from tests.scripted import Script
-    from tests.test_pipeline import FIXTURE
+    from tests.paths import FIXTURE
     import time
     jobs = web.Jobs(tmp_path / "data", backend_factory=lambda settings: Script().backend())
     job = jobs.create("fixture.epub", FIXTURE.read_bytes(), web.from_options(density="short"))

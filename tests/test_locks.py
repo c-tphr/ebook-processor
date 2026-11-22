@@ -14,7 +14,7 @@ import pytest
 from ebook_processor.web import runs
 from ebook_processor.web import server as web
 from tests.scripted import Script
-from tests.test_pipeline import FIXTURE
+from tests.paths import FIXTURE
 
 
 @pytest.fixture

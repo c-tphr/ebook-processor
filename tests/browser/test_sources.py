@@ -12,7 +12,7 @@ from ebook_processor.web.server import NOTES_FOLDER, make_server
 from tests.browser.conftest import App
 from tests.scripted import Script
 from tests.sources.test_convert import MARKDOWN, body
-from tests.test_pipeline import FIXTURE
+from tests.paths import FIXTURE
 
 TEXT_BOOK = "The Lamp Book\n\n" + "\n\n".join(f"CHAPTER {r}\n\n{body(2500)}" for r in ("I", "II", "III"))
 

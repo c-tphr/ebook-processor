@@ -20,7 +20,7 @@ from ebook_processor.runner import review_data, run_book
 from ebook_processor.settings import Settings, SettingsError, from_options
 from ebook_processor.web.server import make_server
 from tests.scripted import EMPTY_FORM, Script, formed
-from tests.test_pipeline import FIXTURE
+from tests.paths import FIXTURE
 
 ALL = from_options(density="short", forms="all")
 CHOICE = {"prompt": "What did the keeper wind each evening?", "answer": "The log says the clockwork had to be wound.",

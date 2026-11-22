@@ -17,14 +17,9 @@ import pytest
 from ebook_processor.prep import epubcheck
 from ebook_processor.prep.build import checkpoint_bytes
 from ebook_processor.prep.epubzip import Archive
+from tests.paths import BOOKS, CHECK, DRAFT, FIXTURE, NEGATIVE, PREPARED, REPO  # noqa: F401  the prep tests take them from here
 
-REPO = Path(__file__).resolve().parents[2]
-BOOKS = REPO / "tests" / "data" / "books"
-NEGATIVE = BOOKS / "negative"
-ORIGINAL = BOOKS / "fixture.epub"
-PREPARED = BOOKS / "fixture.prepared.epub"
-DRAFT = BOOKS / "fixture.draft.json"
-CHECK = BOOKS / "fixture.check.json"
+ORIGINAL = FIXTURE
 ORIGINAL_BYTES = ORIGINAL.read_bytes()
 PREPARED_BYTES = PREPARED.read_bytes()
 MANIFEST = json.loads((NEGATIVE / "manifest.json").read_text(encoding="utf-8"))

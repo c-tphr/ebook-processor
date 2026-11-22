@@ -18,11 +18,12 @@ from ebook_processor import cli, prompts
 from ebook_processor.llm import (BackendError, Backends, BackendUnavailable, CodexBackend, Completion, ScriptedBackend,
                                  UsageLimitError, available_models, find_program, native_codex, split_model)
 from ebook_processor.outputs import _price
+from ebook_processor.runner import run_book
 from ebook_processor.settings import from_options
 from ebook_processor.web.server import make_server
+from tests.paths import FIXTURE
 from tests.programs import make_program
 from tests.scripted import Script
-from tests.test_pipeline import FIXTURE, run_book
 
 CATALOGUE = {"models": [
     {"slug": "gpt-old", "display_name": "GPT Old", "description": "Legacy.", "visibility": "list", "priority": 9,

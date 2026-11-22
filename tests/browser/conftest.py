@@ -21,7 +21,7 @@ from playwright.sync_api import Page
 
 from ebook_processor.web.server import make_server
 from tests.scripted import Script
-from tests.test_pipeline import FIXTURE
+from tests.paths import FIXTURE
 
 HEADERS = {"X-Ebook-Processor": "1"}
 READY = "() => { try { return !!view && !!book; } catch (e) { return false; } }"   # the reader has drawn its view

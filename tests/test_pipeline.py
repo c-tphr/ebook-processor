@@ -19,11 +19,11 @@ from ebook_processor.prep.epub import load_book
 from ebook_processor.prep.validate import validate_files
 from ebook_processor.runner import PipelineError, rebuild, review_data, run_book
 from ebook_processor.settings import Settings, SettingsError, from_options
+from tests.paths import FIXTURE
 from tests.prep.bookmaker import make_epub, xhtml
 from tests.prep.prepkit import ok_epubcheck
 from tests.scripted import Script
 
-FIXTURE = Path(__file__).resolve().parent / "data" / "books" / "fixture.epub"
 SHORT = from_options(density="short")
 
 

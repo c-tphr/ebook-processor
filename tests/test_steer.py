@@ -23,7 +23,7 @@ from ebook_processor.settings import MAX_QUESTIONS, Settings, SettingsError, fro
 from ebook_processor.steer import Steer
 from ebook_processor.web.server import make_server
 from tests.scripted import Script
-from tests.test_pipeline import FIXTURE
+from tests.paths import FIXTURE
 
 SHORT = from_options(density="short")
 WANT = Steer(purpose="I want to know how the lamp is kept burning.", about="I keep a lighthouse.",

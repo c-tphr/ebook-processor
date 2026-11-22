@@ -20,14 +20,11 @@ from ebook_processor.prep import words
 from ebook_processor.prep.build import build_file
 from ebook_processor.prep.epub import load_book, load_book_bytes, all_text
 from ebook_processor.prep.epubzip import Archive
+from tests.paths import BOOKS, DRAFT, FIXTURE, REPO
 from tests.prep.fixture import generate as gen
 from tests.prep import prepkit
 from tests.prep.bookmaker import make_draft, make_epub, xhtml
 
-REPO = Path(__file__).resolve().parents[2]
-BOOKS = REPO / "tests" / "data" / "books"
-FIXTURE = BOOKS / "fixture.epub"
-DRAFT = BOOKS / "fixture.draft.json"
 EXPECTED = json.loads((BOOKS / "fixture.expected.json").read_text(encoding="utf-8"))
 EXPECTED_DOCS = {d["href"]: d for d in EXPECTED["documents"]}
 

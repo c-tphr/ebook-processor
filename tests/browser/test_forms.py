@@ -15,7 +15,7 @@ from ebook_processor.web.server import make_server
 from tests.browser.conftest import App, Reader, two_questions
 from tests.browser.test_notes import highlight
 from tests.scripted import Script
-from tests.test_pipeline import FIXTURE
+from tests.paths import FIXTURE
 
 ASKED = "() => cp ? (cp.review ? cp.queue[cp.index].p : cp.section.prompts[cp.index]) : null"
 

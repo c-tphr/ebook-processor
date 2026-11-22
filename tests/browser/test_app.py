@@ -5,7 +5,7 @@ from __future__ import annotations
 from playwright.sync_api import Page, expect
 
 from tests.browser.conftest import App, Reader
-from tests.test_pipeline import FIXTURE
+from tests.paths import FIXTURE
 
 
 def test_the_library_lists_the_book_and_the_settings_window_opens_on_the_tab_of_the_page(page: Page, book: App):

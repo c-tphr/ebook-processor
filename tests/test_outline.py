@@ -10,7 +10,7 @@ import pytest
 from ebook_processor import reading
 from ebook_processor.web import server as web
 from tests.scripted import Script
-from tests.test_pipeline import FIXTURE
+from tests.paths import FIXTURE
 
 PREPARED = FIXTURE.with_name("fixture.prepared.epub")
 

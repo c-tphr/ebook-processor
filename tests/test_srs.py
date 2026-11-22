@@ -12,7 +12,7 @@ import pytest
 
 from ebook_processor import srs
 from ebook_processor.web import server as web
-from tests.test_reading import PREPARED
+from tests.paths import PREPARED
 
 D = dt.date(2026, 12, 1)
 S = {**srs.clean_settings(None), "fuzz": False}

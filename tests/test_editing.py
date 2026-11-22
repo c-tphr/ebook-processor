@@ -21,7 +21,7 @@ from ebook_processor.settings import from_options
 from ebook_processor.steer import Steer
 from ebook_processor.web.server import make_server
 from tests.scripted import Script
-from tests.test_pipeline import FIXTURE
+from tests.paths import FIXTURE
 
 ALL = from_options(density="short", forms="all")
 

@@ -8,7 +8,7 @@ import pytest
 
 from ebook_processor import bookfile, notes, reading
 from ebook_processor import vault as V
-from tests.test_reading import PREPARED
+from tests.paths import PREPARED
 
 JOB = "20261118-101500-fixture"
 

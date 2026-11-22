@@ -7,7 +7,7 @@ from playwright.sync_api import Page, expect
 
 from tests.browser.conftest import App, Reader
 from tests.browser.test_notes import highlight
-from tests.test_pipeline import FIXTURE
+from tests.paths import FIXTURE
 
 FOCUS = "textarea[aria-label='What the questions will favour']"
 

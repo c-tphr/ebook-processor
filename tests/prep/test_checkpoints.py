@@ -5,15 +5,14 @@ from __future__ import annotations
 import copy
 import json
 import re
-from pathlib import Path
 
 import jsonschema
 import pytest
 
 from ebook_processor.prep import checkpoints as cp
+from tests.paths import CHECKPOINTS, REPO
 
-REPO = Path(__file__).resolve().parents[2]
-FIXTURES = REPO / "tests" / "data" / "checkpoints"
+FIXTURES = CHECKPOINTS
 MANIFEST = json.loads((FIXTURES / "manifest.json").read_text(encoding="utf-8"))
 SAMPLES = MANIFEST["samples"]
 LAYERS = {"parse", "version", "schema", "cross-reference"}

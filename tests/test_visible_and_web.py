@@ -21,10 +21,11 @@ from ebook_processor.prep.xmltree import parse
 from ebook_processor.settings import Settings, from_options
 from ebook_processor.visible import build_visible
 from ebook_processor.web.server import make_server
+from tests.paths import FIXTURE
 from tests.prep.bookmaker import make_epub, xhtml
 from tests.programs import make_program
 from tests.scripted import Script
-from tests.test_pipeline import FIXTURE, run
+from tests.test_pipeline import run
 
 BLOCK_RE = re.compile(rb'<div class="ebp-checkpoint".*?</div></div>', re.S)
 PREVIEW_RE = re.compile(rb'<div class="ebp-preview" id="ebp-preview-(c\d+)".*?</div>', re.S)

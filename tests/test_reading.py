@@ -6,7 +6,6 @@ import json
 import threading
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 import pytest
 
@@ -14,10 +13,9 @@ from ebook_processor import reading
 from ebook_processor.runner import rebuild
 from ebook_processor.web import server as web
 from ebook_processor.web.server import make_server
+from tests.paths import FIXTURE, PREPARED
 from tests.scripted import Script
-from tests.test_pipeline import FIXTURE, run
-
-PREPARED = Path(__file__).resolve().parent / "data" / "books" / "fixture.prepared.epub"
+from tests.test_pipeline import run
 
 
 def test_the_manifest_places_sections_and_questions_by_word():

@@ -7,8 +7,6 @@ Python pass and compares with what the prototype's own test expected.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from ebook_processor.prep import words
@@ -23,9 +21,9 @@ from ebook_processor.prep.words import (
     word_stream,
 )
 from ebook_processor.prep.xmltree import XmlError
+from tests.paths import WORDS
 
-REPO = Path(__file__).resolve().parents[2]
-SPIKE = REPO / "tests" / "data" / "words"
+SPIKE = WORDS
 
 HEAD = ('<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE html>\n'
         '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">'

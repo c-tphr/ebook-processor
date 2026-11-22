@@ -16,7 +16,7 @@ from ebook_processor import cli, runner
 from ebook_processor.web import server as web
 from tests.scripted import Script
 from tests.sources.test_convert import MARKDOWN, PAGE, body
-from tests.test_pipeline import FIXTURE
+from tests.paths import FIXTURE
 
 TEXT_BOOK = "The Lamp Book\n\n" + "\n\n".join(f"CHAPTER {r}\n\n{body(2500)}" for r in ("I", "II", "III"))
 

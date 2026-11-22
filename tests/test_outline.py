@@ -89,3 +89,20 @@ def test_the_outline_follows_the_book_and_only_a_few_books_are_kept_whole(tmp_pa
     for text in ("not json", "[]", json.dumps({**kept, "format": 99})):
         (folder / reading.OUTLINE_FILE).write_text(text, encoding="utf-8")
         assert reading.load_outline(folder, kept["of"]) is None
+
+
+def test_a_books_place_in_the_library_is_worked_out_again_only_when_its_files_changed(tmp_path, monkeypatch):
+    jobs, jid = processed(tmp_path)
+    first = jobs.manifest(jid)["sections"][0]
+    loads: list[int] = []
+    real = web.srs.load
+    monkeypatch.setattr(web.srs, "load", lambda folder: (loads.append(1), real(folder))[1])
+    shown = jobs.listing()[0]
+    seen = len(loads)
+    assert jobs.listing()[0] == shown and jobs.listing()[0] == shown and len(loads) == seen   # nothing is read again
+    answer(jobs, jid, first["prompts"][0]["id"])                                              # the reader answered
+    assert jobs.listing()[0]["practice"]["cards"] == 1 and len(loads) > seen
+    jobs.notes_do(jid, lambda store, book: web.notes.add_highlight(store, book, first["chapter"], first["start"] + 1, first["start"] + 4))
+    assert jobs.listing()[0]["notes"]["highlights"] == 1
+    monkeypatch.setattr(web.Jobs, "today", staticmethod(lambda: web._dt.date(2031, 1, 1)))    # and so does another day
+    assert jobs.listing()[0]["practice"]["due"] == 1

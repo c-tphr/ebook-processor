@@ -193,6 +193,7 @@ class Jobs:
         # A book's outline is kept for every book (it is small); the text of the last few books that were read.
         self.books: dict[str, tuple[list[int], reading.Outline]] = {}
         self.parsed: dict[str, tuple[list[int], reading.ReadingBook]] = {}
+        self.studied: dict[str, tuple[tuple[Any, ...], dict[str, Any]]] = {}  # see _study
         self.backend_factory = backend_factory
         # questions being written from highlights: book id -> what is under way (see ``propose``)
         self.asks: dict[str, dict[str, Any]] = {}
@@ -228,12 +229,35 @@ class Jobs:
                                        "done", "total", "counts", "words", "kind", "origin")}
         out["type"] = self.type_of(job)
         out["can_read"] = job["status"] == "done" and self.prepared(job["id"]).is_file()
-        out["reading"] = reading.summary(reading.load_state(self.folder(job["id"]))) if out["can_read"] else None
-        out["practice"] = srs.counts(self.cards(job["id"]), self.today()) if out["can_read"] else None
-        marked = notes.load(self.folder(job["id"])) if out["can_read"] else None
-        out["notes"] = {"highlights": len(marked["highlights"]),
-                        "notes": len(marked["notes"]) + sum(bool(h["note"]) for h in marked["highlights"])} if marked else None
+        out.update(self._study(job["id"]) if out["can_read"] else {"reading": None, "practice": None, "notes": None})
         return out
+
+    def _study(self, job_id: str) -> dict[str, Any]:
+        """What the library shows of the reader's work on a book: reading, practice, highlights and notes. It is
+        worked out again only when one of the three files it comes from has changed, or the day has: the library
+        page asks for every book every few seconds while a run is going."""
+        folder, today = self.folder(job_id), self.today()
+
+        def stamps() -> tuple[Any, ...]:
+            found = []
+            for name in (reading.STATE_FILE, srs.FILE, notes.FILE):
+                try:
+                    at = (folder / name).stat()
+                    found.append((at.st_mtime_ns, at.st_size))
+                except OSError:
+                    found.append(None)
+            return (*found, today)
+        with self.lock:
+            cached = self.studied.get(job_id)
+            if cached is not None and cached[0] == stamps():
+                return dict(cached[1])
+            cards = self.cards(job_id)  # takes in new answers, which may write the cards' file: the stamps are read after it
+            marked = notes.load(folder)
+            made = {"reading": reading.summary(reading.load_state(folder)), "practice": srs.counts(cards, today),
+                    "notes": {"highlights": len(marked["highlights"]),
+                              "notes": len(marked["notes"]) + sum(bool(h.get("note")) for h in marked["highlights"])}}
+            self.studied[job_id] = (stamps(), made)
+            return dict(made)
 
     # ---- practice (spaced repetition)
 
@@ -1589,8 +1613,9 @@ class Jobs:
                         "type": self.type_of(job), "status": "failed", "stage": None, "done": None, "total": None,
                         "message": f"The files of this entry cannot be read ({exc!r}). They are in {self.folder(job['id'])}.",
                         "can_read": False, "reading": None, "practice": None, "notes": None}
-        with self.lock:
-            return [one(j) for j in sorted(self.jobs.values(), key=lambda j: j["created"], reverse=True)]
+        with self.lock:  # held to copy the list only: a long library does not hold up every other request
+            jobs = sorted(self.jobs.values(), key=lambda j: j["created"], reverse=True)
+        return [one(j) for j in jobs]
 
     def detail(self, job_id: str) -> dict[str, Any]:
         with self.lock:
@@ -1951,6 +1976,7 @@ class Jobs:
                 self.filed.pop(job_id, None)
                 self.books.pop(job_id, None)
                 self.parsed.pop(job_id, None)
+                self.studied.pop(job_id, None)
             self._book_left(job_id)
             shutil.rmtree(self.folder(job_id), ignore_errors=True)
 

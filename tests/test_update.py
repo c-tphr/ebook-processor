@@ -181,3 +181,34 @@ def test_the_command_reports_what_stops_it(monkeypatch, capsys, tmp_path):
     assert cli.main(["update", "--no-serve"]) == 1 and "not a git checkout" in capsys.readouterr().err
     monkeypatch.undo()
     assert (Path(update.__file__).resolve().parent.parent / ".git").exists() and update.repo_root().name
+
+
+def test_an_update_that_cannot_be_made_leaves_the_app_running(app, checkout, monkeypatch):
+    """The checkout and the remote are looked at before the app is stopped."""
+    record, _ = app
+    clone, _ = checkout
+    monkeypatch.setattr(update, "repo_root", lambda: clone)
+    (clone / "file.txt").write_text("mine\n")
+    launched: list = []
+    with pytest.raises(update.UpdateError, match="not committed"):
+        update.update(say=lambda s: None, installer=lambda r: None, launch=launched.append)
+    assert update.listening("127.0.0.1", record["port"]) and launched == []
+    git(clone, "checkout", "-q", "--", "file.txt")
+    git(clone, "remote", "set-url", "origin", str(clone.parent / "no-such-remote"))
+    with pytest.raises(update.UpdateError, match="could not be fetched"):
+        update.update(say=lambda s: None, installer=lambda r: None, launch=launched.append)
+    assert update.listening("127.0.0.1", record["port"]) and launched == []
+
+
+def test_an_update_that_fails_after_the_app_was_stopped_starts_it_again(app, checkout, monkeypatch):
+    record, server = app
+    clone, _ = checkout
+    monkeypatch.setattr(update, "repo_root", lambda: clone)
+    said, launched = [], []
+    threading.Timer(0.5, server.server_close).start()
+
+    def broken(repo):
+        raise update.UpdateError("the new version was fetched, but installing it failed")
+    assert update.update(say=said.append, installer=broken, launch=launched.append) == 1
+    assert launched and launched[0][-5:-1] == ["--port", str(record["port"]), "--data", record["data"]]
+    assert "did not go through" in "\n".join(said)

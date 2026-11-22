@@ -205,24 +205,33 @@ def git(repo: Path, *args: str) -> str:
     return proc.stdout.strip()
 
 
-def pull(repo: Path, branch: str = BRANCH) -> tuple[str, str]:
-    """Bring the checkout to the latest ``branch``, switching to that branch when it is on another. Returns the
-    commit before and after. A branch is only left when nothing would be hidden by leaving it."""
+def ready(repo: Path, branch: str = BRANCH) -> str:
+    """Everything that can refuse an update, looked at before anything is touched: changes that are not committed,
+    a branch that cannot be left, and the remote. Returns the branch the checkout is on. The latest ``branch`` is
+    fetched here, so a remote that cannot be reached is known before a running app is stopped."""
     current = git(repo, "rev-parse", "--abbrev-ref", "HEAD")
     changed = git(repo, "status", "--porcelain", "--untracked-files=no")
     if changed:
         raise UpdateError(f"the checkout at {repo} has changes that are not committed:\n{changed}\n"
                           "Commit them or put them aside (git stash) first; nothing was changed.")
+    if current != branch and not git(repo, "branch", "--remotes", "--contains", "HEAD"):
+        raise UpdateError(f"the checkout at {repo} is on the branch '{current}', which has commits that are on no "
+                          f"branch of the remote. Push them or switch by hand (git -C {repo} checkout {branch}); "
+                          "nothing was changed.")
+    try:  # by its full name, so that a clone made for one branch only can fetch it too
+        git(repo, "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
+    except UpdateError as exc:
+        raise UpdateError(f"the branch '{branch}' could not be fetched. Is there such a branch, and is the network "
+                          f"there? Nothing was changed.\n{exc}") from exc
+    return current
+
+
+def pull(repo: Path, branch: str = BRANCH) -> tuple[str, str]:
+    """Bring the checkout to the latest ``branch``, switching to that branch when it is on another. Returns the
+    commit before and after. A branch is only left when nothing would be hidden by leaving it."""
+    current = ready(repo, branch)
     before = git(repo, "rev-parse", "HEAD")
     if current != branch:
-        if not git(repo, "branch", "--remotes", "--contains", "HEAD"):
-            raise UpdateError(f"the checkout at {repo} is on the branch '{current}', which has commits that are on no "
-                              f"branch of the remote. Push them or switch by hand (git -C {repo} checkout {branch}); "
-                              "nothing was changed.")
-        try:  # by its full name, so that a clone made for one branch only can fetch it too
-            git(repo, "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
-        except UpdateError as exc:
-            raise UpdateError(f"the branch '{branch}' could not be fetched. Is there such a branch?\n{exc}") from exc
         if git(repo, "branch", "--list", branch):
             git(repo, "checkout", "--quiet", branch)
         else:
@@ -266,24 +275,34 @@ def update(serve: bool = True, force: bool = False, say: Callable[[str], None] =
             raise UpdateError(
                 f"The app on port {record['port']} is processing {', '.join(titles)}. Wait for it to finish, or "
                 "give --force to stop it now; the run can be continued afterwards with its Continue button.")
+    say(f"Fetching the latest {branch} ...")
+    ready(repo, branch)  # before the app is stopped: an update that cannot be made leaves it running
     for record in running:
         say(f"Stopping the app on port {record['port']} ...")
         if not stop(record):
             raise UpdateError(f"the app on port {record['port']} (process {record['pid']}) did not stop; stop it "
                               "by hand and give this command again. Nothing was updated.")
-    say(f"Fetching the latest {branch} ...")
-    before, after = pull(repo, branch)
-    if before == after:
-        say(f"Already up to date with {branch} ({after[:7]}).")
-    else:
-        say(f"Now on {branch}: {before[:7]} to {after[:7]}.")
-        for line in git(repo, "log", "--format=  %h %s", f"{before}..{after}").splitlines()[:20]:
-            say(line)
-        back = int(git(repo, "rev-list", "--count", f"{after}..{before}") or 0)
-        if back:  # the branch left behind was ahead: say so, since data it wrote may be newer than this version
-            say(f"  ({back} commit{'' if back == 1 else 's'} of the version you had are not in this one.)")
-        say("Installing ...")
-        installer(repo)
+    try:
+        before, after = pull(repo, branch)
+        if before == after:
+            say(f"Already up to date with {branch} ({after[:7]}).")
+        else:
+            say(f"Now on {branch}: {before[:7]} to {after[:7]}.")
+            for line in git(repo, "log", "--format=  %h %s", f"{before}..{after}").splitlines()[:20]:
+                say(line)
+            back = int(git(repo, "rev-list", "--count", f"{after}..{before}") or 0)
+            if back:  # the branch left behind was ahead: say so, since data it wrote may be newer than this version
+                say(f"  ({back} commit{'' if back == 1 else 's'} of the version you had are not in this one.)")
+            say("Installing ...")
+            installer(repo)
+    except UpdateError as exc:
+        if not (running and serve):
+            raise
+        say(f"The update did not go through: {exc}")  # the app was stopped for it: it is not left stopped
+        say(f"Starting the app on port {running[-1]['port']} again ...")
+        sys.stdout.flush()
+        launch(serve_command(running[-1]))
+        return 1
     if not serve:
         say("Done. Start the app with: ebook-processor serve")
         return 0

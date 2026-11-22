@@ -407,6 +407,7 @@ class Runs:
         job = self.jobs[job_id]
         cancel = self.cancels[job_id]
         folder = self.folder(job_id)
+        ended: dict[str, Any] = {}  # what the run's entry says when this is over; nothing when it only waits for its reader
         with self.turn:  # one book at a time
             try:
                 if cancel.is_set():
@@ -439,24 +440,22 @@ class Runs:
                 finally:  # the calls made before the run are in its totals from the moment it has a state
                     if any((work_dir(f) / STATE_FILE).is_file() for f in (folder, trial_dir(folder))):
                         job["spent"] = []
-                with self.lock:
-                    job.update(status="done", message="Finished", counts=report["counts"], stage="done")
+                ended = {"status": "done", "message": "Finished", "counts": report["counts"], "stage": "done"}
             except Cancelled:
-                with self.lock:
-                    job.update(status="stopped", message="Stopped. Press Continue to go on where it left off.")
+                ended = {"status": "stopped", "message": "Stopped. Press Continue to go on where it left off."}
             except UsageLimitError as exc:
-                with self.lock:
-                    job.update(status="stopped", message=f"{exc} Press Continue when your limit has reset; nothing "
-                                                         "done so far is lost.")
+                ended = {"status": "stopped", "message": f"{exc} Press Continue when your limit has reset; nothing "
+                                                         "done so far is lost."}
             except (PipelineError, BackendError, SettingsError) as exc:
-                with self.lock:
-                    job.update(status="failed", message=str(exc))
+                ended = {"status": "failed", "message": str(exc)}
             except Exception as exc:  # noqa: BLE001 a fault of the tool: show it instead of leaving the run "running" for ever
                 traceback.print_exc()
-                with self.lock:
-                    job.update(status="failed", message=f"Unexpected error: {exc!r}")
+                ended = {"status": "failed", "message": f"Unexpected error: {exc!r}"}
             finally:
+                # How the run ended and that it is no longer going are said in one step: a page that sees "stopped"
+                # can press Continue at once, and is not told that the run is still going.
                 with self.lock:
+                    job.update(ended)
                     self.cancels.pop(job_id, None)
                     self._store(job)
 

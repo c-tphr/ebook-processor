@@ -499,7 +499,7 @@ Codex is a coding agent and cannot be run with no tools at all, so a call to it 
 python3 -m pip install -e '.[test]' && python3 -m pytest -q
 ```
 
-The tests never call a model: `tests/scripted.py` is a stand-in that answers from the task message alone, and small stand-in programs take the place of Claude Code and Codex.
+The tests never call a model: `tests/scripted.py` is a stand-in that answers from the task message alone, and small stand-in programs take the place of Claude Code and Codex. A test that needs the app starts it through `tests/webapp.py` (the fixtures `web_app` and `make_web_app` in `tests/conftest.py`), and the paths of the test data are in `tests/paths.py`.
 
 About twenty of the tests start Java to run the real EPUBCheck, and take more than half of the time. Without Java, or without EPUBCheck (it is fetched from the web once, by `--epubcheck` or with `EBOOK_PROCESSOR_TESTS_MAY_DOWNLOAD=1`, and then kept), they are skipped and say so. For a quick run that leaves them out:
 

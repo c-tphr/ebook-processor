@@ -410,6 +410,8 @@ Notes on stages 2 and 3:
 - 5.1, 5.2, 5.3: the twelve clean-ups, one commit each ("plan 5.1, S4" to "plan 5.3, N1"): four new small modules, `asking.py`, `bookinfo.py`, `frontmatter.py`, `notetext.py`
 - 5.4: The routes are grouped by area and each is three steps
 - 5.5: `Jobs` is five parts in five files (`library.py`, `runs.py`, `study.py`, `questions.py`, `notes_folder.py`), with `common.py` for what they share; `server.py` went from 2,702 lines to 704
+- 2.3 (moved here from stage 2): the tests start the app in one place (`tests/webapp.py`), wait for a run in one place, take the paths of the test data from `tests/paths.py`, and no test file imports from another
+- 6.1: the Stop button and Continue are tested over HTTP (`tests/test_runs.py`); the options of a run have their own tests (`tests/test_settings.py`, 52 cases); seven command-line tests are together in `tests/test_cli.py`
 - 6.2: the fixture generator's check, the linter and the editor's build run in CI
 - 6.3: the README's module table, the stale docstrings, `DEFERRED.md`
 
@@ -423,5 +425,7 @@ Notes on stages 4, 5 and 6:
 - 5.5: the parts are mix-in classes, not objects that hold each other. Every method moved with its text unchanged, which a script compared (137 of 140 the same; the other three took their route's checks in 5.4). A split into objects would have meant editing every call between the parts, for the same files.
 - 5.2: as decided, the check of a note's question and the run's own check are not merged with the other two.
 - 6.2: the fixture is kept byte for byte as the firmware repository has it, so the generator writes that repository's paths into it again; the inventory README and `prepared.py` are not kept here.
-- Found on the way and fixed: an article taken out of the library had its file moved to `Books/`; a model's reply for a note's question that left a member out ended in a fault; a path with `~name` for an unknown user ended in "Unexpected error".
+- 2.3: ten test files keep a fixture of a few lines that gives the shared app the shape their tests call it in; rewriting every call was not worth the risk. No test was lost: the 899 ids from before are all there, with 54 new ones.
+- The tests at the end: 952 pass outside the browser (1 skipped) and 69 in Chromium.
+- Found on the way and fixed: a run said "stopped" a moment before it was released, so a Continue pressed in that moment was refused; an article taken out of the library had its file moved to `Books/`; a model's reply for a note's question that left a member out ended in a fault; a path with `~name` for an unknown user ended in "Unexpected error".
 - CI showed two things that only Windows shows. A new test of file writes hung the whole run there (Windows does not replace a file that is open, and the test did not stop its reader thread when it failed); it is fixed and skipped on Windows, and the retry has a test of its own. And git gave the generated fixture files Windows line ends, which the new check caught; `.gitattributes` pins them.

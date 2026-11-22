@@ -12,9 +12,7 @@ import pytest
 from ebook_processor import reading
 from ebook_processor.runner import rebuild
 from ebook_processor.web import server as web
-from ebook_processor.web.server import make_server
 from tests.paths import FIXTURE, PREPARED
-from tests.scripted import Script
 from tests.test_pipeline import run
 
 
@@ -152,26 +150,8 @@ def test_results_tag_the_cards_and_choose_which_are_exported(tmp_path):
 
 
 @pytest.fixture
-def app(tmp_path):
-    server = make_server(tmp_path / "data", "127.0.0.1", 0, backend_factory=lambda settings: Script().backend(),
-                         claude={"ok": True, "version": "test"}, models=[])
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{server.server_address[1]}"
-
-    def call(method: str, path: str, body: bytes | None = None, json_body=None):
-        if json_body is not None:
-            body = json.dumps(json_body).encode()
-        request = urllib.request.Request(base + path, data=body, method=method, headers={"X-Ebook-Processor": "1"})
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                raw = response.read()
-                return response.status, (json.loads(raw) if response.headers.get("Content-Type", "").startswith("application/json") else raw)
-        except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read())
-
-    yield call
-    server.shutdown()
-    server.server_close()
+def app(web_app):
+    return web_app.function()
 
 
 def test_an_imported_book_can_be_read_and_its_state_is_kept(app):

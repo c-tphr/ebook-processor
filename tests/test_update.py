@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 
 from ebook_processor import cli, update
-from ebook_processor.web import server as web
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -37,18 +36,13 @@ def checkout(tmp_path):
 
 
 @pytest.fixture
-def app(tmp_path, monkeypatch):
+def app(tmp_path, monkeypatch, make_web_app):
     """A running app with its record, as ``serve`` leaves it."""
     monkeypatch.setenv("EBOOK_PROCESSOR_HOME", str(tmp_path / "home"))
-    server = web.make_server(tmp_path / "data", "127.0.0.1", 0, claude={"ok": True, "version": "test"}, models=[])
-    port = server.server_address[1]
-    record = update.write_record("127.0.0.1", port, tmp_path / "data")
-    server.RequestHandlerClass.shutdown_token = record["token"]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    yield record, server
-    server.shutdown()
-    server.server_close()
+    it = make_web_app(model=None)
+    record = update.write_record("127.0.0.1", it.port, it.data)
+    it.server.RequestHandlerClass.shutdown_token = record["token"]
+    return record, it.server
 
 
 def test_the_checkout_is_fast_forwarded_to_the_latest_main(checkout):

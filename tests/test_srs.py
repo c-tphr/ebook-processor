@@ -4,14 +4,10 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import threading
-import urllib.error
-import urllib.request
 
 import pytest
 
 from ebook_processor import srs
-from ebook_processor.web import server as web
 from tests.paths import PREPARED
 
 D = dt.date(2026, 12, 1)
@@ -127,26 +123,9 @@ def test_a_checkpoint_answer_is_the_cards_first_answer():
 
 
 @pytest.fixture
-def app(tmp_path, monkeypatch):
+def app(make_web_app):
     clock = {"today": D}
-    monkeypatch.setattr(web.Jobs, "today", lambda self: clock["today"])
-    server = web.make_server(tmp_path / "data", "127.0.0.1", 0, claude={"ok": True, "version": "test"}, models=[])
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{server.server_address[1]}"
-
-    def call(method: str, path: str, body: bytes | None = None, json_body=None):
-        if json_body is not None:
-            body = json.dumps(json_body).encode()
-        request = urllib.request.Request(base + path, data=body, method=method, headers={"X-Ebook-Processor": "1"})
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return response.status, json.loads(response.read())
-        except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read())
-
-    yield call, clock
-    server.shutdown()
-    server.server_close()
+    return make_web_app(model=None, today=lambda: clock["today"]).function(), clock
 
 
 def test_practice_follows_the_reader_and_the_calendar(app):

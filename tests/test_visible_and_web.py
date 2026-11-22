@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import re
 import threading
-import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -211,38 +210,19 @@ def test_a_reply_with_text_around_its_json_is_still_read():
 
 
 @pytest.fixture
-def app(tmp_path):
-    server = make_server(tmp_path / "data", "127.0.0.1", 0, backend_factory=lambda settings: Script().backend(),
-                         claude={"ok": True, "version": "test"}, models=[])
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    base = f"http://127.0.0.1:{server.server_address[1]}"
-
+def app(web_app):
     def call(method: str, path: str, body: bytes | None = None, json_body=None, token: bool = True):
-        headers = {"X-Ebook-Processor": "1"} if token else {}
-        if json_body is not None:
-            body = json.dumps(json_body).encode()
-        request = urllib.request.Request(base + path, data=body, method=method, headers=headers)
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                raw = response.read()
-                kind = response.headers.get("Content-Type", "")
-                return response.status, (json.loads(raw) if kind.startswith("application/json") and path.startswith("/api") and "/files/" not in path else raw)
-        except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read())
+        """A page or a file comes back as its bytes; an answer of the API, and every refusal, as JSON."""
+        reply = web_app.call(method, path, body=body, json=json_body, csrf=token)
+        whole = reply.status < 400 and (not path.startswith("/api") or "/files/" in path)
+        return reply.status, (reply.raw if whole else reply.data)
 
-    yield call
-    server.shutdown()
-    server.server_close()
+    call.wait = web_app.wait
+    return call
 
 
 def wait_done(call, job_id: str) -> dict:
-    for _ in range(200):
-        status, job = call("GET", f"/api/jobs/{job_id}")
-        if job["status"] not in ("queued", "running"):
-            return job
-        time.sleep(0.05)
-    raise AssertionError("the run did not finish")
+    return call.wait(job_id)
 
 
 def test_the_web_app_runs_a_book_and_serves_review_rebuild_and_downloads(app):

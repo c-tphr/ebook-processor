@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -12,32 +11,13 @@ import pytest
 
 from ebook_processor import bookfile
 from ebook_processor.web import server as web
-from tests.paths import PREPARED
 
 
 @pytest.fixture
-def app(tmp_path):
-    server = web.make_server(tmp_path / "data", "127.0.0.1", 0, claude={"ok": True, "version": "test"}, models=[])
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{server.server_address[1]}"
-
-    def call(method: str, path: str, json_body=None, body: bytes | None = None, csrf: bool = True):
-        if json_body is not None:
-            body = json.dumps(json_body).encode()
-        request = urllib.request.Request(base + path, data=body, method=method, headers={"X-Ebook-Processor": "1"} if csrf else {})
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return response.status, json.loads(response.read())
-        except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read())
-
-    call.port = server.server_address[1]
-    call.folder = tmp_path / web.NOTES_FOLDER
-    call.jobs = server.RequestHandlerClass.jobs
-    call.book = lambda: call("POST", "/api/books/import?name=fixture.prepared.epub", body=PREPARED.read_bytes())[1]["id"]
-    yield call
-    server.shutdown()
-    server.server_close()
+def app(make_web_app):
+    call = make_web_app(model=None).function()
+    call.folder, call.book = call.notes_folder, call.import_fixture
+    return call
 
 
 def q(**values: str) -> str:
@@ -330,7 +310,7 @@ def test_the_graph_a_neighbourhood_what_to_revisit_and_the_timeline(app):
 
 
 @pytest.fixture
-def helped(tmp_path):
+def helped(make_web_app):
     """The app with a stand-in for the model that answers each kind of call of the notes folder."""
     from ebook_processor import assist
     from ebook_processor.llm import ScriptedBackend
@@ -350,24 +330,9 @@ def helped(tmp_path):
                     "answer": "It removes the decision that would otherwise be made each day."}
         return {**{c: True for c in assist.CHECKS}, "stands_alone": "According to the note" not in prompt, "problem": "It refers to the note."}
 
-    server = web.make_server(tmp_path / "data", "127.0.0.1", 0, backend_factory=lambda settings: ScriptedBackend(reply),
-                             claude={"ok": True, "version": "test"}, models=[])
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    base = f"http://127.0.0.1:{server.server_address[1]}"
-
-    def call(method: str, path: str, json_body=None):
-        body = json.dumps(json_body).encode() if json_body is not None else None
-        request = urllib.request.Request(base + path, data=body, method=method, headers={"X-Ebook-Processor": "1"})
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                return response.status, json.loads(response.read())
-        except urllib.error.HTTPError as exc:
-            return exc.code, json.loads(exc.read())
-
-    call.calls, call.data = calls, tmp_path / "data"
-    yield call
-    server.shutdown()
-    server.server_close()
+    call = make_web_app(model=lambda settings: ScriptedBackend(reply)).function()
+    call.calls = calls
+    return call
 
 
 def test_the_model_finds_connections_answers_from_the_notes_and_writes_a_notes_question(helped):

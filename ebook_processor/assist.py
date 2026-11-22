@@ -303,7 +303,7 @@ def propose(backend: Backend, vault: Vault, note: Note, asked: list[str], settin
                                 model=settings.model)
         data = done.data if isinstance(done.data, dict) else {}
         try:
-            question = hq._clean(data.get("question"), "a question", PROMPT_MAX_CHARS)
+            question = hq.clean(data.get("question"), "a question", PROMPT_MAX_CHARS)
             form = {} if settings.open_only else qforms.from_model(data, question, _flat)
             if qforms.form_of(form) not in settings.forms:
                 raise hq.QuestionError(f"the form {qforms.NAMES[qforms.form_of(form)]} is not allowed; the allowed forms are "

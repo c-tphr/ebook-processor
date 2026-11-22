@@ -88,7 +88,7 @@ OPS_TYPE = "{http://www.idpf.org/2007/ops}type"
 ET.register_namespace("epub", "http://www.idpf.org/2007/ops")
 
 
-def _is_note(el: Any) -> bool:
+def is_note(el: Any) -> bool:
     return bool(NOTE_ROLES.intersection((el.get("role") or "").split())) or el.get(OPS_TYPE) == "footnote"
 
 
@@ -155,7 +155,7 @@ def _walk(el: Any, base: str | None) -> None:
             continue
         if tag == "math":
             text = child.get("alttext") or SPACE.sub(" ", child.text_content()).strip()
-            _replace(child, text)
+            replace(child, text)
             continue
         if tag == "picture":
             image = child.find(".//img")
@@ -213,7 +213,7 @@ def _walk(el: Any, base: str | None) -> None:
             child.drop_tag()
 
 
-def _replace(el: Any, text: str) -> None:
+def replace(el: Any, text: str) -> None:
     """Put ``text`` where the element stood."""
     tail = text + (el.tail or "")
     previous, parent = el.getprevious(), el.getparent()
@@ -317,9 +317,9 @@ def _notes(root: Any) -> None:
         body = target if target.tag in ("li", "div", "p") else None
         if raised and body is not None and re.match(r"(fn|footnote|endnote|note)", target.get("id"), re.I):
             link.set("role", "doc-noteref")
-            if not _is_note(body):
+            if not is_note(body):
                 _mark_note(body)
-    notes = [el for el in root.iter() if el.tag != "a" and _is_note(el)]
+    notes = [el for el in root.iter() if el.tag != "a" and is_note(el)]
     for body in notes:
         for link in list(body.iter("a")):
             href = link.get("href") or ""
@@ -379,14 +379,14 @@ def _tidy(root: Any) -> None:
             el.tag = "div"
     for el in reversed(list(root.iter("div"))):
         parent = el.getparent()
-        if el is root or parent is None or el.get("id") or _is_note(el):
+        if el is root or parent is None or el.get("id") or is_note(el):
             continue
         only = len(parent) == 1 and not (parent.text or "").strip() and not (el.tail or "").strip()
         if only and parent.tag == "div":
             el.drop_tag()
 
 
-def _loose(root: Any) -> None:
+def loose(root: Any) -> None:
     """Words and inline markup that stand loose between the blocks of the body go into paragraphs."""
     items: list[Any] = [root.text or ""]
     for k in list(root):
@@ -429,7 +429,7 @@ def clean(html: str, base: str | None = None) -> Any:
     _notes(body)
     _anchors(body)
     _empty(body)
-    _loose(body)
+    loose(body)
     return body
 
 

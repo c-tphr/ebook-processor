@@ -26,7 +26,7 @@ def _raise(root: Any, name: str) -> bool:
         if not deep:
             return True
         parent = deep[0].getparent()
-        if parent.tag != "div" or C._is_note(parent):
+        if parent.tag != "div" or C.is_note(parent):
             return False
         parent.drop_tag()
     return False
@@ -38,7 +38,7 @@ def split(root: Any, title: str, how: str = "auto") -> list[Doc]:
     name = level(root) if how == "auto" and C.words(root) >= LONG else None
     if name is None or not _raise(root, name):
         return [Doc(title, list(root))]
-    C._loose(root)
+    C.loose(root)
     docs: list[Doc] = []
     opening: list[Any] = []
     for el in list(root):

@@ -104,7 +104,7 @@ def pictures(root: Any, get: Callable[[str], bytes | None]) -> tuple[dict[str, b
         else:
             counts["missing"] += 1
             alt = image.get("alt") or ""
-            C._replace(image, f"[{alt}]" if alt else "")
+            C.replace(image, f"[{alt}]" if alt else "")
     return files, counts
 
 

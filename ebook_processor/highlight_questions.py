@@ -79,7 +79,7 @@ def ids(store: dict[str, Any]) -> set[str]:
     return {q["id"] for q in accepted(store)}
 
 
-def _clean(value: Any, what: str, limit: int) -> str:
+def clean(value: Any, what: str, limit: int) -> str:
     if not isinstance(value, str) or not value.strip():
         raise QuestionError(f"a question needs {what}")
     text = " ".join(value.split())
@@ -95,7 +95,7 @@ def section_at(manifest: dict[str, Any], chapter: int, word: int) -> dict[str, A
 def formed(question: Any, answer: Any, form: Any = None) -> dict[str, Any]:
     """The wording of a question as it is kept: ``question``, ``answer`` and, for a question that is not open, the
     members of its form (``forms.members``). Raises ``QuestionError`` when something about it cannot be used."""
-    out = {"question": _clean(question, "a question", PROMPT_MAX_CHARS), "answer": _clean(answer, "an answer", ANSWER_MAX_CHARS)}
+    out = {"question": clean(question, "a question", PROMPT_MAX_CHARS), "answer": clean(answer, "an answer", ANSWER_MAX_CHARS)}
     extra = form if isinstance(form, dict) else {}
     if isinstance(extra.get("choices"), list):
         extra = {**extra, "choices": [" ".join(str(c).split()) for c in extra["choices"]]}
@@ -294,7 +294,7 @@ def propose(backend: Backend, book: ReadingBook, manifest: dict[str, Any], store
                                 schema=propose_schema(settings), model=settings.model)
         data = done.data if isinstance(done.data, dict) else {}
         try:
-            question = _clean(data.get("question"), "a question", PROMPT_MAX_CHARS)
+            question = clean(data.get("question"), "a question", PROMPT_MAX_CHARS)
             form = {} if settings.open_only else qforms.from_model(data, question, lambda t: " ".join(str(t or "").split()))
             if qforms.form_of(form) not in settings.forms:
                 raise QuestionError(f"the form {qforms.NAMES[qforms.form_of(form)]} is not allowed; the allowed forms are "

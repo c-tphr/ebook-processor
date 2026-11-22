@@ -10,7 +10,7 @@ import markdown
 from markdown.extensions import Extension
 from markdown.inlinepatterns import InlineProcessor
 
-from .. import vault
+from .. import frontmatter, vault
 
 # from the start of a run of spaces only: a long run is then read once
 BLOCK_ID = re.compile(rf"(?<![ \t])[ \t]+{vault.BLOCK_ID}[ \t]*$", re.M)
@@ -35,7 +35,7 @@ class _Notes(Extension):
 def _one(value: Any) -> str | None:
     if isinstance(value, list):
         value = ", ".join(str(v) for v in value if isinstance(v, (str, int, float)))
-    if isinstance(value, bool) or value is None or value is vault.OPAQUE:
+    if isinstance(value, bool) or value is None or value is frontmatter.OPAQUE:
         return None
     return str(value).strip() or None
 
@@ -43,8 +43,8 @@ def _one(value: Any) -> str | None:
 def read(text: str) -> tuple[str, dict[str, Any]]:
     """The file's text as HTML, and what its properties say of it."""
     text = text.lstrip("﻿").replace("\r\n", "\n").replace("\r", "\n")
-    front, body = vault.split(text)
-    props = vault.parse_props(front) if front is not None else []
+    front, body = frontmatter.split(text)
+    props = frontmatter.parse_props(front) if front is not None else []
 
     def named(*names: str) -> str | None:
         for name in names:

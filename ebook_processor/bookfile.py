@@ -34,6 +34,7 @@ import re
 from typing import Any
 
 from . import notes, vault
+from .frontmatter import Prop, compose, parse_props, split
 from .reading import ReadingBook
 
 KEPT = "> [!info] This file is kept by ebook-processor. Edits made here are overwritten."
@@ -79,13 +80,13 @@ def text(job_id: str, book: ReadingBook, store: dict[str, Any], kind: str = "boo
     """The file of one book or article. ``origin`` says where an article came from; what is known of it goes into
     the file's properties."""
     data = notes.notebook(book, store, None)
-    props = [vault.Prop("id", book_id(job_id)), vault.Prop("kind", kind), vault.Prop("title", _one_line(data["title"]))]
+    props = [Prop("id", book_id(job_id)), Prop("kind", kind), Prop("title", _one_line(data["title"]))]
     if data["authors"]:
-        props.append(vault.Prop("authors", [_one_line(a) for a in data["authors"]]))
+        props.append(Prop("authors", [_one_line(a) for a in data["authors"]]))
     for key in ("url", "site", "published", "fetched"):
         value = (origin or {}).get(key)
         if isinstance(value, str) and value.strip():
-            props.append(vault.Prop(key, _one_line(value)))
+            props.append(Prop(key, _one_line(value)))
     lines = [KEPT, ""]
     if data["note"]:
         lines += _entry(data["note"]["text"], data["note"]["id"])
@@ -112,7 +113,7 @@ def text(job_id: str, book: ReadingBook, store: dict[str, Any], kind: str = "boo
                 body += ([] if notes.single_section(c, s) else [f"### {_escape(_one_line(s['label']))}", ""]) + part
         if body:
             lines += [f"## {_escape(_one_line(c['title']))}", ""] + body
-    return vault.compose(props, "\n".join(lines).rstrip() + "\n")
+    return compose(props, "\n".join(lines).rstrip() + "\n")
 
 
 def mark_removed(current: str) -> str:
@@ -121,8 +122,8 @@ def mark_removed(current: str) -> str:
         return current
     if KEPT in current:
         return current.replace(KEPT, REMOVED, 1)
-    front, body = vault.split(current)
-    return vault.compose(vault.parse_props(front) if front is not None else [], REMOVED + "\n\n" + body.lstrip("\n"))
+    front, body = split(current)
+    return compose(parse_props(front) if front is not None else [], REMOVED + "\n\n" + body.lstrip("\n"))
 
 
 def place(store: dict[str, Any], block: str, sections: list[dict[str, Any]] | None = None) -> dict[str, int] | None:

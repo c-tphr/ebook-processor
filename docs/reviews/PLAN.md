@@ -350,3 +350,26 @@ If one of these matters to you, it can be a fourth review of its own. The first 
 
 One line for each item when it is done, with its commit.
 
+### Stage 1 (done 2026-11-22; 920 tests outside the browser and 67 in Chromium pass)
+
+- 1.10: A number inside a longer number is no error code (`fe43e63`)
+- 1.4: A new entry's id gets a counter, so the loop always ends (`5dc659d`)
+- 1.5: Lines and files that stalled the app are read quickly or refused (`47f4f4c`)
+- 1.6: update looks at the checkout and the remote before it stops the app (`58a2477`)
+- 1.7: Ctrl-C and the end of the app give up the model calls that are running (`eaaae1e`)
+- 1.1, 1.2, 1.8, 1.12: Answers are no longer lost to Practice, to a second tab or to a large state (`1d05b77`)
+- 1.3, 1.14: An edit the e-reader's file cannot hold is refused; a look at a run writes nothing (`a9361a7`)
+- 1.11: The app answers only to this computer's names (`374d72f`)
+- 1.16: One entry that cannot be read costs that entry only (`0c85645`)
+- 1.9: The Ask page waits for its button (`aa8f5d2`)
+- 1.17: The library and the run page ask again after a request the app did not answer (`b3dfef3`)
+- 1.13: The graph no longer hangs on a note with many links, and rests when nothing moves (`0a57040`)
+- 1.15: Three wordings the reader sees (`5f1c3e5`)
+
+Notes on stage 1:
+
+- 1.2: both steps are built. The page sends only the answers the app has not confirmed.
+- 1.5: the same search over every line pattern found one more slow pattern, the block id of Markdown files; it is fixed too.
+- 1.7: the test of Ctrl-C sends a real signal and is skipped on Windows, where a signal sent to oneself is not Ctrl-C. Ctrl-C on Windows is not verified.
+- 1.8: the browser test runs in the clock of the test machine (UTC in CI), so it cannot show the difference there; the rule is one line.
+- 1.14: done by writing the run's state only when it changed, not by a second function for reads.

@@ -19,7 +19,7 @@ import { autocompletion, completionKeymap, startCompletion } from "@codemirror/a
 /* ---------- what Markdown does not know: wiki links, tags, block ids ---------- */
 
 const WORD = "\\p{L}\\p{N}_";
-const WIKI = /^([^\[\]|#\n]*)(#[^\[\]|\n]*)?(\|[^\[\]\n]*)?\]\]/;   // what follows "[[" in a link; it follows LINK_RE of vault.py
+const WIKI = /^([^\[\]|#\n]*)(#[^\[\]|\n]*)?(\|[^\[\]\n]*)?\]\]/;   // what follows "[[" in a link; it follows LINK_RE of notetext.py
 const TAG = new RegExp(`^#[${WORD}/-]*[\\p{L}_][${WORD}/-]*`, "u");
 const TAG_BEFORE = new RegExp(`[${WORD}/#&]`, "u");
 const BLOCK_ID = /^\^[A-Za-z0-9-]+[ \t]*(?=\n|$)/;

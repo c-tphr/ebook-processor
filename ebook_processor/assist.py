@@ -36,7 +36,8 @@ from .llm import Backend, Completion
 from .store import load_json, now
 from .prep.checkpoints import ANSWER_MAX_CHARS, PROMPT_MAX_CHARS
 from .settings import Settings
-from .vault import Note, Vault, key, mask_code
+from .notetext import mask_code
+from .vault import Note, Vault, key
 
 DECK = "notes"  # what the notes' cards are called where a book's cards carry the book's id
 FOLDER, FILE, VERSION = "notes-practice", "questions.json", 1

@@ -574,7 +574,7 @@ def test_no_line_pattern_takes_long_on_a_long_run_of_one_character():
     import re
     import time
 
-    from ebook_processor import bookfile, frontmatter
+    from ebook_processor import bookfile, frontmatter, notetext
     from ebook_processor.sources import from_markdown, from_text
     assert V.head_of("## A title ##  ") == (2, "A title") and V.head_of("   ### Deep") == (3, "Deep")
     assert V.head_of("# ") == (1, "") and V.head_of("#no") is None and V.head_of("    # code") is None
@@ -583,7 +583,7 @@ def test_no_line_pattern_takes_long_on_a_long_run_of_one_character():
     n = 50000
     hard = ["# a" + " " * n + "b", "# a" + "\t" * n + "b #", " " * n, "[" * n, "[[" * (n // 2), "#" * n, "- " * (n // 2),
             "a " * (n // 2) + "^x", "*" * n, "\\" * n, "`" * n, "![[" * (n // 3), "|" * n]
-    patterns = [value for module in (V, frontmatter, bookfile, from_text, from_markdown) for value in vars(module).values()
+    patterns = [value for module in (V, frontmatter, notetext, bookfile, from_text, from_markdown) for value in vars(module).values()
                 if isinstance(value, re.Pattern)]
     assert len(patterns) > 15
     began = time.monotonic()

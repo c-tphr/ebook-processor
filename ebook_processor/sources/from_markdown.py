@@ -10,10 +10,10 @@ import markdown
 from markdown.extensions import Extension
 from markdown.inlinepatterns import InlineProcessor
 
-from .. import frontmatter, vault
+from .. import frontmatter, notetext
 
 # from the start of a run of spaces only: a long run is then read once
-BLOCK_ID = re.compile(rf"(?<![ \t])[ \t]+{vault.BLOCK_ID}[ \t]*$", re.M)
+BLOCK_ID = re.compile(rf"(?<![ \t])[ \t]+{notetext.BLOCK_ID}[ \t]*$", re.M)
 COMMENT = re.compile(r"%%.*?%%", re.S)
 
 
@@ -29,7 +29,7 @@ class _Wiki(InlineProcessor):
 
 class _Notes(Extension):
     def extendMarkdown(self, md: markdown.Markdown) -> None:  # noqa: N802
-        md.inlinePatterns.register(_Wiki(vault.LINK_RE.pattern, md), "wiki", 175)  # a link as the notes folder reads it
+        md.inlinePatterns.register(_Wiki(notetext.LINK_RE.pattern, md), "wiki", 175)  # a link as the notes folder reads it
 
 
 def _one(value: Any) -> str | None:

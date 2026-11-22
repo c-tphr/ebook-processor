@@ -63,7 +63,7 @@ function withOutline(text, items) {     // the text with its outline written aga
   lines.splice(part.start, part.end - part.start, "", ...made, ...(part.end < lines.length ? [""] : []));
   return lines.join("\n").replace(/\n*$/, "\n");
 }
-// The pattern of a [[link]] in gatheredOf and in asWords follows LINK_RE of vault.py.
+// The pattern of a [[link]] in gatheredOf and in asWords follows LINK_RE of notetext.py.
 function gatheredOf(text) {             // the links under "Gathered", as written
   const lines = text.split("\n"), part = sectionOf(lines, "Gathered");
   return part ? [...lines.slice(part.start, part.end).join("\n").matchAll(/!?\[\[([^\[\]|#\n]*)(#[^\[\]|\n]*)?(?:\|([^\[\]\n]*))?\]\]/g)].map((m) => ({ raw: m[0].replace(/^!/, ""), shown: (m[3] || m[1]).trim() + (m[2] && !m[3] && m[2].startsWith("#^") ? " ¶" : "") })) : [];

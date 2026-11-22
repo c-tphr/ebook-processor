@@ -32,6 +32,7 @@ from .prep import words as W
 from .prep.build import CHECKPOINTS_ID
 from .prep.epub import Book, EpubError, SpineDoc, is_footnote_container, is_invisible, is_noteref, load_book_bytes
 from .prep.xmltree import Element
+from .store import write_json
 
 STATE_FILE = "reading.json"
 STATE_VERSION = 1
@@ -147,6 +148,72 @@ def open_reading_book(path: Path) -> ReadingBook:
     if issues:
         raise ReadingError(f"{path.name}: its checkpoint file is not valid ({issues[0].message})")
     return ReadingBook(book, json.loads(raw), path.name)
+
+
+# --------------------------------------------------------------------------
+# A book without its text
+#
+# Most of what the app does with a book needs its outline only: the chapters, the sections, the questions. Reading
+# the whole EPUB for that costs a tenth of a second or more and megabytes for each book, and a page such as Practice
+# asks for every book of the library. So the outline of a prepared book is kept in a small file beside it, and the
+# EPUB is read only when its text is wanted.
+
+OUTLINE_FILE = "outline.json"
+OUTLINE_FORMAT = 1
+
+
+def outline_of(full: ReadingBook) -> dict[str, Any]:
+    """What is kept of a prepared book: its manifest, its checkpoint data, and where each paragraph lies."""
+    return {"manifest": full.manifest(), "data": full.data, "file": full.job_file,
+            "blocks": {b.ref: [sd.index, b.start, b.end] for sd in full.book.spine for b in sd.blocks if b.placeholder is None}}
+
+
+def load_outline(folder: Path, stamp: list[int]) -> dict[str, Any] | None:
+    """The kept outline, when it was made from the prepared book as it is now (``stamp``: its time and its size)."""
+    try:
+        kept = json.loads((folder / OUTLINE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(kept, dict) or kept.get("format") != OUTLINE_FORMAT or kept.get("of") != stamp:
+        return None
+    return kept if all(isinstance(kept.get(k), dict) for k in ("manifest", "data", "blocks")) else None
+
+
+def save_outline(folder: Path, stamp: list[int], outline: dict[str, Any]) -> None:
+    try:
+        write_json(folder / OUTLINE_FILE, {"format": OUTLINE_FORMAT, "of": stamp, **outline})
+    except OSError:
+        pass  # a folder that cannot be written to: the outline is then made again each time the app starts
+
+
+class Outline:
+    """A prepared book as the app keeps it at hand: everything but its text. It answers what ``ReadingBook``
+    answers. The EPUB is read, through ``load``, only for what needs the text: ``book``, a chapter, a picture, a
+    search."""
+
+    def __init__(self, kept: dict[str, Any], load: Any) -> None:
+        self._manifest = json.dumps(kept["manifest"], ensure_ascii=False)
+        self.data: dict[str, Any] = kept["data"]      # rsvp/checkpoints.json
+        self.job_file: str = kept.get("file") or ""
+        # where each paragraph lies: reference -> [chapter, first word, the word after its last]
+        self.blocks: dict[str, list[int]] = kept["blocks"]
+        self._load = load
+
+    def manifest(self) -> dict[str, Any]:
+        return json.loads(self._manifest)  # a copy of its own for each caller: several add to it
+
+    @property
+    def book(self) -> Book:
+        return self._load().book
+
+    def chapter(self, index: int) -> dict[str, Any]:
+        return self._load().chapter(index)
+
+    def asset(self, path: str) -> tuple[bytes, str]:
+        return self._load().asset(path)
+
+    def search(self, query: str) -> list[dict[str, Any]]:
+        return self._load().search(query)
 
 
 # --------------------------------------------------------------------------

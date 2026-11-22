@@ -190,7 +190,9 @@ class Jobs:
         self.cancels: dict[str, threading.Event] = {}
         self.stopping = threading.Event()  # set when the app ends: every model call still running gives up
         self.looked: dict[tuple[str, ...], float] = {}  # when the tools for these models were last found ready
-        self.books: dict[str, tuple[int, reading.ReadingBook]] = {}
+        # A book's outline is kept for every book (it is small); the text of the last few books that were read.
+        self.books: dict[str, tuple[list[int], reading.Outline]] = {}
+        self.parsed: dict[str, tuple[list[int], reading.ReadingBook]] = {}
         self.backend_factory = backend_factory
         # questions being written from highlights: book id -> what is under way (see ``propose``)
         self.asks: dict[str, dict[str, Any]] = {}
@@ -346,19 +348,24 @@ class Jobs:
             except (OSError, ValueError):
                 return []
             refs = next((q["passage"] for q in doc.get("questions", []) if q["id"] == pid), [])
-        where = {b.ref: (sd, b) for sd in self.book(job_id).book.spine for b in sd.blocks}
+        book = self.book(job_id)
+        words: dict[str, list[str]] | None = None
         out = []
         for entry in refs:
-            sd, block = where.get(entry["ref"], (None, None))
-            if block is None or block.placeholder is not None:
+            place = book.blocks.get(entry["ref"])  # None for a picture, a table or a listing
+            marks = list(notes.marked(store, place[0], place[1], place[2])) if place else []
+            if not marks:  # nothing in it is highlighted: the text as the files hold it, and the book is not read
                 out.append([{"t": entry["text"], "h": False}])
                 continue
-            lit = [False] * len(block.words)
-            for start, end in notes.marked(store, sd.index, block.start, block.end):
-                for i in range(start - block.start, end - block.start):
+            if words is None:
+                words = {b.ref: b.words for sd in book.book.spine for b in sd.blocks}
+            mine_words = words.get(entry["ref"]) or []
+            lit = [False] * len(mine_words)
+            for start, end in marks:
+                for i in range(max(0, start - place[1]), min(len(lit), end - place[1])):
                     lit[i] = True
             runs: list[dict[str, Any]] = []
-            for word, h in zip(block.words, lit):
+            for word, h in zip(mine_words, lit):
                 if runs and runs[-1]["h"] == h:
                     runs[-1]["t"] += " " + word
                 else:
@@ -373,13 +380,12 @@ class Jobs:
             doc = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return {}
-        where = {b.ref: (sd, b) for sd in self.book(job_id).book.spine for b in sd.blocks}
+        where = self.book(job_id).blocks
         out = {}
         for q in doc.get("questions", []):
             for entry in q.get("passage") or []:
                 if entry.get("ref") in where:
-                    sd, block = where[entry["ref"]]
-                    out[q["id"]] = {"chapter": sd.index, "word": block.start}
+                    out[q["id"]] = {"chapter": where[entry["ref"]][0], "word": where[entry["ref"]][1]}
                     break
         return out
 
@@ -1464,22 +1470,49 @@ class Jobs:
     def prepared(self, job_id: str) -> Path:
         return self.folder(job_id) / f"{stem_of(self.jobs[job_id]['file'])}.prepared.epub"
 
-    def book(self, job_id: str) -> reading.ReadingBook:
-        """The run's prepared book, parsed once and kept until the file changes (a rebuild writes it again)."""
+    def book(self, job_id: str) -> reading.Outline:
+        """The run's prepared book. Its outline comes from a small file beside it, and is kept until the book changes
+        (a rebuild writes it again). Its text is read from the EPUB only when it is asked for."""
         self.get(job_id)
         path = self.prepared(job_id)
-        if not path.is_file():
-            raise ApiError(HTTPStatus.NOT_FOUND, "this book has no file to read yet")
-        stamp = path.stat().st_mtime_ns
+        try:
+            found = path.stat()
+        except OSError:
+            raise ApiError(HTTPStatus.NOT_FOUND, "this book has no file to read yet") from None
+        stamp = [found.st_mtime_ns, found.st_size]
         with self.lock:
             cached = self.books.get(job_id)
-            if cached is None or cached[0] != stamp:
-                try:
-                    cached = (stamp, reading.open_reading_book(path))
-                except reading.ReadingError as exc:
-                    raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
-                self.books[job_id] = cached
-            return cached[1]
+            if cached is not None and cached[0] == stamp:
+                return cached[1]
+        folder = self.folder(job_id)
+        kept = reading.load_outline(folder, stamp)
+        if kept is None:  # the first time, or the book was built again
+            kept = reading.outline_of(self._text(job_id, path, stamp))
+            reading.save_outline(folder, stamp, kept)
+        made = reading.Outline(kept, lambda: self._text(job_id, path, stamp))
+        with self.lock:
+            self.books[job_id] = (stamp, made)
+        return made
+
+    PARSED_KEPT = 4
+
+    def _text(self, job_id: str, path: Path, stamp: list[int]) -> reading.ReadingBook:
+        """The whole book, read from its EPUB. The last few are kept: a book of 50,000 words holds about 13 MB."""
+        with self.lock:
+            cached = self.parsed.get(job_id)
+            if cached is not None and cached[0] == stamp:
+                self.parsed[job_id] = self.parsed.pop(job_id)  # used last: dropped last
+                return cached[1]
+        try:
+            full = reading.open_reading_book(path)
+        except reading.ReadingError as exc:
+            raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+        with self.lock:
+            self.parsed.pop(job_id, None)
+            self.parsed[job_id] = (stamp, full)
+            while len(self.parsed) > self.PARSED_KEPT:
+                self.parsed.pop(next(iter(self.parsed)))
+        return full
 
     def reading_state(self, job_id: str) -> dict[str, Any]:
         book = self.book(job_id)
@@ -1917,6 +1950,7 @@ class Jobs:
                 del self.jobs[job_id]
                 self.filed.pop(job_id, None)
                 self.books.pop(job_id, None)
+                self.parsed.pop(job_id, None)
             self._book_left(job_id)
             shutil.rmtree(self.folder(job_id), ignore_errors=True)
 

@@ -699,3 +699,24 @@ def test_a_note_with_very_many_links_does_not_freeze_the_graph(page: Page, book:
     hub = next(p for p in state["points"] if p["title"] == "Hub")
     assert hub["joins"] == 150 and state["extent"] < 5000
     page.wait_for_function("() => !graphState().drawing")   # a settled graph that is left alone draws nothing
+
+
+def test_a_long_process_list_is_drawn_in_parts_and_a_choice_does_not_draw_it_again(page: Page, book: App, vault: Path):
+    """With thousands of items the list took seconds to draw, and was drawn anew for every item chosen."""
+    import json
+    first = book.call("POST", f"/jobs/{book.id}/notes/highlight", json_body={"chapter": 2, "start": 3, "end": 9})["made"]
+    path = book.folder / "notes.json"
+    store = json.loads(path.read_text(encoding="utf-8"))
+    one = next(h for h in store["highlights"] if h["id"] == first)
+    store["highlights"] = [{**one, "id": f"h{n:07x}", "start": 3 + n % 40, "end": 9 + n % 40} for n in range(700)]
+    path.write_text(json.dumps(store), encoding="utf-8")
+    page.goto(book.url + "/#/notes/process")
+    expect(page.locator(".pz-item").first).to_be_visible()
+    page.wait_for_function("() => document.querySelector('.pz-list').dataset.all === '1'")   # the rest came in the pauses
+    expect(page.locator(".pz-item")).to_have_count(700)
+    page.evaluate("() => { document.querySelector('.pz-item').dataset.same = '1'; }")
+    page.locator(".pz-item").nth(500).click()
+    expect(page.locator(".pz-item").nth(500)).to_have_attribute("aria-current", "true")
+    page.locator(".pz-item").nth(20).click()
+    expect(page.locator(".pz-item[aria-current=true]")).to_have_count(1)
+    assert page.evaluate("() => document.querySelector('.pz-item').dataset.same") == "1"       # the same rows: not drawn again

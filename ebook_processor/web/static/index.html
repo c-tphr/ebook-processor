@@ -1372,7 +1372,7 @@ async function showProcess(params) {
   const counts = h("div"), bar = h("div", { class: "pz-bar" }), list = h("div", { class: "pz-list" }), pane = h("div", { class: "pz-pane" });
   put(app, h("a", { class: "back m", href: state.book ? "#/run/" + state.book : "#/notes" }, state.book ? "← Book page" : "← Notes"),
     h("div", { class: "title" }, h("h1", {}, "Process"), counts), bar, h("div", { class: "pz-cols" }, list, pane));
-  let data = null, chosen = null, writing = false, turn = 0;
+  let data = null, chosen = null, writing = false, turn = 0, drawn = 0;
   const clip = (text, n) => (text.length > n ? text.slice(0, n).replace(/\s+\S*$/, "") + " …" : text);
   const keep = () => history.replaceState(null, "", "#/notes/process?" + new URLSearchParams(Object.entries(state).filter(([k, v]) => v && !(k === "show" && v === "waiting") && !(k === "order" && v === "book"))));
   const every = () => [...data.quick, ...data.books.flatMap((b) => b.items.map((i) => Object.assign(i, { book: b })))];
@@ -1399,7 +1399,10 @@ async function showProcess(params) {
     if (!writing) chosen = next;
     await load();
   }
-  function choose(item) { stop(); chosen = item; state.item = item ? item.id : ""; keep(); draw(); drawPane(); }
+  // Choosing an item changes two rows of the list. The list itself is not drawn again: with thousands of items
+  // that took seconds for each click.
+  const mark = (item, on) => { const at = item && $("pz-" + item.id); if (at) at.setAttribute("aria-current", String(on)); };
+  function choose(item) { stop(); mark(chosen, false); chosen = item; mark(chosen, true); state.item = item ? item.id : ""; keep(); drawPane(); }
   function row(i, where) {
     const text = i.text || i.note;
     return h("div", { class: "pz-item", id: "pz-" + i.id, role: "button", tabindex: "0", "aria-current": String(!!chosen && chosen.id === i.id),
@@ -1414,6 +1417,7 @@ async function showProcess(params) {
         i.state === "aside" ? h("button", { class: "text", type: "button", onclick: () => aside([i], false) }, "Bring back") : null));
   }
   function draw() {
+    drawn++;                              // a list still being filled in is given up
     const n = data.counts, tab = (key, label) => h("button", { type: "button", "aria-pressed": String(state.show === key), onclick: () => { state.show = key; keep(); draw(); } }, `${label} ${n[key]}`);
     put(counts, kv("Waiting", fmt(n.waiting)), kv("Processed", fmt(n.done)), kv("Set aside", fmt(n.aside)));
     const order = h("select", { "aria-label": "Order", onchange: () => { state.order = order.value; AppSettings.set("process_order", order.value); keep(); draw(); } },
@@ -1429,11 +1433,15 @@ async function showProcess(params) {
       return put(list, h("p", { class: "empty", style: "padding-top:26px" }, state.show === "waiting" ? (n.done + n.aside ? "Nothing waits. Everything you marked has become a note or was set aside."
         : "Nothing to process yet. Highlight something while you read, or write a quick note with Ctrl + . on any page.") : state.show === "done" ? "Nothing processed yet." : "Nothing is set aside."));
     }
+    // A long list is drawn in parts: the first rows at once, the rest in the pauses of the page, so that thousands
+    // of items do not keep the page from answering. `parts` holds elements and, for rows, functions that make one.
     if (state.order === "oldest") {
-      return put(list, h("div", { style: "margin-top:26px;border-top:1px solid var(--ink)" }, ordered().map((i) => row(i, i.book ? i.book.title + (i.section_label ? " / " + i.section_label : "") : ""))));
+      const box = h("div", { style: "margin-top:26px;border-top:1px solid var(--ink)" });
+      put(list, box);
+      return fill(box, ordered().map((i) => () => row(i, i.book ? i.book.title + (i.section_label ? " / " + i.section_label : "") : "")));
     }
     const parts = [], quick = data.quick.filter((i) => i.state === state.show);
-    if (quick.length) parts.push(h("h3", {}, "Quick notes", group(quick, state.show === "waiting")), quick.map((i) => row(i)));
+    if (quick.length) parts.push(h("h3", {}, "Quick notes", group(quick, state.show === "waiting")), quick.map((i) => () => row(i)));
     for (const b of data.books) {
       const mine = b.items.filter((i) => i.state === state.show);
       if (!mine.length) continue;
@@ -1444,9 +1452,21 @@ async function showProcess(params) {
         if (!sections.length || sections[sections.length - 1].label !== label) sections.push({ label, items: [] });
         sections[sections.length - 1].items.push(i);
       }
-      for (const s of sections) parts.push(s.label ? h("h4", {}, h("span", {}, s.label), sections.length > 1 ? group(s.items, state.show === "waiting") : null) : null, s.items.map((i) => row(i)));
+      for (const s of sections) parts.push(s.label ? h("h4", {}, h("span", {}, s.label), sections.length > 1 ? group(s.items, state.show === "waiting") : null) : null, s.items.map((i) => () => row(i)));
     }
-    put(list, parts);
+    put(list);
+    fill(list, parts.flat(Infinity).filter((k) => k != null && k !== false));
+  }
+  function fill(box, parts) {             // 300 at once, then 300 in each pause, until all are there or the list is drawn anew
+    const mine = ++drawn;
+    let at = 0;
+    const some = () => {
+      if (mine !== drawn || !box.isConnected) return;
+      box.append(...parts.slice(at, at + 300).map((k) => (typeof k === "function" ? k() : k)));
+      at += 300;
+      if (at < parts.length) setTimeout(some, 0); else box.dataset.all = "1";
+    };
+    some();
   }
   // The note that is written from an item, or the note an item was added to, in the right-hand column.
   function write(options) {

@@ -13,9 +13,7 @@ import pytest
 from ebook_processor import cli, runner
 from tests.paths import FIXTURE
 from tests.scripted import Script
-from tests.sources.makers import CLUTTER, FILL, MARKDOWN, PAGE, PAGES, PNG, body, make_docx, make_mhtml
-
-TEXT_BOOK = "The Lamp Book\n\n" + "\n\n".join(f"CHAPTER {r}\n\n{body(2500)}" for r in ("I", "II", "III"))
+from tests.sources.makers import CLUTTER, FILL, MARKDOWN, PAGE, PAGES, PNG, TEXT_BOOK, body, make_docx, make_mhtml
 
 
 @pytest.fixture
@@ -149,7 +147,7 @@ def test_the_command_line_estimates_and_processes_a_file(tmp_path: Path, capsys,
 # ---- step 2: web addresses, saved pages, Word files
 
 
-def test_an_address_is_fetched_once_held_and_processed(app, the_web, monkeypatch):  # noqa: F811
+def test_an_address_is_fetched_once_held_and_processed(app, the_web, monkeypatch):
     from ebook_processor.sources import fetch
     asked = []
     real = fetch.get
@@ -176,7 +174,7 @@ def test_an_address_is_fetched_once_held_and_processed(app, the_web, monkeypatch
     assert second[0] == 201 and second[1]["id"] != job["id"]  # a second entry, as the reader asked
 
 
-def test_an_address_that_cannot_be_taken_says_why(app, the_web):  # noqa: F811
+def test_an_address_that_cannot_be_taken_says_why(app, the_web):
     for path, said in (("/forbidden", "refused to give the page"), ("/paper.pdf", "PDF files are not supported yet"), ("/shell", "JavaScript")):
         status, answer = app("POST", "/look/url", json_body={"url": the_web + path})
         assert status == 400 and said in answer["error"]
@@ -195,7 +193,7 @@ def test_a_word_file_and_a_saved_page_through_the_app(app):
     assert seen["page"] == {"page": True, "whole": False, "lost": False}
 
 
-def test_the_command_line_takes_an_address(tmp_path: Path, the_web, capsys, monkeypatch) -> None:  # noqa: F811
+def test_the_command_line_takes_an_address(tmp_path: Path, the_web, capsys, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
 
     def stand_in(*args, **kwargs):

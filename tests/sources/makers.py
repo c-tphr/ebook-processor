@@ -102,6 +102,9 @@ def body(words: int = 300) -> str:
     return "\n\n".join(FILL * 6 for _ in range(max(1, words // 78)))
 
 
+TEXT_BOOK = "The Lamp Book\n\n" + "\n\n".join(f"CHAPTER {r}\n\n{body(2500)}" for r in ("I", "II", "III"))   # a text with three chapters
+
+
 MARKDOWN = f"""---
 title: On Keeping Lamps
 author: Ione Hartwell

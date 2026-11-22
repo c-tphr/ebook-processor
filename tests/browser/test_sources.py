@@ -10,9 +10,7 @@ from playwright.sync_api import Page, expect
 from ebook_processor.web.server import NOTES_FOLDER
 from tests.browser.helpers import App, Reader
 from tests.paths import FIXTURE
-from tests.sources.makers import FILL, MARKDOWN, PNG, body, make_docx
-
-TEXT_BOOK = "The Lamp Book\n\n" + "\n\n".join(f"CHAPTER {r}\n\n{body(2500)}" for r in ("I", "II", "III"))
+from tests.sources.makers import FILL, MARKDOWN, PNG, TEXT_BOOK, body, make_docx
 
 
 @pytest.fixture
@@ -126,7 +124,7 @@ def test_a_file_that_cannot_be_taken_says_why(page: Page, own: App, tmp_path: Pa
 # ---- step 2: a web address, a Word file, a page saved by the browser
 
 
-def test_an_article_is_added_by_its_address(page: Page, own: App, the_web: str):  # noqa: F811
+def test_an_article_is_added_by_its_address(page: Page, own: App, the_web: str):
     page.goto(own.url + "/#/add")
     page.locator("#app form").wait_for()
     page.locator("#path").fill(the_web + "/essay?utm_source=mail")
@@ -178,7 +176,7 @@ def test_a_word_file_is_added(page: Page, own: App, tmp_path: Path):
     expect(page.locator("blockquote").first).to_contain_text("Whatever the weather.")
 
 
-def test_a_page_saved_by_the_browser_itself_is_read(page: Page, own: App, the_web: str, tmp_path: Path, browser_name: str):  # noqa: F811
+def test_a_page_saved_by_the_browser_itself_is_read(page: Page, own: App, the_web: str, tmp_path: Path, browser_name: str):
     if browser_name != "chromium":
         pytest.skip("only Chromium can be asked to save a page as one file")
     page.goto(the_web + "/essay")

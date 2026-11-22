@@ -99,3 +99,17 @@ def test_the_library_asks_again_when_the_app_did_not_answer(page: Page, book: Ap
     page.unroute("**/api/jobs")
     expect(page.locator("#lost")).to_have_count(0, timeout=9000)   # it asked again by itself
     expect(page.locator(".run .t").first).to_have_text("The Lighthouse Keeper's Almanac")
+
+
+def test_the_library_replaces_only_the_rows_that_changed(page: Page, book: App):
+    """A look at the library while a run goes on drew every row anew, and the row with the keyboard's place lost it."""
+    page.goto(book.url + "/")
+    expect(page.locator(".run .t").first).to_have_text("The Lighthouse Keeper's Almanac")
+    mine = f"#app [data-key='{book.id}']"
+    page.evaluate("(sel) => { document.querySelector(sel).dataset.same = '1'; document.querySelector(sel + ' a').focus(); }", mine)
+    page.evaluate("() => libraryLook()")                          # nothing changed: the row stays, and so does the focus
+    assert page.evaluate("(sel) => [document.querySelector(sel).dataset.same, document.querySelector(sel).contains(document.activeElement)]", mine) == ["1", True]
+    book.call("PUT", f"/jobs/{book.id}/reading", json_body={**book.reading(), "position": {"chapter": 2, "word": 40, "mode": "page"}, "x_progress": 0.5})
+    page.evaluate("() => libraryLook()")                          # this book changed: its row is a new one
+    expect(page.locator(mine)).to_contain_text("50% read")
+    assert page.evaluate("(sel) => document.querySelector(sel).dataset.same", mine) is None

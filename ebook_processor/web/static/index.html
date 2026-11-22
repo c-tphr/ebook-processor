@@ -695,12 +695,20 @@ function showLibrary() {
       cards ? h("a", { class: "btn" + (waiting ? " primary" : ""), href: "#/practice" }, waiting ? `Practice ${waiting}` : "Practice") : null,
       h("a", { class: "btn", href: "#/add" }, "Add book or article"));
     const shown = jobs.filter((j) => !only || j.type === only);
-    put(runs, shown.length ? shown.map((j) => runRow(j, mixed)) : h("p", { class: "empty" }, "No books yet."));
+    // While a run goes on the list is asked for every 2.5 seconds. Only the rows whose data changed are replaced:
+    // a row that has the keyboard's place keeps it, where the whole list used to be drawn anew.
+    const rows = shown.map((j) => ({ key: j.id, sig: JSON.stringify([j, mixed]), make: () => runRow(j, mixed) }));
+    const old = [...runs.children].filter((el) => el.dataset.key);
+    if (rows.length && old.length === rows.length && old.length === runs.children.length && rows.every((r, i) => old[i].dataset.key === r.key)) {
+      rows.forEach((r, i) => { if (old[i].dataset.sig !== r.sig) old[i].replaceWith(keyed(r)); });
+    } else put(runs, rows.length ? rows.map(keyed) : h("p", { class: "empty" }, "No books yet."));
     if (jobs.some((j) => j.status === "queued" || j.status === "running")) timer = setTimeout(refresh, 2500);
   }
+  window.libraryLook = refresh;           // for the tests: one more look at the list, as the page takes during a run
   refresh();
 }
 const fromOf = (o) => (!o ? "" : o.site || (o.url ? new URL(o.url).hostname : SOURCE_NAMES[o.format] || ""));   // where an article came from, in a word or two
+const keyed = (r) => { const el = r.make(); el.dataset.key = r.key; el.dataset.sig = r.sig; return el; };   // a row of the library that knows what it shows
 function runRow(j, labelled) {
   const r = j.reading, c = j.counts;
   const state = j.status !== "done" ? j.message || ""

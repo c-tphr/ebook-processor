@@ -205,3 +205,51 @@ def test_practice_settings_and_the_daily_limit(app):
     after = call("POST", "/api/practice/answer", json_body={"job": jid, "id": limited["card"]["id"], "remembered": True})[1]
     assert after["counts"]["new"] == 0  # the day's one new card is used
     assert after["card"]["id"] == limited["card"]["id"] and after["card"]["first"]  # and it waits for its same-day first review
+
+
+# --------------------------------------------------------------------------
+# Answers are known by their question and time, not by their place in a list
+
+
+def _attempt(pid: str, minute: int, grade: str = "correct", **more) -> dict:
+    return {"id": pid, "at": f"2026-11-30T10:{minute:02d}:00", "grade": grade, **more}
+
+
+def test_an_answer_gets_its_card_after_the_list_of_answers_became_shorter():
+    """A question that leaves the book takes its answers with it. The next answer must still become a card."""
+    state = {"x_attempts": [_attempt("a", 0), _attempt("b", 1), _attempt("c", 2)]}
+    store = srs.load(PREPARED.parent / "nowhere")
+    assert srs.take_in(store, state, S, D) and set(store["cards"]) == {"a", "b", "c"}
+    state["x_attempts"] = [_attempt("b", 1), _attempt("c", 2), _attempt("d", 9)]  # "a" was taken out of the book
+    assert srs.take_in(store, state, S, D) and store["cards"]["d"]["state"] == "learned"
+    assert len(store["cards"]["b"]["reviews"]) == 1 and not srs.take_in(store, state, S, D)
+    state["x_attempts"] = [_attempt("d", 9), _attempt("c", 2), _attempt("b", 1)]   # another order changes nothing
+    assert not srs.take_in(store, state, S, D)
+
+
+def test_a_file_that_counted_answers_is_brought_over_and_finds_the_answers_it_lost():
+    done = {"state": "learned", "interval": 1.0, "due": "2026-12-01", "last": "2026-11-30", "again": False,
+            "reviews": [{"at": "2026-11-30T10:01:00", "remembered": True, "kind": "checkpoint", "interval": 1.0, "due": "2026-12-01"}]}
+    store = {"version": srs.VERSION, "seen": 3, "cards": {"b": json.loads(json.dumps(done)), "c": json.loads(json.dumps(done))}}
+    # "a" left the book after three answers were counted; "d" was answered then and never became a card; "e" was
+    # started over, which takes its card away on purpose
+    state = {"x_attempts": [_attempt("b", 1), _attempt("c", 2), _attempt("d", 9), _attempt("e", 5)],
+             "x_restarted": {"e": "2026-11-30T10:05:00"}}
+    state["x_attempts"] = [state["x_attempts"][i] for i in (0, 1, 3)] + [state["x_attempts"][2]]  # e sits among the counted
+    assert srs.take_in(store, state, S, D)
+    assert "seen" not in store and store["cards"]["d"]["state"] == "learned" and "e" not in store["cards"]
+    assert len(store["cards"]["b"]["reviews"]) == 1 and len(store["cards"]["c"]["reviews"]) == 1
+    assert not srs.take_in(store, state, S, D)
+
+
+def test_an_answer_overruled_after_it_was_taken_in_puts_the_card_right():
+    state = {"x_attempts": [_attempt("a", 0, "incorrect", text="lighthouse"), _attempt("b", 1, "incorrect")]}
+    store = srs.load(PREPARED.parent / "nowhere")
+    srs.take_in(store, state, S, D)
+    assert store["cards"]["a"]["state"] == "new" and [r["remembered"] for r in store["cards"]["a"]["reviews"]] == [False]
+    srs.answer(store["cards"]["b"], True, D, S, "2026-12-01T09:00:00")  # b was practised since: it is left alone
+    state["x_attempts"] = [_attempt("a", 0, "correct", text="lighthouse", overruled=True), _attempt("b", 1, "correct", overruled=True)]
+    assert srs.take_in(store, state, S, D)
+    a, b = store["cards"]["a"], store["cards"]["b"]
+    assert a["state"] == "learned" and [r["remembered"] for r in a["reviews"]] == [True] and a["reviews"][0]["text"] == "lighthouse"
+    assert [r["remembered"] for r in b["reviews"]] == [False, True] and not srs.take_in(store, state, S, D)

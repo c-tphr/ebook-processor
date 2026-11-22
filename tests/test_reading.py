@@ -292,3 +292,44 @@ def test_entries_of_one_long_name_added_in_one_second_each_get_an_id(tmp_path, m
     ids = [jobs.import_prepared(name, PREPARED.read_bytes())["id"] for _ in range(12)]
     assert len(set(ids)) == 12 and all(web.JOB_ID_RE.match(i) for i in ids)
     assert ids[0].endswith("a-title-that-is-longer-than-forty-charac") and ids[1].endswith("-2") and ids[11].endswith("-12")
+
+
+def test_answers_are_merged_so_that_a_page_cannot_take_away_what_another_saved():
+    def attempt(pid, minute, grade="correct", **more):
+        return {"id": pid, "at": f"2026-12-01T10:{minute:02d}:00", "grade": grade, "text": "", "where": "read", **more}
+    known = {"a", "b", "c"}
+    old = reading.new_state("ab" * 32)
+    old.update(x_attempts=[attempt("a", 0), attempt("gone", 1), attempt("b", 2, "incorrect")], x_furthest={"chapter": 3, "word": 50})
+    old["x_stats"] = {"seconds": {"page": 1800, "scroll": 0, "rsvp": 0}, "words": {"page": 9000, "scroll": 0, "rsvp": 0},
+                      "last_read": "2026-12-01T10:30:00"}
+    # a page opened earlier knows one answer, an older place and less reading time; it sends one new answer
+    new = reading.new_state("ab" * 32)
+    new.update(x_attempts=[attempt("a", 0), attempt("c", 5)], x_furthest={"chapter": 2, "word": 400})
+    new["x_stats"] = {"seconds": {"page": 60, "scroll": 5, "rsvp": 0}, "words": {"page": 300, "scroll": 0, "rsvp": 0},
+                      "last_read": "2026-12-01T09:00:00"}
+    merged = reading.merge_state(old, new, known, [1, 2, 3])
+    assert [(a["id"], a["grade"]) for a in merged["x_attempts"]] == [("a", "correct"), ("b", "incorrect"), ("c", "correct")]
+    assert merged["x_stats"]["seconds"] == {"page": 1800, "scroll": 5, "rsvp": 0} and merged["x_stats"]["words"]["page"] == 9000
+    assert merged["x_stats"]["last_read"] == "2026-12-01T10:30:00" and merged["x_furthest"] == {"chapter": 3, "word": 50}
+    # a page that sends nothing new keeps everything; the reader overruling the app changes the answer that is held
+    again = reading.new_state("ab" * 32)
+    again["x_attempts"] = [attempt("b", 2, "correct", overruled=True)]
+    merged = reading.merge_state(merged, again, known, [1, 2, 3])
+    assert [(a["id"], a["grade"]) for a in merged["x_attempts"]] == [("a", "correct"), ("b", "correct"), ("c", "correct")]
+    stale = reading.new_state("ab" * 32)
+    stale["x_attempts"] = [attempt("b", 2, "incorrect")]  # a page that still holds the answer as it was
+    assert reading.merge_state(merged, stale, known, [1, 2, 3])["x_attempts"][1]["overruled"] is True
+
+
+def test_a_second_page_of_a_book_does_not_remove_the_answers_of_the_first(app):
+    jid = app("POST", "/api/books/import?name=fixture.prepared.epub", PREPARED.read_bytes())[1]["id"]
+    early = app("GET", f"/api/jobs/{jid}/reading")[1]   # a tab that is opened and left
+    later = app("GET", f"/api/jobs/{jid}/reading")[1]
+    later["x_attempts"] = [{"id": "c0001-p1", "at": "2026-12-01T10:00:00", "grade": "correct", "text": "typed", "where": "read"}]
+    later["grades"] = {"c0001-p1": {"first": "correct", "at": "2026-12-01T10:00:00"}}
+    later["x_stats"]["seconds"]["page"] = 1800
+    assert app("PUT", f"/api/jobs/{jid}/reading", json_body=later)[0] == 200
+    assert app("PUT", f"/api/jobs/{jid}/reading", json_body=early)[0] == 200
+    kept = app("GET", f"/api/jobs/{jid}/reading")[1]
+    assert [a["text"] for a in kept["x_attempts"]] == ["typed"] and kept["x_stats"]["seconds"]["page"] == 1800
+    assert app("GET", "/api/practice")[1]["counts"]["cards"] == 1

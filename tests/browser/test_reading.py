@@ -162,3 +162,38 @@ def test_rsvp_shows_a_picture_where_the_words_stand_and_says_what_to_do_below(re
     page.keyboard.press("Space")
     expect(page.locator(".rv .word.stop")).to_have_count(0)
     assert not reader.state()["playing"]
+
+
+def test_a_large_reading_state_is_still_saved(reader: Reader, page: Page):
+    """A request that may outlive the page carries 64 KiB at most, and a browser refuses a larger one without a
+    word. The reader made every save such a request, so a long book stopped being saved."""
+    reader.open("2:0", "page")
+    first = reader.sections(2)[0]["prompts"][0]
+    page.evaluate("""(id) => {
+        for (let i = 0; i < 40; i++) S.x_attempts.push({ id, at: `2026-12-01T10:${String(i).padStart(2, "0")}:00`, grade: "incorrect", text: "x".repeat(3000), where: "read" });
+        save(true);
+    }""", first)
+    page.wait_for_function("() => sentAttempts.size === 40")
+    assert len(reader.app.reading()["x_attempts"]) == 40
+    page.evaluate("(id) => { S.x_attempts.push({ id, at: '2026-12-01T11:00:00', grade: 'correct', text: 'short', where: 'read' }); save(true, true); }", first)
+    page.wait_for_function("() => sentAttempts.size === 41")   # only the new answer is sent: the app keeps the others
+    kept = reader.app.reading()["x_attempts"]
+    assert len(kept) == 41 and kept[-1]["text"] == "short" and len(kept[0]["text"]) == 3000
+
+
+def test_a_save_that_does_not_arrive_is_said_and_tried_again(reader: Reader, page: Page):
+    reader.open("2:0", "page")
+    page.route("**/api/jobs/*/reading", lambda route: route.abort() if route.request.method == "PUT" else route.continue_())
+    page.evaluate("() => { save(true); }")
+    page.evaluate("() => { save(true); }")
+    expect(page.locator("#unsaved")).to_contain_text("not being saved")
+    page.unroute("**/api/jobs/*/reading")
+    expect(page.locator("#unsaved")).to_have_count(0, timeout=9000)   # the page tries again by itself
+
+
+def test_answers_are_stamped_in_local_time(reader: Reader, page: Page):
+    """Practice counts in local days, so the day of an answer must be the local day too."""
+    reader.open("2:0", "page")
+    stamp, local = page.evaluate("""() => { const d = new Date(), two = (n) => String(n).padStart(2, "0");
+        return [stamp(), `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}T${two(d.getHours())}`]; }""")
+    assert stamp.startswith(local)

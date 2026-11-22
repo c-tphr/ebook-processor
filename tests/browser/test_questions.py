@@ -199,3 +199,26 @@ def test_a_question_for_a_section_already_read_is_practised(reader: Reader, page
     page.get_by_role("button", name="Reveal answer").click()
     page.locator(".pr summary", has_text="From the book").click()
     expect(page.locator(".pr mark").first).to_be_visible()   # the passage it came from, with the highlight
+
+
+def test_a_question_finished_while_the_reader_loads_is_shown(reader: Reader, page: Page, book: App):
+    """The reader asks for the highlights, and then for what is being written. A question finished between the two
+    is in the second answer only, and the page dropped it there."""
+    reader.open("2:0", "scroll")
+    highlight(reader, 2, 7)
+    hid = book.notes()["highlights"][0]["id"]
+
+    def notes_first_then_the_question(route: Route) -> None:
+        if route.request.method != "GET":
+            return route.continue_()
+        answer = route.fetch()                   # the highlights as they are now, without a question
+        book.call("POST", f"/jobs/{book.id}/questions/propose", json_body={"highlight": hid})
+        for _ in range(250):
+            if not book.call("GET", f"/jobs/{book.id}/questions")["pending"]:
+                break
+            time.sleep(0.02)
+        route.fulfill(response=answer)
+
+    page.route(f"**/api/jobs/{book.id}/notes", notes_first_then_the_question)
+    reader.open("2:0", "scroll")
+    page.wait_for_function("() => NB.questions.length === 1", timeout=10000)

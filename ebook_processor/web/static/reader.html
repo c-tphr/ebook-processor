@@ -186,6 +186,7 @@ body.pane .sv { padding-top: 20px; }
 .hq textarea { width: 100%; min-height: 70px; font: 15px/1.45 var(--grot); color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 8px 10px; resize: vertical; margin-top: 6px; }
 .hq .more { border-top: 1px solid var(--ink); padding-top: 12px; }
 .hq input[type=text] { width: 100%; font: 15px/1.45 var(--grot); color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 8px 10px; }
+.unsaved { position: fixed; left: 0; right: 0; top: 0; z-index: 30; background: var(--ink); color: var(--paper); padding: 8px 14px; font-size: 14px; text-align: center; }
 .toast { position: fixed; right: 18px; bottom: 74px; z-index: 18; max-width: min(420px, calc(100vw - 36px)); background: var(--ink); color: var(--paper); padding: 10px 12px; display: flex; gap: 12px; align-items: center; font-size: 14px; }
 .toast button { border-color: var(--paper); color: var(--paper); flex: none; } .toast button:hover { background: var(--paper); color: var(--ink); }
 /* a section's questions, shown before it when previews are on */
@@ -244,7 +245,7 @@ async function api(path, options = {}) {
   return data;
 }
 const fmt = (n) => Number(n).toLocaleString("en");
-const stamp = () => new Date().toISOString().slice(0, 19);
+const stamp = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 19); };   // local time: Practice counts in local days
 const MODES = [["page", "Page"], ["scroll", "Scroll"], ["rsvp", "RSVP"]];
 const PARA_END = 2, NONPROSE = 8;
 const ID = decodeURIComponent(location.pathname.split("/").pop());
@@ -294,11 +295,31 @@ function fill(container, html) {
 }
 
 /* ---------- saving ---------- */
-let saveTimer = null;
-function save(now) {
+let saveTimer = null, saveFails = 0, saveRetry = null;
+const sentAttempts = new Set();          // the answers the app has confirmed: only the others are sent with a save
+const attemptKey = (a) => [a.id, a.at, a.grade, a.overruled ? 1 : 0].join("|");
+function unsaved(failed) {               // after two saves in a row that did not arrive, say so until one does
+  saveFails = failed ? saveFails + 1 : 0;
+  clearTimeout(saveRetry);
+  if (failed) saveRetry = setTimeout(() => save(true), 5000);
+  let line = $("unsaved");
+  if (saveFails < 2) return line && line.remove();
+  if (!line) document.body.append(line = h("div", { class: "unsaved", id: "unsaved", role: "alert" },
+    "Your place and your answers are not being saved: the app does not answer. Is it still running? This page keeps trying."));
+}
+function save(now, leaving) {
   if (PANE) return;
   clearTimeout(saveTimer);
-  const send = () => fetch(`/api/jobs/${ID}/reading`, { method: "PUT", keepalive: true, headers: { "X-Ebook-Processor": "1", "Content-Type": "application/json" }, body: JSON.stringify(S) }).catch(() => {});
+  const send = () => {
+    const fresh = S.x_attempts.filter((a) => !sentAttempts.has(attemptKey(a)));   // the app keeps the answers it already has
+    const body = JSON.stringify({ ...S, x_attempts: fresh });
+    // A request that may outlive the page can carry 64 KiB at most, and a browser refuses a larger one without a word.
+    // So only the save made as the page is left asks for that, and only when it fits.
+    const keepalive = !!leaving && new TextEncoder().encode(body).length < 60000;
+    return fetch(`/api/jobs/${ID}/reading`, { method: "PUT", keepalive, headers: { "X-Ebook-Processor": "1", "Content-Type": "application/json" }, body })
+      .then((r) => { if (!r.ok) throw new Error(String(r.status)); for (const a of fresh) sentAttempts.add(attemptKey(a)); unsaved(false); })
+      .catch(() => unsaved(true));
+  };
   if (now) return send();
   saveTimer = setTimeout(send, 700);
 }
@@ -321,7 +342,7 @@ setInterval(() => {
   if (document.visibilityState === "visible" && !cp && (playing || Date.now() - lastActive < 60000)) { S.x_stats.seconds[mode] += 5; save(); }
 }, 5000);
 for (const type of ["keydown", "pointerdown", "wheel", "scroll"]) addEventListener(type, () => { lastActive = Date.now(); }, { capture: true, passive: true });
-addEventListener("pagehide", () => { if (S) save(true); });
+addEventListener("pagehide", () => { if (S) save(true, true); });
 
 /* ---------- top, foot ---------- */
 function drawTop() {
@@ -1356,9 +1377,16 @@ addEventListener("keydown", (e) => {
       e.message === "not found" ? "The app may have been updated while it was running: stop it and start it again. " : "", h("a", { href: "/" }, "Back to the library")));
   }
   S.x_previewed = S.x_previewed || {};   // a state saved before previews existed
+  S.x_attempts = S.x_attempts || [];
+  for (const a of S.x_attempts) sentAttempts.add(attemptKey(a));
   NB.questions = NB.questions || [];
   syncPrompts();
-  if (!PANE) api(`/jobs/${ID}/questions`).then((state) => { if (state.pending.length) takeQuestions(state); else asking = state; }).catch(() => {});
+  // The questions being written are asked for after the highlights. One finished between the two requests is in this
+  // second answer only, so its list is always the one that is kept.
+  if (!PANE) api(`/jobs/${ID}/questions`).then((state) => {
+    if (state.pending.length) return takeQuestions(state);
+    asking = state; NB.questions = state.questions; syncPrompts(); drawFoot();
+  }).catch(() => {});
   document.title = book.title; $("back").href = "/#/run/" + ID;
   applySettings();
   const want = new URLSearchParams(location.search);

@@ -26,7 +26,7 @@ Questions of sections you have not read are never shown.
 
 One file per book, ``srs.json`` beside ``reading.json``:
 
-    {"version": 1, "seen": <attempts of reading.json already taken in>,
+    {"version": 1, "taken": {"<question id>@<time of the answer>": "<its grade when it was taken in>"},
      "cards": {"c0007-p1": {"state": "learned", "interval": 3.24, "due": "2026-12-04", "last": "2026-12-01",
                             "again": false, "reviews": [{"at": "...", "remembered": true, "kind": "review",
                                                          "interval": 3.24, "due": "2026-12-04"}]}}}
@@ -178,34 +178,73 @@ def load(folder: Path) -> dict[str, Any]:
                 return data
         except ValueError:
             pass
-    return {"version": VERSION, "seen": 0, "cards": {}}
+    return {"version": VERSION, "taken": {}, "cards": {}}
+
+
+def _taken(store: dict[str, Any], reading_state: dict[str, Any] | None) -> dict[str, str]:
+    """Which answers of ``reading.json`` the cards have taken in, by question and time.
+
+    A file written before this was kept holds a count instead, ``seen``: the first so many answers were taken in.
+    That count went wrong whenever the list of answers became shorter (a question left the book, or a second page
+    of the book saved an older list): the answers given after that were counted as taken in and never were. They
+    are found here, once: an answer that was graded, whose question has no card and was not started over."""
+    if isinstance(store.get("taken"), dict):
+        return store["taken"]
+    state = reading_state or {}
+    attempts = [a for a in state.get("x_attempts") or [] if isinstance(a, dict)]
+    restarted = state.get("x_restarted") or {}
+    taken = store["taken"] = {}
+    for a in attempts[:store.pop("seen", 0) if isinstance(store.get("seen"), int) else 0]:
+        lost = a.get("grade") in ("correct", "incorrect") and a.get("id") not in store["cards"] and a.get("id") not in restarted
+        if not lost:
+            taken[_key(a)] = str(a.get("grade"))
+    return taken
+
+
+def _key(attempt: dict[str, Any]) -> str:
+    return f"{attempt.get('id')}@{attempt.get('at')}"
 
 
 def take_in(store: dict[str, Any], reading_state: dict[str, Any] | None, settings: dict[str, Any],
             today: _dt.date) -> bool:
     """Bring the book's cards up to date with what happened in the reader. Returns whether anything changed.
 
-    Each attempt of ``reading.json`` is taken in once, in order. The first attempt at a question makes its card
-    and is its first answer; later ones (a retry after a reread, the checkpoint met again) are answers like any
-    other, which move a learned card only when it is due.
+    Each attempt of ``reading.json`` is taken in once, in order, and is remembered by its question and its time,
+    so that the list may lose entries or get them in another order. The first attempt at a question makes its
+    card and is its first answer; later ones (a retry after a reread, the checkpoint met again) are answers like
+    any other, which move a learned card only when it is due.
+
+    The reader may overrule the app on a typed answer after it was taken in as a miss. The card is then put right
+    as long as that miss is the last thing that happened to it.
     """
-    attempts = (reading_state or {}).get("x_attempts") or []
-    fresh = attempts[store["seen"]:]
-    for a in fresh:
+    had_no_record = not isinstance(store.get("taken"), dict)
+    taken = _taken(store, reading_state)
+    changed = had_no_record
+    for a in (reading_state or {}).get("x_attempts") or []:
         pid, grade = a.get("id"), a.get("grade")
         if not isinstance(pid, str) or grade not in ("correct", "incorrect", "skipped"):
             continue
+        at, text = str(a.get("at", "")), str(a.get("text") or "")
         try:
-            when = _dt.date.fromisoformat(str(a.get("at", ""))[:10])
+            when = _dt.date.fromisoformat(at[:10])
         except ValueError:
             when = today
+        was = taken.get(_key(a))
+        if was == grade:
+            continue
+        taken[_key(a)] = grade
+        changed = True
         card = store["cards"].get(pid)
-        if card is None:
-            card = store["cards"][pid] = new_card()
-        if grade != "skipped":
-            answer(card, grade == "correct", when, settings, str(a.get("at", "")), "checkpoint", str(a.get("text") or ""))
-    store["seen"] = len(attempts)
-    return bool(fresh)
+        if was is None:
+            if card is None:
+                card = store["cards"][pid] = new_card()
+            if grade != "skipped":
+                answer(card, grade == "correct", when, settings, at, "checkpoint", text)
+        elif a.get("overruled") and grade == "correct" and card is not None and card["state"] == "new" \
+                and card["reviews"] and card["reviews"][-1].get("at") == at and not card["reviews"][-1].get("remembered"):
+            card["reviews"].pop()
+            answer(card, True, when, settings, at, "checkpoint", text)
+    return changed
 
 
 def new_today(store: dict[str, Any], today: _dt.date) -> int:

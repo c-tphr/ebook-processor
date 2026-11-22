@@ -1401,7 +1401,8 @@ class Jobs:
         with self.lock:
             known |= hq.ids(notes.load(self.folder(job_id)))  # questions from highlights are graded too
             old = reading.load_state(self.folder(job_id))
-            state = reading.merge_state(old, reading.clean_state(raw, book.data["book"]["source_sha256"], known))
+            state = reading.merge_state(old, reading.clean_state(raw, book.data["book"]["source_sha256"], known), known,
+                                        [c["index"] for c in book.manifest()["chapters"]])
             write_json(self.folder(job_id) / reading.STATE_FILE, state)
         return state
 

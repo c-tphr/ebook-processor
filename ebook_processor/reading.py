@@ -328,8 +328,32 @@ def clean_state(raw: Any, sha256: str, known: set[str]) -> dict[str, Any]:
     return state
 
 
-def merge_state(old: dict[str, Any] | None, new: dict[str, Any]) -> dict[str, Any]:
-    """``new`` with the first grades ``old`` already holds put back: a first grade is written once.
+def _merge_attempts(old: list[dict[str, Any]], new: list[dict[str, Any]], known: set[str] | None) -> list[dict[str, Any]]:
+    """The answers the app holds, with those the page sent added. An answer is known by its question and its time.
+    The stored ones keep their order and a new one goes to the end, so a page may send only what is new, and a page
+    opened earlier cannot take away what a later one saved. The reader overruling the app changes an answer in place:
+    for an answer both hold, the copy that says so wins."""
+    out = [a for a in old if isinstance(a, dict) and (known is None or a.get("id") in known)]
+    where = {(a.get("id"), a.get("at")): n for n, a in enumerate(out)}
+    for a in new:
+        n = where.get((a["id"], a["at"]))
+        if n is None:
+            where[(a["id"], a["at"])] = len(out)
+            out.append(a)
+        elif a.get("overruled") and not out[n].get("overruled"):
+            out[n] = a
+    return out
+
+
+def merge_state(old: dict[str, Any] | None, new: dict[str, Any], known: set[str] | None = None,
+                order: list[int] | None = None) -> dict[str, Any]:
+    """``new`` with what ``old`` holds and a page must not take away put back.
+
+    The answers are merged (see ``_merge_attempts``; ``known`` are the book's question ids). The reading time and the
+    words read never go down, and with ``order``, the book's chapters in reading order, neither does the furthest
+    place: a second page of the same book, opened earlier, would otherwise bring back its own older numbers.
+
+    A first grade is written once: the first grades ``old`` already holds are put back.
 
     Two things change a first grade after it was written. The reader overrules the app's verdict on a typed answer:
     the attempt of that moment then says so, and the grade the page sends is taken. And the reader starts a
@@ -337,6 +361,19 @@ def merge_state(old: dict[str, Any] | None, new: dict[str, Any]) -> dict[str, An
     bring it back.
     """
     if old:
+        new["x_attempts"] = _merge_attempts(old.get("x_attempts") or [], new.get("x_attempts") or [], known)
+        was, now = old.get("x_stats") or {}, new.setdefault("x_stats", {})
+        for part in ("seconds", "words"):
+            for mode, value in (was.get(part) or {}).items():
+                if isinstance(value, (int, float)) and value > (now.setdefault(part, {}).get(mode) or 0):
+                    now[part][mode] = value
+        if isinstance(was.get("last_read"), str) and was["last_read"] > (now.get("last_read") or ""):
+            now["last_read"] = was["last_read"]
+        far, mine = old.get("x_furthest"), new.get("x_furthest")
+        if order and far and far.get("chapter") in order and (
+                not mine or mine.get("chapter") not in order
+                or (order.index(far["chapter"]), far.get("word", 0)) > (order.index(mine["chapter"]), mine.get("word", 0))):
+            new["x_furthest"] = far
         overruled = {(a["id"], a["at"]) for a in new.get("x_attempts", []) if a.get("overruled")}
         for pid, grade in old.get("grades", {}).items():
             mine = new["grades"].get(pid)

@@ -13,6 +13,7 @@ choice of the paragraphs an added question rests on (``choose_passage``).
 from __future__ import annotations
 
 import copy
+import json
 from dataclasses import replace
 from typing import Any
 
@@ -223,6 +224,22 @@ def check(backend: Backend, book: Book, state: dict[str, Any], qid: str, setting
                     "minor_note": clean_text(entry.get("minor_note")) if passed else ""}
     q["checks"] = q.get("checks", 0) + 1
     return q["verdict"]
+
+
+def wording_of(q: dict[str, Any]) -> str:
+    """A question as it stands, without what a check adds to it: to see later whether it was changed meanwhile."""
+    return json.dumps({k: v for k, v in q.items() if k not in ("verdict", "checks")}, sort_keys=True, ensure_ascii=False)
+
+
+def keep_verdict(state: dict[str, Any], qid: str, verdict: dict[str, Any], was: str) -> dict[str, Any]:
+    """Keep a verdict that was worked out on a copy of the run (the model is asked with no lock held). A question
+    that was changed in the meantime is not given a verdict on its earlier wording."""
+    q = find(state, qid)
+    if wording_of(q) != was:
+        raise EditError("This question was changed while it was being checked. Check it again.")
+    q["verdict"] = verdict
+    q["checks"] = q.get("checks", 0) + 1
+    return verdict
 
 
 def rewrite(backend: Backend, book: Book, state: dict[str, Any], qid: str, wish: Any, settings: Settings,

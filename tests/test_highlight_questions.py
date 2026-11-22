@@ -367,7 +367,7 @@ def test_the_exports_hold_the_questions_from_highlights_and_are_refreshed_when_t
     h = highlight(jobs, jid, section["chapter"], section["start"] + 3, section["start"] + 9)
     assert "exports_stale" not in jobs.get(jid)
     q = jobs.write_question(jid, h["id"], "What is asked from the highlight?", "This.")["questions"][0]
-    assert jobs.get(jid)["exports_stale"] is True
+    assert jobs.get(jid)["exports_stale"]   # a count of the changes since the files were built
     server = web.make_server(jobs.data, "127.0.0.1", 0, backend_factory=stand.backend, claude={"ok": True, "version": "t"}, models=[])
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_address[1]}/api/jobs/{jid}"

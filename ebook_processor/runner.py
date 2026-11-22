@@ -187,6 +187,14 @@ def rebuild(out_dir: Path, remove: Iterable[str] = (), restore: Iterable[str] = 
                          state["settings"].get("epubcheck", False) if epubcheck is None else epubcheck)
 
 
+def open_run(out_dir: Path) -> tuple[Any, dict[str, Any]]:
+    """A finished run as it is saved: the book and the state. For a look that keeps nothing."""
+    book, _, state = _open_run(out_dir)
+    if state["stage"] != "done":
+        raise PipelineError(f"the run in {out_dir} is not finished")
+    return book, state
+
+
 def _fits(book: Any, state: dict[str, Any]) -> None:
     """Refuse a state from which the book for the e-reader cannot be made, with the reason in plain words."""
     in_section: dict[str, int] = {}

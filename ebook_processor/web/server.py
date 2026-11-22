@@ -27,6 +27,7 @@ import traceback
 import webbrowser
 from http import HTTPStatus
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -42,8 +43,8 @@ from ..pipeline import STATE_FILE
 from ..prompts import CRITERIA_WORDS
 from ..prep.epub import EpubError, load_book_bytes
 from ..prep.limits import MAX_PROMPTS
-from ..runner import (Cancelled, PipelineError, change_run, default_backend, models_for, rebuild, review_data, run_book,
-                      trial_dir, try_chapter, work_dir)
+from ..runner import (Cancelled, PipelineError, change_run, default_backend, models_for, open_run, rebuild, review_data,
+                      run_book, trial_dir, try_chapter, work_dir)
 from ..settings import DENSITIES, MAX_QUESTIONS, Settings, SettingsError, from_options
 from ..steer import Steer, SteerError
 from ..store import now, write_json
@@ -143,6 +144,27 @@ def estimate(words: Any, settings: Settings, steered: bool) -> dict[str, Any]:
     return out
 
 
+class LibraryLock:
+    """The lock of the library (``Jobs.lock``): one thread at a time, and the same thread any number of times. It
+    knows whether the calling thread holds it, which the order of the locks is checked with (see ``Jobs``)."""
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._mine = threading.local()
+
+    def __enter__(self) -> "LibraryLock":
+        self._lock.acquire()
+        self._mine.depth = getattr(self._mine, "depth", 0) + 1
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self._mine.depth -= 1
+        self._lock.release()
+
+    def held(self) -> bool:
+        return getattr(self._mine, "depth", 0) > 0
+
+
 class Jobs:
     """The runs on disk, and the one worker thread that processes them in turn."""
 
@@ -152,7 +174,17 @@ class Jobs:
         self.notes_default = Path(os.path.abspath(self.data)).parent / NOTES_FOLDER
         self._vault: Vault | None = None
         self.filed: dict[str, tuple[int, int]] = {}  # book id -> what its file in the notes folder was made from
-        self.lock = threading.RLock()
+        # Two kinds of lock, and one order. ``self.lock`` guards the library: the entries, the small stores of a
+        # book (reading.json, notes.json, srs.json, process.json, job.json) and the caches. It is held for moments
+        # only: never across a model call, and never while a book's files are built. A book's own lock
+        # (``self.booked(id)``) guards its run and its built files: an edit, a rebuild and a download that must
+        # rebuild first follow one another. THE ORDER: a book's lock is taken first, the library's lock second. A
+        # thread that holds the library's lock must not ask for a book's lock; ``booked`` refuses it, so a wrong
+        # order fails at once and cannot become a deadlock that shows once a year.
+        self.lock = LibraryLock()
+        self.book_locks: dict[str, threading.RLock] = {}
+        self._book_locks = threading.Lock()   # guards the dictionary above
+        self._booked = threading.local()      # the book locks this thread holds
         self.turn = threading.Lock()  # held by the run that is being processed
         self.jobs: dict[str, dict[str, Any]] = {}
         self.cancels: dict[str, threading.Event] = {}
@@ -363,13 +395,44 @@ class Jobs:
         job = self.get(job_id)
         return job["status"] == "done" and job.get("kind") != "imported"
 
-    def _edit(self, job_id: str, change: Any, build: bool = True) -> Any:
-        """Apply ``change(book, state)`` to the book's run. With ``build`` every file is written again, so the
-        reader, Practice and the downloads hold the questions as they now are."""
+    @contextmanager
+    def booked(self, job_id: str) -> Any:
+        """Hold the lock of a book's run and its built files. See ``__init__`` for the order of the locks."""
+        mine = self._booked.__dict__.setdefault("held", {})
+        if self.lock.held() and not mine.get(job_id):
+            raise RuntimeError("a book's lock was asked for while the library's lock is held: a book's lock comes first")
+        with self._book_locks:
+            lock = self.book_locks.setdefault(job_id, threading.RLock())
+        with lock:
+            mine[job_id] = mine.get(job_id, 0) + 1
+            try:
+                yield
+            finally:
+                mine[job_id] -= 1
+
+    def _editable(self, job_id: str) -> dict[str, Any]:
         with self.lock:
             if not self.editable(job_id):
                 raise ApiError(HTTPStatus.CONFLICT, "The questions of this book cannot be changed: it has no finished run made here.")
-            job = self.jobs[job_id]
+            return self.jobs[job_id]
+
+    def _built(self, job: dict[str, Any], stale: Any, counts: dict[str, Any] | None) -> None:
+        """A book's files were built again: keep the new counts. The exports are fresh again unless a question from
+        a highlight changed while they were built (``stale`` is the mark as it was before the build)."""
+        with self.lock:
+            if counts is not None:
+                job["counts"] = counts
+            if job.get("exports_stale") == stale:
+                job.pop("exports_stale", None)
+            self._store(job)
+
+    def _edit(self, job_id: str, change: Any, build: bool = True) -> Any:
+        """Apply ``change(book, state)`` to the book's run. With ``build`` every file is written again, so the
+        reader, Practice and the downloads hold the questions as they now are. The book's lock is held; the
+        library's is not, so the rest of the app goes on while the files are written."""
+        with self.booked(job_id):
+            job = self._editable(job_id)
+            stale = job.get("exports_stale")
             try:
                 result = change_run(self.folder(job_id), change, build)
             except editing.EditError as exc:
@@ -378,11 +441,22 @@ class Jobs:
                 raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
             if build:
                 report = load_report(self.folder(job_id), job["file"])
-                if report is not None:
-                    job["counts"] = report["counts"]
-                job.pop("exports_stale", None)
-                self._store(job)
+                self._built(job, stale, report["counts"] if report is not None else None)
             return result
+
+    def _look(self, job_id: str, read: Any) -> Any:
+        """``read(book, state)`` on the book's run as it is now, with no lock held while it runs: for a call to a
+        model, which takes seconds or minutes. Nothing ``read`` changes is kept."""
+        with self.booked(job_id):
+            self._editable(job_id)
+            try:
+                book, state = open_run(self.folder(job_id))
+            except PipelineError as exc:
+                raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+        try:
+            return read(book, state)
+        except editing.EditError as exc:
+            raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
 
     def _models(self, job_id: str, roles: list[str]) -> tuple[Settings, Any, Steer | None]:
         """The run's settings, a backend for a call the reader asked for, and what the reader wanted from the book."""
@@ -442,8 +516,8 @@ class Jobs:
         mode = raw.get("passage") if raw.get("passage") in editing.PASSAGES else "section"
         if raw.get("supporting_paragraphs") is None and mode in ("model", "model_review"):
             settings, backend, _ = self._models(job_id, ["draft"])
-            chosen = self._asked(job_id, lambda: self._edit(
-                job_id, lambda book, state: editing.choose_passage(backend, book, state, raw.get("section"), raw, settings), build=False))
+            chosen = self._asked(job_id, lambda: self._look(
+                job_id, lambda book, state: editing.choose_passage(backend, book, state, raw.get("section"), raw, settings)))
             if mode == "model_review":
                 return {"review": chosen}
             raw = {**raw, "supporting_paragraphs": chosen}
@@ -473,35 +547,41 @@ class Jobs:
             write_json(folder / reading.STATE_FILE, state)
 
     def delete_question(self, job_id: str, qid: str) -> dict[str, Any]:
-        with self.lock:
+        with self.booked(job_id):
             self._edit(job_id, lambda book, state: editing.delete(state, qid))
-            self._forget_answers(job_id, qid)
+            with self.lock:
+                self._forget_answers(job_id, qid)
         return {"deleted": qid}
 
     def restart_question(self, job_id: str, qid: str) -> dict[str, Any]:
         """Start a question over: it counts as never answered. It is asked again at its checkpoint, or, when the
         reader is past that, it is a new card in Practice."""
-        with self.lock:
+        with self.booked(job_id):
             shown = self._edit(job_id, lambda book, state: editing.view(book, state, qid), build=False)
-            self._forget_answers(job_id, qid)
-            manifest = self.book(job_id).manifest()
-            section = next((s for s in manifest["sections"] if s["id"] == shown["section"]["id"]), None)
-            if shown["kept"] and section is not None and hq.passed(reading.load_state(self.folder(job_id)), manifest, section):
-                cards = self.cards(job_id)
-                cards["cards"][qid] = srs.new_card()
-                write_json(self.folder(job_id) / srs.FILE, cards)
+            with self.lock:
+                self._forget_answers(job_id, qid)
+                manifest = self.book(job_id).manifest()
+                section = next((s for s in manifest["sections"] if s["id"] == shown["section"]["id"]), None)
+                if shown["kept"] and section is not None and hq.passed(reading.load_state(self.folder(job_id)), manifest, section):
+                    cards = self.cards(job_id)
+                    cards["cards"][qid] = srs.new_card()
+                    write_json(self.folder(job_id) / srs.FILE, cards)
         return self.book_question(job_id, qid)
 
     def check_question(self, job_id: str, qid: str) -> dict[str, Any]:
         settings, backend, steer = self._models(job_id, ["check"])
-        self._asked(job_id, lambda: self._edit(job_id, lambda book, state: editing.check(backend, book, state, qid, settings, steer), build=False))
+
+        def ask(book: Any, state: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+            return editing.wording_of(editing.find(state, qid)), editing.check(backend, book, state, qid, settings, steer)
+        was, verdict = self._asked(job_id, lambda: self._look(job_id, ask))  # the model is asked with no lock held
+        self._edit(job_id, lambda book, state: editing.keep_verdict(state, qid, verdict, was), build=False)
         return self.book_question(job_id, qid)
 
     def rewrite_question(self, job_id: str, qid: str, raw: dict[str, Any]) -> dict[str, Any]:
         settings, backend, steer = self._models(job_id, ["draft"])
         draft = raw.get("draft") if isinstance(raw.get("draft"), dict) else None
-        return self._asked(job_id, lambda: self._edit(
-            job_id, lambda book, state: editing.rewrite(backend, book, state, qid, raw.get("wish"), settings, steer, draft), build=False))
+        return self._asked(job_id, lambda: self._look(
+            job_id, lambda book, state: editing.rewrite(backend, book, state, qid, raw.get("wish"), settings, steer, draft)))
 
     # ---- questions from highlights
 
@@ -649,8 +729,8 @@ class Jobs:
     def _exports_stale(self, job_id: str) -> None:
         """The deck and the other exports no longer hold the book's questions from highlights as they are now."""
         job = self.jobs[job_id]
-        if job.get("kind") != "imported" and not job.get("exports_stale"):
-            job["exports_stale"] = True
+        if job.get("kind") != "imported":  # a number, not a yes: a build must see a change made while it ran
+            job["exports_stale"] = int(job.get("exports_stale") or 0) + 1
             self._store(job)
 
     def question_do(self, job_id: str, change: Any) -> dict[str, Any]:
@@ -1829,14 +1909,16 @@ class Jobs:
             event.set()
 
     def delete(self, job_id: str) -> None:
-        with self.lock:
-            self.get(job_id)
-            if job_id in self.cancels:
-                raise ApiError(HTTPStatus.CONFLICT, "stop the run before deleting it")
-            del self.jobs[job_id]
-            self.filed.pop(job_id, None)
-        self._book_left(job_id)
-        shutil.rmtree(self.folder(job_id), ignore_errors=True)
+        with self.booked(job_id):  # not while its files are being built: the build would write into a folder that is gone
+            with self.lock:
+                self.get(job_id)
+                if job_id in self.cancels:
+                    raise ApiError(HTTPStatus.CONFLICT, "stop the run before deleting it")
+                del self.jobs[job_id]
+                self.filed.pop(job_id, None)
+                self.books.pop(job_id, None)
+            self._book_left(job_id)
+            shutil.rmtree(self.folder(job_id), ignore_errors=True)
 
     def _event(self, job: dict[str, Any], event: dict[str, Any]) -> None:
         with self.lock:
@@ -1927,19 +2009,27 @@ class Jobs:
 
     def rebuild(self, job_id: str, removed: list[str] | None, cards: str | None = None,
                 preview: bool | None = None) -> dict[str, Any]:
-        with self.lock:
-            job = self.get(job_id)
-            if job["status"] != "done" or job.get("kind") == "imported":
-                raise ApiError(HTTPStatus.CONFLICT, "this book has no finished run to rebuild from")
-        try:
-            report = rebuild(self.folder(job_id), removed=removed, cards=cards, preview=preview)
-        except PipelineError as exc:
-            raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
-        with self.lock:
-            job["counts"] = report["counts"]
-            job.pop("exports_stale", None)
-            self._store(job)
+        with self.booked(job_id):  # one build of a book's files at a time, and none during an edit
+            with self.lock:
+                job = self.get(job_id)
+                if job["status"] != "done" or job.get("kind") == "imported":
+                    raise ApiError(HTTPStatus.CONFLICT, "this book has no finished run to rebuild from")
+                stale = job.get("exports_stale")
+            try:
+                report = rebuild(self.folder(job_id), removed=removed, cards=cards, preview=preview)
+            except PipelineError as exc:
+                raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+            self._built(job, stale, report["counts"])
         return self.detail(job_id)
+
+    def fresh_exports(self, job_id: str) -> None:
+        """Build the files again when questions from highlights changed since they were written. Several downloads
+        asked for together wait for the first one's build and find the files fresh."""
+        with self.booked(job_id):
+            with self.lock:
+                stale = self.get(job_id).get("exports_stale")
+            if stale:
+                self.rebuild(job_id, None)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -2422,7 +2512,7 @@ class Handler(BaseHTTPRequestHandler):
                         or not path.is_file():
                     raise ApiError(HTTPStatus.NOT_FOUND, "no such file")
                 if job.get("exports_stale") and name.endswith((".anki.apkg", ".cards.tsv", ".questions.json")):
-                    jobs.rebuild(job_id, None)  # questions from highlights changed since the files were written
+                    jobs.fresh_exports(job_id)  # questions from highlights changed since the files were written
                 return self.send_file(path, download=True)
         raise ApiError(HTTPStatus.NOT_FOUND, "not found")
 

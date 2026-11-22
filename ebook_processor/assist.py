@@ -24,7 +24,6 @@ from __future__ import annotations
 import hashlib
 import re
 import secrets
-from dataclasses import replace
 from pathlib import Path
 from string import Template
 from typing import Any
@@ -32,7 +31,8 @@ from typing import Any
 from . import forms as qforms
 from . import highlight_questions as hq
 from . import prompts
-from .llm import Backend, BackendError
+from .asking import Unusable, ask_with_retry, with_form
+from .llm import Backend, Completion
 from .store import load_json, now
 from .prep.checkpoints import ANSWER_MAX_CHARS, PROMPT_MAX_CHARS
 from .settings import Settings
@@ -297,10 +297,8 @@ def propose(backend: Backend, vault: Vault, note: Note, asked: list[str], settin
     if asked:
         parts += ["", "ALREADY ASKED"] + [f"- {a}" for a in asked]
     parts += ["", "Write one question about the idea of this note, with its reference answer. Reply with the JSON object only."]
-    message, feedback = "\n".join(parts), ""
-    for _ in range(2):  # a reply that breaks a plain rule is sent back once, with what was wrong
-        done = backend.complete(role="draft", system=system(settings), prompt=message + feedback, schema=hq.propose_schema(settings),
-                                model=settings.model)
+
+    def read(done: Completion) -> dict[str, Any]:
         data = done.data if isinstance(done.data, dict) else {}
         try:
             question = hq.clean(data.get("question"), "a question", PROMPT_MAX_CHARS)
@@ -310,8 +308,11 @@ def propose(backend: Backend, vault: Vault, note: Note, asked: list[str], settin
                                        + ", ".join(qforms.NAMES[f] for f in settings.forms))
             return {**hq.formed(question, data.get("answer"), form), "model": done.model}
         except hq.QuestionError as exc:
-            feedback = f"\n\nPROBLEM WITH YOUR EARLIER REPLY (fix it and reply with the complete object again)\n{exc}"
-    raise BackendError(f"the model's question could not be used: {feedback.splitlines()[-1]}")
+            raise Unusable([str(exc)]) from exc
+
+    return ask_with_retry(backend, role="draft", system=system(settings), message="\n".join(parts), schema=hq.propose_schema(settings),
+                          model=settings.model, read=read, feedback=lambda wrong: prompts.problem_block(wrong[0]),
+                          failed=hq.could_not_be_used)
 
 
 def check(backend: Backend, vault: Vault, note: Note, q: dict[str, Any], settings: Settings) -> dict[str, Any]:
@@ -325,8 +326,7 @@ def check(backend: Backend, vault: Vault, note: Note, q: dict[str, Any], setting
               "properties": {**{p: {"type": "boolean"} for p in points}, "problem": {"type": "string"}}}
     message = "\n".join(["THE NOTE", f"Title: {_name(note)}", "", plain_note(vault, note)[:8000], "", "THE QUESTION", asked, "",
                          "ITS REFERENCE ANSWER", reference, "", *qforms.model_lines(q), "", "Judge the question. Reply with the JSON object only."])
-    if qforms.form_of(q) not in settings.forms:
-        settings = replace(settings, forms=qforms.clean_forms([*settings.forms, qforms.form_of(q)]))
+    settings = with_form(settings, q)
     done = backend.complete(role="check", system=_instructions("note_check.md", one_right=one_right), prompt=message, schema=schema,
                             model=settings.checker_model or settings.model)
     data = done.data if isinstance(done.data, dict) else {}

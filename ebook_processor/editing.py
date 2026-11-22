@@ -19,7 +19,8 @@ from typing import Any
 
 from . import forms as qforms
 from . import prompts
-from .llm import Backend, BackendError
+from .asking import Unusable, ask_with_retry, check_one
+from .llm import Backend, BackendError, Completion
 from .pipeline import (BookIndex, clean_text, kept, new_question, next_checkpoint, normal_question, question_problems,
                        sort_questions)
 from .store import now
@@ -194,27 +195,14 @@ def _item(book: Book, state: dict[str, Any], q: dict[str, Any]) -> dict[str, Any
     return {"doc": sd, "section": section, "blocks": blocks, "first": first, "last": last}
 
 
-def _with_form(settings: Settings, q: dict[str, Any]) -> Settings:
-    """The run's settings with the question's own form among the allowed ones."""
-    form = qforms.form_of(q)
-    return settings if form in settings.forms else replace(settings, forms=qforms.clean_forms([*settings.forms, form]))
-
-
 def check(backend: Backend, book: Book, state: dict[str, Any], qid: str, settings: Settings,
           steer: Steer | None = None) -> dict[str, Any]:
     """The independent check of one question, as the run's own questions were checked. The verdict is kept with
     the question and changes nothing else about it: ``{"passed", "at", "criteria", "problem", "minor_note"}``."""
     q = find(state, qid)
-    settings = _with_form(settings, q)
-    item = {**_item(book, state, q), "judge_break": False, "questions": [q]}
-    done = backend.complete(role="check", system=prompts.checker_system(settings, steer),
-                            prompt=prompts.check_message(book, [item], settings, None), schema=prompts.check_schema(settings),
-                            model=settings.checker_model or settings.model)
-    entries = done.data.get("prompts") if isinstance(done.data, dict) else None
-    entry = next((p for p in entries or [] if isinstance(p, dict) and p.get("id") == qid), None)
+    entry, criteria = check_one(backend, book, {**_item(book, state, q), "judge_break": False, "questions": [q]}, settings, steer)
     if entry is None:
         raise BackendError("the check gave no verdict for this question")
-    criteria = {c: entry.get(c) is True for c in prompts.criteria(settings)}
     passed = all(criteria.values())
     q["verdict"] = {"passed": passed, "at": now(), "criteria": criteria,
                     "problem": "" if passed else clean_text(entry.get("problem")) or "The check gave no reason.",
@@ -260,22 +248,23 @@ def rewrite(backend: Backend, book: Book, state: dict[str, Any], qid: str, wish:
     only = replace(settings, forms=(qforms.form_of(q),))  # the form stays what it is
     others = [x for x in state["questions"] if x["section"] == q["section"] and x["id"] != qid and kept(x)]
     message = prompts.rewrite_message(book, {**item, "question": {**current, "id": qid}, "others": others}, only, wish)
-    feedback = ""
-    for _ in range(2):
-        done = backend.complete(role="revise", system=prompts.drafter_system(only, steer), prompt=message + feedback,
-                                schema=prompts.revise_schema(only), model=settings.model)
+
+    def read(done: Completion) -> dict[str, Any]:
         entries = done.data.get("revisions") if isinstance(done.data, dict) else None
         entry = next((e for e in entries or [] if isinstance(e, dict) and e.get("id") == qid), None)
         if entry is None or entry.get("action") == "withdraw":
             raise BackendError("the model could not rewrite the question that way")
         made = normal_question(entry)
         wrong = question_problems(made, inside, only.forms)
-        if not wrong:
-            return {"question": made["prompt"], "answer": made["answer"], "form": qforms.members(made),
-                    "supporting_paragraphs": made["supporting_paragraphs"]}
-        feedback = "\n\nPROBLEMS WITH YOUR EARLIER REPLY (fix exactly these and reply with the complete object again)\n" \
-            + "\n".join(f"- {w}" for w in wrong)
-    raise BackendError(f"the model's rewrite could not be used: {wrong[0]}")
+        if wrong:
+            raise Unusable(wrong)
+        return {"question": made["prompt"], "answer": made["answer"], "form": qforms.members(made),
+                "supporting_paragraphs": made["supporting_paragraphs"]}
+
+    return ask_with_retry(backend, role="revise", system=prompts.drafter_system(only, steer), message=message,
+                          schema=prompts.revise_schema(only), model=settings.model, read=read,
+                          feedback=lambda wrong: prompts.feedback_block("\n".join(f"- {w}" for w in wrong)),
+                          failed=lambda wrong: f"the model's rewrite could not be used: {wrong[0]}")
 
 
 def choose_passage(backend: Backend, book: Book, state: dict[str, Any], sid: Any, raw: dict[str, Any],

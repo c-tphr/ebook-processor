@@ -326,6 +326,16 @@ def question_lines(q: dict[str, Any], mark: str, prompt: str | None = None, answ
 # Task messages
 
 
+def feedback_block(problems: str) -> str:
+    """What a task says when a reply is sent back to its model: the line that says so, then what was wrong."""
+    return "PROBLEMS WITH YOUR EARLIER REPLY (fix exactly these and reply with the complete object again)\n" + problems
+
+
+def problem_block(problem: str) -> str:
+    """The same for the tasks that ask for one question, in their own words: these replies have one problem."""
+    return "PROBLEM WITH YOUR EARLIER REPLY (fix it and reply with the complete object again)\n" + problem
+
+
 def book_header(book: Book, current: set[int]) -> str:
     lines = [book_line(book),
              "Documents in reading order (-> marks the ones this task is about):"]
@@ -364,8 +374,7 @@ def draft_message(book: Book, groups: list[tuple[SpineDoc, list[Block]]], settin
     parts.append("Divide the text into sections and excluded ranges and write the questions, as your instructions "
                  "say. Reply with the JSON object only.")
     if feedback:
-        parts += ["", "PROBLEMS WITH YOUR EARLIER REPLY (fix exactly these and reply with the complete object again)",
-                  feedback]
+        parts += ["", feedback_block(feedback)]
     parts += ["", "TEXT"]
     for sd, blocks in groups:
         parts += [f"=== {sd.prefix} {sd.href} ===", render_blocks(sd, blocks, settings.content, images), ""]
@@ -399,8 +408,7 @@ def check_message(book: Book, items: list[dict[str, Any]], settings: Settings,
              "Judge every question listed below against its own section, and the break of each section marked "
              "JUDGE THE BREAK. Reply with the JSON object only."]
     if feedback:
-        parts += ["", "PROBLEMS WITH YOUR EARLIER REPLY (fix exactly these and reply with the complete object again)",
-                  feedback]
+        parts += ["", feedback_block(feedback)]
     parts.append("")
     for item in items:
         parts += section_view(item["doc"], item["section"], item["blocks"], item["first"], item["last"], settings,
@@ -427,8 +435,7 @@ def revise_message(book: Book, items: list[dict[str, Any]], settings: Settings,
              + ("" if settings.open_only else " Each entry also has `form` and the members of the forms, as a question "
                 "in a draft has. Keep a question's form unless its form is what is wrong with it.")]
     if feedback:
-        parts += ["", "PROBLEMS WITH YOUR EARLIER REPLY (fix exactly these and reply with the complete object again)",
-                  feedback]
+        parts += ["", feedback_block(feedback)]
     parts.append("")
     for item in items:
         parts += section_view(item["doc"], item["section"], item["blocks"], item["first"], item["last"], settings,

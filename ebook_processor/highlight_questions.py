@@ -26,16 +26,16 @@ from __future__ import annotations
 
 import copy
 import secrets
-from dataclasses import replace
 from pathlib import Path
 from string import Template
 from typing import Any
 
 from . import forms as qforms
 from . import prompts
+from .asking import Unusable, ask_with_retry, check_one
 from .bookinfo import book_line
 from .content import render_blocks
-from .llm import Backend, BackendError
+from .llm import Backend, Completion
 from .store import now
 from .prep.epub import Block, SpineDoc
 from .prep.checkpoints import ANSWER_MAX_CHARS, PROMPT_MAX_CHARS, plain_text_problem
@@ -288,10 +288,8 @@ def propose(backend: Backend, book: ReadingBook, manifest: dict[str, Any], store
     section = next((s for s in manifest["sections"] if s["id"] == place["section"]["id"]), None)
     asked = [q["question"] for q in of_highlight(store, highlight["id"])] + [p["prompt"] for p in (section or {}).get("prompts", [])]
     message = propose_message(book, place, highlight, asked, settings, instruction)
-    feedback = ""
-    for _ in range(2):  # a reply that breaks a plain rule is sent back once, with what was wrong
-        done = backend.complete(role="draft", system=system(settings, steer), prompt=message + feedback,
-                                schema=propose_schema(settings), model=settings.model)
+
+    def read(done: Completion) -> dict[str, Any]:
         data = done.data if isinstance(done.data, dict) else {}
         try:
             question = clean(data.get("question"), "a question", PROMPT_MAX_CHARS)
@@ -301,8 +299,16 @@ def propose(backend: Backend, book: ReadingBook, manifest: dict[str, Any], store
                                     + ", ".join(qforms.NAMES[f] for f in settings.forms))
             return {**formed(question, data.get("answer"), form), "form": form, "model": done.model}
         except QuestionError as exc:
-            feedback = f"\n\nPROBLEM WITH YOUR EARLIER REPLY (fix it and reply with the complete object again)\n{exc}"
-    raise BackendError(f"the model's question could not be used: {feedback.splitlines()[-1]}")
+            raise Unusable([str(exc)]) from exc
+
+    return ask_with_retry(backend, role="draft", system=system(settings, steer), message=message, schema=propose_schema(settings),
+                          model=settings.model, read=read, feedback=lambda wrong: prompts.problem_block(wrong[0]),
+                          failed=could_not_be_used)
+
+
+def could_not_be_used(wrong: list[str]) -> str:
+    """What is said when a model's second try at one question cannot be used either."""
+    return f"the model's question could not be used: {prompts.problem_block(wrong[0]).splitlines()[-1]}"
 
 
 def check(backend: Backend, book: ReadingBook, manifest: dict[str, Any], q: dict[str, Any], settings: Settings,
@@ -313,14 +319,8 @@ def check(backend: Backend, book: ReadingBook, manifest: dict[str, Any], q: dict
     item = {"doc": place["doc"], "section": place["section"], "blocks": place["blocks"], "first": place["first"],
             "last": place["last"], "judge_break": False,
             "questions": [{"id": q["id"], **qforms.as_prompt(q)}]}
-    if qforms.form_of(q) not in settings.forms:  # a form allowed when it was written: the check must know the forms
-        settings = replace(settings, forms=qforms.clean_forms([*settings.forms, qforms.form_of(q)]))
-    done = backend.complete(role="check", system=prompts.checker_system(settings, steer),
-                            prompt=prompts.check_message(book.book, [item], settings, None), schema=prompts.check_schema(settings),
-                            model=settings.checker_model or settings.model)
-    verdict = next((p for p in done.data.get("prompts") or [] if isinstance(p, dict) and p.get("id") == q["id"]), None)
+    verdict, criteria = check_one(backend, book.book, item, settings, steer)
     if verdict is None:
         return {"passed": False, "criteria": {}, "problem": "The check gave no verdict for this question."}
-    criteria = {c: verdict.get(c) is True for c in prompts.criteria(settings)}
     return {"passed": all(criteria.values()), "criteria": criteria,
             "problem": "" if all(criteria.values()) else str(verdict.get("problem") or "It failed the check.")[:600]}

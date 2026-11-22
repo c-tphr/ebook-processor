@@ -11,6 +11,7 @@ import time
 
 import pytest
 
+from ebook_processor.web import runs
 from ebook_processor.web import server as web
 from tests.scripted import Script
 from tests.test_pipeline import FIXTURE
@@ -118,13 +119,13 @@ def test_downloads_asked_for_together_build_the_files_once(lib, monkeypatch):
     jobs.write_question(jid, made["id"], "What is asked from the highlight?", "This.")
     assert jobs.get(jid)["exports_stale"]
     builds: list = []
-    real = web.rebuild
+    real = runs.rebuild
 
     def counted(*args, **kwargs):
         builds.append(1)
         time.sleep(0.3)
         return real(*args, **kwargs)
-    monkeypatch.setattr(web, "rebuild", counted)
+    monkeypatch.setattr(runs, "rebuild", counted)
     threads = [in_thread(lambda: jobs.fresh_exports(jid)) for _ in range(3)]
     for thread, got in threads:
         thread.join(30)
@@ -134,15 +135,15 @@ def test_downloads_asked_for_together_build_the_files_once(lib, monkeypatch):
 
 def test_a_question_accepted_while_the_files_are_built_leaves_them_marked_as_old(lib, monkeypatch):
     jobs, jid, _, _ = lib
-    real = web.rebuild
+    real = runs.rebuild
 
     def changed_meanwhile(*args, **kwargs):
         with jobs.lock:
             jobs._exports_stale(jid)   # what accepting a question from a highlight does, after the build read them
         return real(*args, **kwargs)
-    monkeypatch.setattr(web, "rebuild", changed_meanwhile)
+    monkeypatch.setattr(runs, "rebuild", changed_meanwhile)
     jobs.rebuild(jid, None)
     assert jobs.get(jid)["exports_stale"]
-    monkeypatch.setattr(web, "rebuild", real)
+    monkeypatch.setattr(runs, "rebuild", real)
     jobs.fresh_exports(jid)
     assert "exports_stale" not in jobs.get(jid)

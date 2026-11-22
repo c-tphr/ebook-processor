@@ -353,7 +353,9 @@ def clean_tags(raw: Any) -> list[str]:
 LINK_RE = re.compile(r"(!?)\[\[([^\[\]|#\n]*)(?:#([^\[\]|\n]*))?(?:\|([^\[\]\n]*))?\]\]")
 TAG_RE = re.compile(r"(?<![\w/#&])#((?:[\w/-]*[^\W\d][\w/-]*))")
 _HEAD_RE = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.*)$")
-BLOCK_RE = re.compile(r"(?:^|\s)\^([A-Za-z0-9-]+)\s*$")
+BLOCK_ID = r"\^([A-Za-z0-9-]+)"  # a block id as it is written, for the patterns that look for one
+BLOCK_RE = re.compile(rf"(?:^|\s){BLOCK_ID}\s*$")
+NOTE_END = "-note"  # the block id of the note on a highlight: the highlight's id, and this
 FENCE_RE = re.compile(r"^ {0,3}(```|~~~)")
 ESCAPE_RE = re.compile(r"\\[\\`*_\[\]<>#~=^|!]")  # a backslash before a mark of Markdown
 
@@ -365,6 +367,11 @@ def head_of(line: str) -> tuple[int, str] | None:
     spaces takes time that grows with the cube of the run."""
     m = _HEAD_RE.match(line)
     return (len(m.group(1)), m.group(2).rstrip(" \t").rstrip("#").rstrip(" \t")) if m else None
+
+
+def entry_of(block: str) -> str:
+    """The entry of a book's file that a block id belongs to: the note on a highlight belongs to its highlight."""
+    return block[:-len(NOTE_END)] if block.endswith(NOTE_END) else block
 
 
 def mask_code(text: str) -> str:
@@ -823,8 +830,7 @@ class Vault:
         for other, link in self.backlinks(book):
             if other.source or not link.anchor.startswith("^"):
                 continue
-            block = link.anchor[1:]
-            block = block[:-5] if block.endswith("-note") else block
+            block = entry_of(link.anchor[1:])
             if other not in out.setdefault(block, []):
                 out[block].append(other)
         return out
@@ -877,10 +883,14 @@ class Vault:
                     seen.add(f"{note.id}#{p.block}")
                     rows.append({"book": note.title, "book_id": note.id, "block": p.block, "heading": p.heading,
                                  "quote": p.quote, "text": _snippet(p.text, shared, 260), "shares": shared})
-            return {"notes": [{**self.brief(n), "shares": shared, "link": n.title if len(self.by_name.get(key(n.title), [])) == 1 else n.path[:-3]}
+            return {"notes": [{**self.brief(n), "shares": shared, "link": self.link_to(n)}
                               for _, n, shared in notes[:limit]], "passages": rows}
 
     # ---- what the pages show
+
+    def link_to(self, note: Note) -> str:
+        """The words that link to a note: its title, or its path when two notes share the title."""
+        return note.title if len(self.by_name.get(key(note.title), [])) == 1 else note.path[:-3]
 
     def brief(self, note: Note) -> dict[str, Any]:
         return {"id": note.id, "title": note.title, "kind": note.kind, "inbox": note.inbox, "untitled": note.untitled,
@@ -1018,13 +1028,12 @@ class Vault:
                 raise VaultError("A project gathers notes.")
             if any(k.target and self.resolve(k.target) is note for k in project.links):
                 return {**self.detail(project), "added": False}
-            link = note.title if len(self.by_name.get(key(note.title), [])) == 1 else note.path[:-3]
-            body = add_under(project.body, GATHERED, f"- [[{link}]]")
+            body = add_under(project.body, GATHERED, f"- [[{self.link_to(note)}]]")
             self._write(self._inside(project.path), compose(project.props, body))
             self._reread(project.path)
             return {**self.detail(self.notes[project.path]), "added": True}
 
-    def _words(self, text: str) -> str:
+    def words(self, text: str) -> str:
         """A line of a note as it reads outside the folder: links become the words they show."""
         def shown(m: re.Match[str]) -> str:
             if m.group(4):
@@ -1058,11 +1067,11 @@ class Vault:
                     if parent:
                         out += [f"{marks} {to.title}", ""]
                     lines, masked = to.body.split("\n"), mask_code(to.body).split("\n")
-                    text = "\n".join(self._words(line) if masked[i] == line else line for i, line in enumerate(lines)).strip("\n")
+                    text = "\n".join(self.words(line) if masked[i] == line else line for i, line in enumerate(lines)).strip("\n")
                     if text:
                         out += [text, ""]
                     continue
-                words = self._words(item["text"])
+                words = self.words(item["text"])
                 out += [f"{marks} {words}" if parent else words, ""]
             return "\n".join(out).rstrip() + "\n"
 
@@ -1111,7 +1120,7 @@ class Vault:
                     rows.append((note.untitled, rank, note))
             rows.sort(key=lambda r: (r[0], r[1], r[2].path.count("/"), -r[2].stamp[0]))
             return [{"id": n.id, "title": n.title, "kind": n.kind, "untitled": n.untitled, "excerpt": n.excerpt[:120],
-                     "link": n.title if len(self.by_name.get(key(n.title), [])) == 1 else n.path[:-3]}
+                     "link": self.link_to(n)}
                     for _, _, n in rows[:limit]]
 
     def anchors(self, target: str) -> dict[str, Any]:
@@ -1125,8 +1134,7 @@ class Vault:
                 note = self.by_id.get(first[0]["id"]) if first else None
             if note is None:
                 return {"link": "", "headings": [], "blocks": []}
-            link = note.title if len(self.by_name.get(key(note.title), [])) == 1 else note.path[:-3]
-            return {"link": link, "headings": note.headings, "blocks": [{"id": b, "text": t[:160]} for b, t in note.blocks.items()]}
+            return {"link": self.link_to(note), "headings": note.headings, "blocks": [{"id": b, "text": t[:160]} for b, t in note.blocks.items()]}
 
     # ---- writing
 

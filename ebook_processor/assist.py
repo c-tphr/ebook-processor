@@ -142,7 +142,7 @@ def connections(backend: Backend, vault: Vault, note_id: str, settings: Settings
         if ref in material["refs"]:
             other = material["refs"][ref]
             found.append({"kind": "note", "id": other.id, "title": other.title, "untitled": other.untitled, "reason": reason[:600], "mine": mine,
-                          "link": other.title if len(vault.by_name.get(key(other.title), [])) == 1 else other.path[:-3],
+                          "link": vault.link_to(other),
                           "theirs": _quoted(c.get("theirs"), other.body, other.title)})
         elif ref in material["passages"]:
             p = material["passages"][ref]
@@ -167,7 +167,7 @@ def _source(vault: Vault, ref: str, material: dict[str, Any]) -> dict[str, Any]:
     if ref in material["notes"]:
         n = material["notes"][ref]
         return {"ref": ref, "kind": "note", "id": n.id, "title": n.title, "untitled": n.untitled, "text": n.excerpt,
-                "link": n.title if len(vault.by_name.get(key(n.title), [])) == 1 else n.path[:-3]}
+                "link": vault.link_to(n)}
     p = material["passages"][ref]
     return {"ref": ref, "kind": "passage", "id": p["book_id"], "block": p["block"], "title": p["book"], "text": p["text"],
             "link": f"{p['book']}#^{p['block']}"}
@@ -283,7 +283,7 @@ def system(settings: Settings) -> str:
 def plain_note(vault: Vault, note: Note) -> str:
     """The note as the model reads it: links as the words they show, no block ids."""
     lines, masked = note.body.split("\n"), mask_code(note.body).split("\n")
-    return "\n".join(vault._words(line) if masked[i] == line else line for i, line in enumerate(lines)).strip()
+    return "\n".join(vault.words(line) if masked[i] == line else line for i, line in enumerate(lines)).strip()
 
 
 def propose(backend: Backend, vault: Vault, note: Note, asked: list[str], settings: Settings, instruction: str = "") -> dict[str, Any]:

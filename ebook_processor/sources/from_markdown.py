@@ -12,8 +12,8 @@ from markdown.inlinepatterns import InlineProcessor
 
 from .. import vault
 
-WIKI = r"(!?)\[\[([^\[\]|#\n]*)(#[^\[\]|\n]*)?(?:\|([^\[\]\n]*))?\]\]"
-BLOCK_ID = re.compile(r"(?<![ \t])[ \t]+\^[A-Za-z0-9-]+[ \t]*$", re.M)  # from the start of a run of spaces only: a long run is then read once
+# from the start of a run of spaces only: a long run is then read once
+BLOCK_ID = re.compile(rf"(?<![ \t])[ \t]+{vault.BLOCK_ID}[ \t]*$", re.M)
 COMMENT = re.compile(r"%%.*?%%", re.S)
 
 
@@ -23,13 +23,13 @@ class _Wiki(InlineProcessor):
     def handleMatch(self, m: re.Match[str], data: str) -> tuple[Any, int, int]:  # noqa: N802 - the library's name
         el = etree.Element("span")
         if not m.group(1):
-            el.text = (m.group(4) or m.group(2) or (m.group(3) or "")[1:]).strip()
+            el.text = (m.group(4) or m.group(2) or m.group(3) or "").strip()
         return el, m.start(0), m.end(0)
 
 
 class _Notes(Extension):
     def extendMarkdown(self, md: markdown.Markdown) -> None:  # noqa: N802
-        md.inlinePatterns.register(_Wiki(WIKI, md), "wiki", 175)
+        md.inlinePatterns.register(_Wiki(vault.LINK_RE.pattern, md), "wiki", 175)  # a link as the notes folder reads it
 
 
 def _one(value: Any) -> str | None:

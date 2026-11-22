@@ -96,7 +96,7 @@ def text(name: str, job_id: str, book: ReadingBook, store: dict[str, Any], kind:
             if i["type"] == "highlight":
                 out += [f"> {_escape(i['text'])} ^{i['id']}", ""]
                 if i["note"]:
-                    out += _entry(i["note"], i["id"] + "-note")
+                    out += _entry(i["note"], i["id"] + vault.NOTE_END)
             elif i["type"] == "note":
                 out += _entry(i["text"], i["id"])
         return out
@@ -133,7 +133,7 @@ def is_removed(note: vault.Note) -> bool:
 def place(store: dict[str, Any], block: str, sections: list[dict[str, Any]] | None = None) -> dict[str, int] | None:
     """Where in the book the entry with this block id is, to open the reader there. ``sections`` are those of
     the book's manifest: with them, a note on a section or a chapter leads to where that begins."""
-    wanted = block[:-5] if block.endswith("-note") else block
+    wanted = vault.entry_of(block)
     for h in store["highlights"]:
         if h["id"] == wanted:
             return {"chapter": h["chapter"], "word": h["start"]}

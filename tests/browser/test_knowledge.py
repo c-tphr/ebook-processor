@@ -572,7 +572,7 @@ def test_the_graph_a_neighbourhood_revisit_and_the_timeline(page: Page, book: Ap
     page.wait_for_function("() => !!window.graphState && graphState().points.length > 0")
     books = len(book.call("GET", "/vault")["books"])                                     # another test may have added a second book
     expect(page.locator("#gz-info")).to_have_text(f"{4 + books} points / 3 joins", ignore_case=True)
-    page.wait_for_timeout(1500)                                                          # the layout settles
+    page.wait_for_function("() => graphState().settled && !graphState().drawing")        # the layout settles, and then rests
     state = page.evaluate("() => graphState()")
     assert {p["title"]: p["joins"] for p in state["points"] if p["kind"] != "book"} == {"First idea": 2, "Second idea": 2, "Third idea": 1, "Standing alone": 0}
     assert sum(p["kind"] == "book" for p in state["points"]) == books and state["joins"] == 3
@@ -589,7 +589,7 @@ def test_the_graph_a_neighbourhood_revisit_and_the_timeline(page: Page, book: Ap
     page.get_by_label("Kind").select_option("")
     page.locator("details.adv summary").click()                                          # the same notes as links, for the keyboard
     expect(page.locator("#gz-list .nz-row")).to_have_count(4 + books)
-    page.wait_for_timeout(1500)
+    page.wait_for_function("() => graphState().settled")
     first = next(p for p in page.evaluate("() => graphState()")["points"] if p["title"] == "First idea")
     page.mouse.click(first["x"], first["y"])                                             # a click opens the note
     expect(page.get_by_label("Title")).to_have_value("First idea")
@@ -685,3 +685,17 @@ def test_a_model_finds_connections_answers_from_the_notes_and_makes_a_card(page:
     page.get_by_role("button", name="Ask", exact=True).click()
     expect(page.locator("#az-none")).to_contain_text("Your notes do not answer this")
     expect(page.locator("#az-none")).to_contain_text("What comes closest")
+
+
+def test_a_note_with_very_many_links_does_not_freeze_the_graph(page: Page, book: App, vault: Path):
+    """With about 120 links to one note the layout threw its points further each turn, until the page hung for good."""
+    vault.mkdir(parents=True)
+    (vault / "Hub.md").write_text("The note that everything cites.\n", encoding="utf-8")
+    for n in range(150):
+        (vault / f"Leaf {n:03d}.md").write_text("See [[Hub]].\n", encoding="utf-8")
+    page.goto(book.url + "/#/notes/graph")
+    page.wait_for_function("() => !!window.graphState && graphState().settled", timeout=20000)
+    state = page.evaluate("() => graphState()")
+    hub = next(p for p in state["points"] if p["title"] == "Hub")
+    assert hub["joins"] == 150 and state["extent"] < 5000
+    page.wait_for_function("() => !graphState().drawing")   # a settled graph that is left alone draws nothing

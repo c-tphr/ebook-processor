@@ -1192,10 +1192,13 @@ async function showGraph(params) {
   let data;
   try { data = await api("/vault/graph"); } catch (e) { return put(bar, h("p", { class: "msg err" }, e.message)); }
   const state = { kind: params.get("kind") || "", tag: params.get("tag") || "", book: params.get("book") || "", q: "" };
-  const all = data.nodes.map((n, i) => ({ ...n, x: 260 * Math.cos(i * 2.4) * Math.sqrt((i + 1) / data.nodes.length), y: 260 * Math.sin(i * 2.4) * Math.sqrt((i + 1) / data.nodes.length), vx: 0, vy: 0, to: [] }));
+  // The points start spread over a circle that grows with their number: packed into one small circle, every point
+  // is at first compared with almost every other, and thousands of notes take many seconds to come apart.
+  const spread = Math.max(260, 34 * Math.sqrt(data.nodes.length));
+  const all = data.nodes.map((n, i) => ({ ...n, x: spread * Math.cos(i * 2.4) * Math.sqrt((i + 1) / data.nodes.length), y: spread * Math.sin(i * 2.4) * Math.sqrt((i + 1) / data.nodes.length), vx: 0, vy: 0, to: [] }));
   const byId = new Map(all.map((n) => [n.id, n]));
   for (const [a, b] of data.edges) { byId.get(a).to.push(byId.get(b)); byId.get(b).to.push(byId.get(a)); }
-  let nodes = [], edges = [], heat = 1, hover = null, drag = null, moved = false, view = { s: 1, x: 0, y: 0 }, frame = 0, stopped = false, own = false;
+  let nodes = [], edges = [], busy = [], heat = 1, hover = null, drag = null, moved = false, view = { s: 1, x: 0, y: 0 }, frame = 0, stopped = false, own = false;
   const name = (n) => (n.untitled ? "A note without a title" : n.title);
   const radius = (n) => 3.5 + 1.7 * Math.sqrt(n.to.length);
   function choose() {                   // the points the filters leave, and the joins among them
@@ -1205,7 +1208,8 @@ async function showGraph(params) {
     const shown = new Set(nodes);
     edges = data.edges.map(([a, b]) => [byId.get(a), byId.get(b)]).filter(([a, b]) => shown.has(a) && shown.has(b));
     for (const n of nodes) n.near = n.to.filter((o) => shown.has(o));
-    heat = 1; own = false;
+    busy = nodes.slice().sort((a, b) => b.near.length - a.near.length).slice(0, 14);   // the most joined: their names always show
+    heat = 1; own = false; wake();
     info.textContent = `${fmt(nodes.length)} point${nodes.length === 1 ? "" : "s"} / ${fmt(edges.length)} join${edges.length === 1 ? "" : "s"}`;
     canvas.setAttribute("aria-label", `A graph of ${nodes.length} notes and books with ${edges.length} joins between them. The same notes are listed under it.`);
     const ranked = nodes.slice().sort((a, b) => b.near.length - a.near.length || name(a).localeCompare(name(b)));
@@ -1226,11 +1230,24 @@ async function showGraph(params) {
       }
       n.vx -= n.x * 0.004; n.vy -= n.y * 0.004;
     }
+    // A join pulls its two ends together. A note with many joins is pulled by all of them at once, so each pull on
+    // it is divided by the root of their number; and no point moves more than 40 pixels in one turn. Without these
+    // a note with about a hundred joins jumps past its place, further each turn, until the numbers are too large
+    // for the loop above to end: the page then hung for good.
     for (const [a, b] of edges) {
       const dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx * dx + dy * dy) || 1, f = (d - 120) * 0.012;
-      a.vx += dx / d * f; a.vy += dy / d * f; b.vx -= dx / d * f; b.vy -= dy / d * f;
+      const fa = f / Math.sqrt(a.near.length || 1), fb = f / Math.sqrt(b.near.length || 1);
+      a.vx += dx / d * fa; a.vy += dy / d * fa; b.vx -= dx / d * fb; b.vy -= dy / d * fb;
     }
-    for (const n of nodes) { if (n === drag) { n.vx = n.vy = 0; continue; } n.vx *= 0.82; n.vy *= 0.82; n.x += n.vx * heat * 6; n.y += n.vy * heat * 6; }
+    for (const n of nodes) {
+      if (n === drag) { n.vx = n.vy = 0; continue; }
+      n.vx *= 0.82; n.vy *= 0.82;
+      let mx = n.vx * heat * 6, my = n.vy * heat * 6;
+      const far = Math.hypot(mx, my);
+      if (!(far < 1e9)) { n.vx = n.vy = mx = my = 0; }
+      else if (far > 40) { const k = 40 / far; mx *= k; my *= k; n.vx *= k; n.vy *= k; }
+      n.x += mx; n.y += my;
+    }
     heat *= 0.985;
   }
   const colour = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
@@ -1243,7 +1260,6 @@ async function showGraph(params) {
     const lit = hover ? new Set([hover, ...hover.near]) : null, q = state.q.trim().toLowerCase();
     c.lineWidth = 1 / view.s;
     for (const [a, b] of edges) { c.strokeStyle = lit && (a === hover || b === hover) ? ink : ghost; c.globalAlpha = lit && !(a === hover || b === hover) ? 0.35 : 1; c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke(); }
-    const busy = nodes.slice().sort((a, b) => b.near.length - a.near.length).slice(0, 14);
     c.font = `${12 / view.s}px ${colour("--grot") || "sans-serif"}`; c.textBaseline = "middle";
     for (const n of nodes) {
       const r = radius(n), found = q && name(n).toLowerCase().includes(q);
@@ -1264,43 +1280,59 @@ async function showGraph(params) {
     view.s = Math.max(0.2, Math.min(2, (canvas.clientWidth - 260) / (x1 - x0 + 1), (canvas.clientHeight - 90) / (y1 - y0 + 1)));
     view.x = -(x0 + x1) / 2 * view.s - 60; view.y = -(y0 + y1) / 2 * view.s;
   }
-  function loop() { if (stopped) return; if (heat > 0.03) { for (let i = 0; i < 3; i++) step(); if (!own) fit(); } draw(); frame = requestAnimationFrame(loop); }
+  // A frame is drawn only while the layout is settling or after something changed: a settled graph that is left
+  // alone costs nothing. A frame gives the layout 8 ms at most, so a large graph stays answerable while it settles.
+  function loop() {
+    frame = 0;
+    if (stopped) return;
+    if (heat > 0.03) { const began = performance.now(); for (let i = 0; i < 3 && (i === 0 || performance.now() - began < 8); i++) step(); if (!own) fit(); }
+    draw();
+    if (heat > 0.03 || drag) wake();
+  }
+  function wake() { if (!frame && !stopped) frame = requestAnimationFrame(loop); }
   const where = (e) => { const r = canvas.getBoundingClientRect(); return { x: (e.clientX - r.left - r.width / 2 - view.x) / view.s, y: (e.clientY - r.top - r.height / 2 - view.y) / view.s }; };
   const under = (p) => { let best = null, bd = Infinity; for (const n of nodes) { const d = Math.hypot(n.x - p.x, n.y - p.y) - radius(n); if (d < 8 / view.s && d < bd) { best = n; bd = d; } } return best; };
   let last = null;
-  canvas.addEventListener("pointerdown", (e) => { canvas.setPointerCapture(e.pointerId); const p = where(e); drag = under(p); moved = false; last = { x: e.clientX, y: e.clientY }; canvas.style.cursor = "grabbing"; });
+  canvas.addEventListener("pointerdown", (e) => { canvas.setPointerCapture(e.pointerId); const p = where(e); drag = under(p); moved = false; last = { x: e.clientX, y: e.clientY }; canvas.style.cursor = "grabbing"; wake(); });
   canvas.addEventListener("pointermove", (e) => {
     const p = where(e);
     if (last && (Math.abs(e.clientX - last.x) > 2 || Math.abs(e.clientY - last.y) > 2)) moved = true;
     if (last && drag && moved) { drag.x = p.x; drag.y = p.y; heat = Math.max(heat, 0.3); }
     else if (last && moved) { view.x += e.clientX - last.x; view.y += e.clientY - last.y; own = true; }
     if (last && moved) last = { x: e.clientX, y: e.clientY };
-    if (!last) { hover = under(p); canvas.style.cursor = hover ? "pointer" : "grab"; canvas.title = hover ? name(hover) : ""; }
+    if (!last) { const was = hover; hover = under(p); canvas.style.cursor = hover ? "pointer" : "grab"; canvas.title = hover ? name(hover) : ""; if (hover !== was) wake(); }
+    else wake();
   });
-  canvas.addEventListener("pointerup", (e) => { const hit = drag; drag = null; last = null; canvas.style.cursor = "grab"; if (hit && !moved) location.hash = "#/notes/" + encodeURIComponent(hit.id); });
-  canvas.addEventListener("pointerleave", () => { if (!last) hover = null; });
+  canvas.addEventListener("pointerup", (e) => { const hit = drag; drag = null; last = null; canvas.style.cursor = "grab"; wake(); if (hit && !moved) location.hash = "#/notes/" + encodeURIComponent(hit.id); });
+  canvas.addEventListener("pointerleave", () => { if (!last) hover = null; wake(); });
   canvas.addEventListener("wheel", (e) => {
     e.preventDefault();
     const r = canvas.getBoundingClientRect(), mx = e.clientX - r.left - r.width / 2, my = e.clientY - r.top - r.height / 2, to = Math.max(0.2, Math.min(5, view.s * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
-    view.x = mx - (mx - view.x) * to / view.s; view.y = my - (my - view.y) * to / view.s; view.s = to; own = true;
+    view.x = mx - (mx - view.x) * to / view.s; view.y = my - (my - view.y) * to / view.s; view.s = to; own = true; wake();
   }, { passive: false });
-  canvas.addEventListener("keydown", (e) => { const d = { ArrowLeft: [40, 0], ArrowRight: [-40, 0], ArrowUp: [0, 40], ArrowDown: [0, -40] }[e.key]; own = true; if (d) { e.preventDefault(); view.x += d[0]; view.y += d[1]; } else if (e.key === "+" || e.key === "=") view.s = Math.min(5, view.s * 1.15); else if (e.key === "-") view.s = Math.max(0.2, view.s / 1.15); });
-  find.addEventListener("input", () => { state.q = find.value; });
+  canvas.addEventListener("keydown", (e) => { wake(); const d = { ArrowLeft: [40, 0], ArrowRight: [-40, 0], ArrowUp: [0, 40], ArrowDown: [0, -40] }[e.key]; own = true; if (d) { e.preventDefault(); view.x += d[0]; view.y += d[1]; } else if (e.key === "+" || e.key === "=") view.s = Math.min(5, view.s * 1.15); else if (e.key === "-") view.s = Math.max(0.2, view.s / 1.15); });
+  find.addEventListener("input", () => { state.q = find.value; wake(); });
   find.addEventListener("keydown", (e) => {
     if (e.key !== "Enter") return;
     const q = state.q.trim().toLowerCase(), hit = q ? nodes.find((n) => name(n).toLowerCase().includes(q)) : null;
-    if (hit) { own = true; view.s = Math.max(view.s, 1.6); view.x = -hit.x * view.s; view.y = -hit.y * view.s; hover = hit; }
+    if (hit) { own = true; view.s = Math.max(view.s, 1.6); view.x = -hit.x * view.s; view.y = -hit.y * view.s; hover = hit; wake(); }
   });
   const pick = (key, label, options) => { const sel = h("select", { "aria-label": label, onchange: () => { state[key] = sel.value; choose(); } }, options.map(([v, t]) => h("option", { value: v }, t))); sel.value = state[key]; if (sel.selectedIndex < 0) sel.selectedIndex = 0; return sel; };
   const tags = [...new Set(all.flatMap((n) => n.tags))].sort((a, b) => a.localeCompare(b));
   put(bar, find, pick("kind", "Kind", [["", "Every kind"], ["idea", "Idea notes"], ["index", "Index notes"], ["project", "Projects"], ["project-note", "Project notes"], ["quick", "Quick notes"], ["book", "Books"], ["article", "Articles"]]),
     pick("tag", "Tag", [["", "Any tag"], ...tags.map((t) => [t, "#" + t])]), pick("book", "Book or article", [["", "Any book or article"], ...all.filter((n) => Notes.isSource(n.kind)).map((n) => [n.id, n.title])]), info);
   choose();
-  for (let i = 0; i < 120; i++) step();   // most of the settling happens before the first picture
+  // Most of the settling happens before the first picture, for a graph that is quick to settle; a large one gets a
+  // quarter of a second and goes on settling in view.
+  for (let i = 0, began = performance.now(); i < 120 && performance.now() - began < 250; i++) step();
   window.graphState = () => ({ points: nodes.map((n) => { const r = canvas.getBoundingClientRect(); return { id: n.id, title: n.title, kind: n.kind, joins: n.near.length, x: r.left + r.width / 2 + view.x + n.x * view.s, y: r.top + r.height / 2 + view.y + n.y * view.s }; }),
-    joins: edges.length, hover: hover ? hover.id : null, zoom: view.s });
-  viewStop = () => { stopped = true; cancelAnimationFrame(frame); delete window.graphState; };
-  loop();
+    joins: edges.length, hover: hover ? hover.id : null, zoom: view.s, settled: heat <= 0.03, drawing: !!frame,
+    extent: nodes.reduce((m, n) => Math.max(m, Math.abs(n.x), Math.abs(n.y)), 0) });
+  // the picture is drawn again when its size or the colours change (the window, the theme in Settings)
+  const sized = new ResizeObserver(wake), themed = new MutationObserver(wake);
+  sized.observe(canvas); themed.observe(document.documentElement, { attributes: true });
+  viewStop = () => { stopped = true; cancelAnimationFrame(frame); sized.disconnect(); themed.disconnect(); delete window.graphState; };
+  wake();
 }
 
 /* ---------- notes: coming back to what was left, and the timeline ---------- */

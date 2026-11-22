@@ -10,7 +10,7 @@ from typing import Any, Iterable
 
 from . import forms as qforms
 from .llm import PROVIDERS, Backend, Backends, ClaudeCodeBackend, CodexBackend, Completion, Connection, service_urls
-from .outputs import build_outputs, unbuildable
+from .outputs import build_outputs, try_build
 from .pipeline import KEPT, SOURCE_COPY, STATE_FILE, Cancelled, PipelineError, Progress, kept, load_state, process
 from .prep.epub import EpubError, load_book_bytes
 from .prep.limits import MAX_PROMPTS, MAX_PROMPTS_PER_CHECKPOINT
@@ -195,8 +195,9 @@ def open_run(out_dir: Path) -> tuple[Any, dict[str, Any]]:
     return book, state
 
 
-def _fits(book: Any, state: dict[str, Any]) -> None:
-    """Refuse a state from which the book for the e-reader cannot be made, with the reason in plain words."""
+def _fits(book: Any, state: dict[str, Any]) -> bytes:
+    """Refuse a state from which the book for the e-reader cannot be made, with the reason in plain words. Returns
+    that book, made from the state."""
     in_section: dict[str, int] = {}
     for q in state["questions"]:
         if kept(q):
@@ -208,10 +209,11 @@ def _fits(book: Any, state: dict[str, Any]) -> None:
     if sum(in_section.values()) > MAX_PROMPTS:
         raise PipelineError(f"A book can have {MAX_PROMPTS:,} questions, the most the e-reader's file holds, and this "
                             f"one would have {sum(in_section.values()):,}. Take a question out first.")
-    problems = unbuildable(book, state)
-    if problems:
+    problems, prepared = try_build(book, state)
+    if problems or prepared is None:
         raise PipelineError("This change cannot be kept, because the book for the e-reader could not be made with it: "
                             + "; ".join(p[:200] for p in problems[:3]))
+    return prepared
 
 
 def change_run(out_dir: Path, change: Any, build: bool = True) -> Any:
@@ -223,12 +225,12 @@ def change_run(out_dir: Path, change: Any, build: bool = True) -> Any:
         raise PipelineError(f"the run in {out_dir} is not finished")
     before = json.dumps(state, sort_keys=True)
     result = change(book, state)
-    if build:  # before anything is written: a change the e-reader's format cannot hold is refused, not half kept
-        _fits(book, state)
+    # before anything is written: a change the e-reader's format cannot hold is refused, not half kept
+    prepared = _fits(book, state) if build else None
     if json.dumps(state, sort_keys=True) != before:  # a look at the run writes nothing: it could undo a change made meanwhile
         write_json(work_dir(out_dir) / STATE_FILE, state)
     if build:
-        build_outputs(book, original, state, out_dir, state["settings"].get("epubcheck", False))
+        build_outputs(book, original, state, out_dir, state["settings"].get("epubcheck", False), prepared)
     return result
 
 

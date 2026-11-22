@@ -54,23 +54,24 @@ def _epubcheck_line(data: bytes, name: str, folder: Path) -> str:
     return f"EPUBCheck {report.version}: no errors, {len(report.warnings)} warning(s)."
 
 
-def unbuildable(book: Book, state: dict[str, Any]) -> list[str]:
-    """Why the book for the e-reader cannot be made from this state; empty when it can. A change to a finished
-    run is tried here before it is written, so that a change the format cannot hold is refused and not kept."""
+def try_build(book: Book, state: dict[str, Any]) -> tuple[list[str], bytes | None]:
+    """Make the book for the e-reader from this state, in memory: (why it cannot be made, the book). A change to a
+    finished run is tried here before it is written, so that a change the format cannot hold is refused and not
+    kept. The book that comes out is handed to ``build_outputs``, which then does not make it a second time."""
     draft_raw = draft_bytes(state)
     _, issues, _ = check_draft(draft_raw, book)
     if issues:
-        return [str(i) for i in issues[:5]]
+        return [str(i) for i in issues[:5]], None
     try:
-        build_bytes(book, draft_raw)
+        return [], build_bytes(book, draft_raw).data
     except BuildError as exc:
-        return [str(i) for i in exc.issues[:5]]
-    return []
+        return [str(i) for i in exc.issues[:5]], None
 
 
 def build_outputs(book: Book, original: bytes, state: dict[str, Any], out_dir: Path,
-                  epubcheck: bool = False) -> dict[str, Any]:
-    """Write every output file and return the report."""
+                  epubcheck: bool = False, prepared: bytes | None = None) -> dict[str, Any]:
+    """Write every output file and return the report. ``prepared`` is the book for the e-reader when the caller
+    has made it from this very state already (``try_build``)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     work = out_dir / "work"
     stem = stem_of(state["source"]["file"])
@@ -89,7 +90,7 @@ def build_outputs(book: Book, original: bytes, state: dict[str, Any], out_dir: P
     prepared_ok = False
     name = f"{stem}.prepared.epub"
     try:
-        prepared = build_bytes(book, draft_raw).data
+        prepared = prepared if prepared is not None else build_bytes(book, draft_raw).data
     except BuildError as exc:
         # A book built earlier stays: it is what the reader opens, and an older book is better than none.
         files["prepared"] = name if (out_dir / name).is_file() else None

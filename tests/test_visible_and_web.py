@@ -361,3 +361,20 @@ def test_only_this_computers_names_are_answered_and_a_length_below_zero_is_refus
     other = make_server(tmp_path / "other", "0.0.0.0", 0, claude={"ok": True, "version": "test"}, models=[])
     assert other.RequestHandlerClass.hosts is None
     other.server_close()
+
+
+def test_one_entry_that_cannot_be_read_costs_that_entry_only(tmp_path, capsys):
+    from ebook_processor.web import server as web
+    data = tmp_path / "data"
+    jobs = web.Jobs(data, backend_factory=lambda settings: Script().backend())
+    prepared = FIXTURE.with_name("fixture.prepared.epub").read_bytes()
+    good, bad = jobs.import_prepared("one.prepared.epub", prepared)["id"], jobs.import_prepared("two.prepared.epub", prepared)["id"]
+    (data / bad / "notes.json").write_text('{"version": 1, "highlights": [7], "notes": []}', encoding="utf-8")
+    listed = {j["id"]: j for j in jobs.listing()}
+    assert listed[good]["can_read"] and listed[bad]["status"] == "failed" and "cannot be read" in listed[bad]["message"]
+    # an entry that is JSON of another shape is left out when the app starts, and the app starts
+    for name, text in (("20260101-000000-list", "[]"), ("20260101-000001-bare", '{"id": "20260101-000001-bare"}')):
+        (data / name).mkdir()
+        (data / name / "job.json").write_text(text, encoding="utf-8")
+    again = web.Jobs(data, backend_factory=lambda settings: Script().backend())
+    assert set(again.jobs) == {good, bad} and capsys.readouterr().out.count("Skipped") == 2

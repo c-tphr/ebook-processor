@@ -167,7 +167,10 @@ class Jobs:
                 job = json.loads(path.read_text(encoding="utf-8"))
             except ValueError:
                 continue
-            if not JOB_ID_RE.match(str(job.get("id", ""))) or job["id"] != path.parent.name:
+            if not isinstance(job, dict) or not all(isinstance(job.get(k), str) for k in ("id", "status", "created", "file")):
+                print(f"Skipped {path}: it is not an entry of the library as the app writes one.", flush=True)
+                continue
+            if not JOB_ID_RE.match(job["id"]) or job["id"] != path.parent.name:
                 continue
             if job["status"] in ACTIVE:  # the server stopped while this ran
                 job.update(status="stopped", message="The app was closed during this run. Press Continue.")
@@ -1459,8 +1462,16 @@ class Jobs:
         return job
 
     def listing(self) -> list[dict[str, Any]]:
+        def one(job: dict[str, Any]) -> dict[str, Any]:
+            try:
+                return self.summary(job)
+            except Exception as exc:  # noqa: BLE001  a file of this entry changed by hand: it costs this entry only
+                return {**{k: job.get(k) for k in ("id", "file", "title", "created", "updated", "counts", "words", "kind", "origin")},
+                        "type": self.type_of(job), "status": "failed", "stage": None, "done": None, "total": None,
+                        "message": f"The files of this entry cannot be read ({exc!r}). They are in {self.folder(job['id'])}.",
+                        "can_read": False, "reading": None, "practice": None, "notes": None}
         with self.lock:
-            return [self.summary(j) for j in sorted(self.jobs.values(), key=lambda j: j["created"], reverse=True)]
+            return [one(j) for j in sorted(self.jobs.values(), key=lambda j: j["created"], reverse=True)]
 
     def detail(self, job_id: str) -> dict[str, Any]:
         with self.lock:

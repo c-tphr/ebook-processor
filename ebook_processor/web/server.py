@@ -60,6 +60,7 @@ SETTINGS_FILE = "reader-settings.json"  # what the settings window keeps, for ev
 LONG_SETTINGS = ("steer_about", "steer_style")  # the reader's own texts: longer than any other setting
 WAITING = ("asking", "tried")  # a run that waits for its reader: to confirm a reading, or after a trial chapter
 NOTES_FOLDER = "ebook-processor-notes"  # the notes folder's name where none was chosen: beside the data folder
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 CSRF_HEADER = "X-Ebook-Processor"  # a page of another site cannot send this header, so it cannot start runs
 
 
@@ -1933,6 +1934,8 @@ class Handler(BaseHTTPRequestHandler):
     models: list[dict[str, Any]]
     pages: dict[str, bytes]
     shutdown_token: str | None = None
+    # The names this app answers to; None when it was told to listen on another address than this computer.
+    hosts: set[str] | None = LOCAL_HOSTS
 
     def log_message(self, format: str, *args: Any) -> None:  # keep the terminal quiet
         return
@@ -1981,6 +1984,8 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             length = 0
+        if length < 0:  # read(-1) would read until the sender stops, past every limit
+            raise ApiError(HTTPStatus.BAD_REQUEST, "the request gives a length below zero")
         if length > MAX_UPLOAD:
             raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "the file is larger than 300 MB")
         return self.rfile.read(length) if length else b""
@@ -2009,7 +2014,16 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         parts = [unquote(p) for p in url.path.split("/") if p]
         try:
+            # A page of another site cannot send the app's header. It can, however, give its own name this
+            # computer's address (DNS rebinding), and the browser then takes the app for that page's own site. Such
+            # a request still carries the other name, so only this computer's names are answered.
+            if self.hosts is not None and _host_name(self.headers.get("Host")) not in {*self.hosts, ""}:
+                raise ApiError(HTTPStatus.FORBIDDEN, "this app answers only at localhost, on this computer")
             if method != "GET" and self.headers.get(CSRF_HEADER) != "1":
+                raise ApiError(HTTPStatus.FORBIDDEN, "this request did not come from the app's own page")
+            origin = self.headers.get("Origin")
+            if method != "GET" and origin and self.hosts is not None \
+                    and _host_name(urlparse(origin).netloc) not in self.hosts:
                 raise ApiError(HTTPStatus.FORBIDDEN, "this request did not come from the app's own page")
             self.route(method, parts, parse_qs(url.query))
         except ApiError as exc:
@@ -2412,6 +2426,14 @@ def codex_status() -> dict[str, Any]:
         return {"ok": False, "installed": "was not found" not in str(exc), "error": str(exc)}
 
 
+def _host_name(value: str | None) -> str:
+    """The name in a ``Host`` header or the like, without its port, in small letters."""
+    value = (value or "").strip().lower()
+    if value.startswith("["):  # an IPv6 address stands in brackets
+        return value[:value.find("]") + 1]
+    return value.rsplit(":", 1)[0] if ":" in value else value
+
+
 def make_server(data: Path, host: str = "127.0.0.1", port: int = 8765, backend_factory: Any = None,
                 claude: dict[str, Any] | None = None, models: list[dict[str, Any]] | None = None,
                 shutdown_token: str | None = None, codex: dict[str, Any] | None = None) -> ThreadingHTTPServer:
@@ -2429,7 +2451,8 @@ def make_server(data: Path, host: str = "127.0.0.1", port: int = 8765, backend_f
     # request, a new page would be served by old code, and fail on whatever the new page asks for.
     pages = {name: (STATIC / name).read_bytes() for name in PAGES}
     handler = type("BoundHandler", (Handler,), {"jobs": Jobs(data, backend_factory), "claude": claude, "codex": codex,
-                                                "models": models, "pages": pages, "shutdown_token": shutdown_token})
+                                                "models": models, "pages": pages, "shutdown_token": shutdown_token,
+                                                "hosts": LOCAL_HOSTS if _host_name(host) in LOCAL_HOSTS else None})
     server = ThreadingHTTPServer((host, port), handler)
     server.daemon_threads = True
     return server

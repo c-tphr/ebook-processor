@@ -319,3 +319,45 @@ def test_the_web_app_passes_the_models_to_its_page(tmp_path):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_only_this_computers_names_are_answered_and_a_length_below_zero_is_refused(tmp_path):
+    """A page of another site can give its own name this computer's address. Its requests still carry that name."""
+    import http.client
+
+    from ebook_processor.web import server as web
+    server = make_server(tmp_path / "data", "127.0.0.1", 0, backend_factory=lambda settings: Script().backend(),
+                         claude={"ok": True, "version": "test"}, models=[])
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    port = server.server_address[1]
+
+    def ask(method: str, path: str, headers: dict[str, str], body: bytes | None = None) -> int:
+        link = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        link.putrequest(method, path, skip_host=True)
+        for name, value in headers.items():
+            link.putheader(name, value)
+        link.endheaders(body)
+        status = link.getresponse().status
+        link.close()
+        return status
+
+    try:
+        ours = {"X-Ebook-Processor": "1", "Content-Type": "application/json"}
+        for name in (f"127.0.0.1:{port}", f"localhost:{port}", "LOCALHOST", f"[::1]:{port}", "localhost:9999"):
+            assert ask("GET", "/api/jobs", {"Host": name}) == 200, name
+        for name in (f"evil.example:{port}", "evil.example", f"localhost.evil.example:{port}", f"127.0.0.1.evil.example:{port}"):
+            assert ask("GET", "/api/jobs", {"Host": name}) == 403, name
+            assert ask("PUT", "/api/settings", {**ours, "Host": name, "Content-Length": "2"}, b"{}") == 403, name
+        here = {**ours, "Host": f"localhost:{port}", "Content-Length": "2"}
+        assert ask("PUT", "/api/settings", here, b"{}") == 200
+        assert ask("PUT", "/api/settings", {**here, "Origin": f"http://localhost:{port}"}, b"{}") == 200
+        assert ask("PUT", "/api/settings", {**here, "Origin": "https://evil.example"}, b"{}") == 403
+        assert ask("PUT", "/api/settings", {**ours, "Host": f"localhost:{port}", "Content-Length": "-1"}) == 400
+    finally:
+        server.shutdown()
+        server.server_close()
+    # told to listen on another address, the app cannot know its names: the check is then off
+    assert web._host_name("[::1]:8765") == "[::1]" and web._host_name("Example.org:80") == "example.org"
+    other = make_server(tmp_path / "other", "0.0.0.0", 0, claude={"ok": True, "version": "test"}, models=[])
+    assert other.RequestHandlerClass.hosts is None
+    other.server_close()

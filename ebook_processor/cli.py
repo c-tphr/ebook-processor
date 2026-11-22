@@ -155,7 +155,8 @@ def make_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("serve", help="start the local web app",
                        description="Start the web app on this computer and open it in the browser.")
     p.add_argument("--port", type=int, default=8765, help="port to listen on (default: 8765)")
-    p.add_argument("--host", default="127.0.0.1", help="address to listen on (default: 127.0.0.1, this computer only)")
+    p.add_argument("--host", default="127.0.0.1", help="address to listen on (default: 127.0.0.1, this computer only). Any other address opens "
+                        "the app, which has no password, to everyone who can reach that address")
     p.add_argument("--data", type=Path, default=Path.home() / "ebook-processor-runs",
                    help="folder that holds the runs (default: ~/ebook-processor-runs)")
     p.add_argument("--notes", type=Path, default=None, metavar="FOLDER",

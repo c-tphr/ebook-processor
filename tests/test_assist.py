@@ -115,7 +115,7 @@ def test_a_question_is_made_from_a_note_and_checked_against_it(folder, tmp_path)
     note = folder.get(made["id"])
     replies = iter([{"question": "According to the note, why?", "answer": "Because."},     # refers to the note: sent back once
                     {"question": "Why does a fixed rule make a daily duty easier to keep?", "answer": "It removes the decision that would otherwise be made each day."}])
-    asked = backend(lambda prompt: next(replies))
+    backend(lambda prompt: next(replies))
     wording = assist.propose(backend(lambda prompt: {"question": "Why does a fixed rule make a daily duty easier to keep?",
                                                      "answer": "It removes the decision that would otherwise be made each day."}),
                              folder, note, ["An earlier question?"], SETTINGS, "Ask why.")

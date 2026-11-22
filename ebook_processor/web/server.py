@@ -740,7 +740,7 @@ class Jobs:
         except (BackendError, hq.QuestionError, ApiError) as exc:
             with self.lock:
                 asking["failed"][hid] = str(exc)
-        except Exception as exc:  # a fault of the tool: say so instead of leaving the request "being written"
+        except Exception as exc:  # noqa: BLE001 a fault of the tool: say so instead of leaving the request "being written"
             traceback.print_exc()
             with self.lock:
                 asking["failed"][hid] = f"Unexpected error: {exc!r}"
@@ -975,7 +975,8 @@ class Jobs:
             vault = self.vault()
             note = vault.book(bookfile.book_id(job_id)) if vault.exists else None
             if note is not None:
-                vault.put_book(note.id, note.title, bookfile.mark_removed(compose(note.props, note.body)))
+                # in the folder it is in: an article's file is not moved to the books
+                vault.put_book(note.id, note.title, bookfile.mark_removed(compose(note.props, note.body)), note.kind)
         except (VaultError, OSError):
             pass
 
@@ -1342,7 +1343,7 @@ class Jobs:
             return at.astimezone().date().isoformat()
 
         days: dict[str, dict[str, Any]] = {}
-        on = lambda d: days.setdefault(d, {"day": d, "written": [], "edited": [], "quick": [], "books": {}})
+        on = lambda d: days.setdefault(d, {"day": d, "written": [], "edited": [], "quick": [], "books": {}})  # noqa: E731
         vault = self.vault()
         vault.refresh()
         with vault.lock:
@@ -1354,7 +1355,7 @@ class Jobs:
                     on(made)["quick" if note.kind == "quick" else "written"].append(vault.brief(note))
                 if changed and changed != made:
                     on(changed)["edited"].append(vault.brief(note))
-        clip = lambda text: text if len(text) <= 200 else text[:200].rsplit(" ", 1)[0] + " …"
+        clip = lambda text: text if len(text) <= 200 else text[:200].rsplit(" ", 1)[0] + " …"  # noqa: E731
         for job_id in [j for j in list(self.jobs) if self._readable(j)]:
             marked = notes.load(self.folder(job_id))
             rows = [(h.get("created"), "highlights", h) for h in marked["highlights"]] + [(n.get("created"), "notes", n) for n in marked["notes"]]
@@ -2097,7 +2098,7 @@ class Jobs:
             except (PipelineError, BackendError, SettingsError) as exc:
                 with self.lock:
                     job.update(status="failed", message=str(exc))
-            except Exception as exc:  # a fault of the tool: show it instead of leaving the run "running" for ever
+            except Exception as exc:  # noqa: BLE001 a fault of the tool: show it instead of leaving the run "running" for ever
                 traceback.print_exc()
                 with self.lock:
                     job.update(status="failed", message=f"Unexpected error: {exc!r}")
@@ -2235,7 +2236,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": str(exc)}, exc.status)
         except (BrokenPipeError, ConnectionResetError):
             pass
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             traceback.print_exc()
             self.send_json({"error": f"Unexpected error: {exc!r}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
@@ -2376,14 +2377,14 @@ class Handler(BaseHTTPRequestHandler):
             case ("GET", ["vault", "folder"]):
                 return self.send_json(jobs.folder_state())
             case ("GET", ["vault", "search"]):
-                one = lambda name: (query.get(name) or [""])[0]
+                one = lambda name: (query.get(name) or [""])[0]  # noqa: E731
                 return self.send_json(jobs.vault_search(one("q"), one("kind"), one("tag"), one("book")))
             case ("GET", ["vault", "complete"]):
                 return self.send_json({"notes": jobs.vault().complete((query.get("q") or [""])[0][:200])})
             case ("GET", ["vault", "anchors"]):
                 return self.send_json(jobs.vault().anchors((query.get("target") or [""])[0][:300]))
             case ("GET", ["vault", "peek"]):
-                one = lambda name: (query.get(name) or [""])[0][:300]
+                one = lambda name: (query.get(name) or [""])[0][:300]  # noqa: E731
                 return self.send_json(jobs.vault_peek(one("target"), one("anchor"), one("from") or None, one("full") == "1"))
             case ("GET", ["vault", "trash"]):
                 return self.send_json({"notes": jobs.vault().trash()})

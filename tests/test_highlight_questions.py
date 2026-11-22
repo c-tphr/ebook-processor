@@ -304,7 +304,7 @@ def test_the_notebook_never_shows_a_question_as_neither_written_nor_being_writte
                 shown = next(i for c in seen["chapters"] for s in c["sections"] for i in s["items"] if i["type"] == "highlight")
                 if not seen["asking"]["pending"] and len(shown["questions"]) < wanted:
                     lost.append((wanted, len(shown["questions"])))
-            except Exception as exc:        # a fault here must fail the test, not end the thread unseen
+            except Exception as exc:        # noqa: BLE001 a fault here must fail the test, not end the thread unseen
                 lost.append(repr(exc))
 
     watcher = threading.Thread(target=look)

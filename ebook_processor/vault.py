@@ -602,7 +602,7 @@ class Vault:
                             df[w] = df.get(w, 0) + 1
                 self._df = df
             total = max(1, sum(len(n.passages) if n.source else 1 for n in self.notes.values()))
-            weight = lambda w: math.log(1 + total / (1 + self._df.get(w, 0)))
+            weight = lambda w: math.log(1 + total / (1 + self._df.get(w, 0)))  # noqa: E731
             mine, skip = {key(t) for t in tags or []}, but or set()
 
             def score(bag: frozenset[str], shared_tags: int = 0) -> tuple[float, list[str]]:

@@ -530,6 +530,9 @@ After every push GitHub runs both (`.github/workflows/tests.yml`): the test suit
 | `ebook_processor/forms.py` | The kinds of question (open, multiple choice, true or false, fill in the blank): their members, their checks and their plain-text form |
 | `ebook_processor/editing.py` | Changes to a finished run's questions: edit, add, delete, restore, check, rewrite |
 | `ebook_processor/content.py` | What of a section is sent to a model: its text, its pictures, its tables |
+| `ebook_processor/asking.py` | One question asked of a model, with one more try when the reply cannot be used, and the check of one question |
+| `ebook_processor/bookinfo.py` | A book's authors and the names of its chapters |
+| `ebook_processor/frontmatter.py`, `notetext.py` | The properties at the top of a Markdown file, read and written without a YAML library; and what a link, a heading and a block id look like in a note's text |
 | `ebook_processor/store.py` | The files the app keeps: the time, writes through a temporary file, the loading of a stored JSON file |
 | `ebook_processor/pipeline.py` | The run: parts, drafting, checking, revising, the saved state |
 | `ebook_processor/prompts.py`, `instructions/` | What is sent to Claude, and the reply shapes |

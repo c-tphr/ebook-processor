@@ -7,7 +7,6 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
-from pathlib import Path
 
 import pytest
 
@@ -210,7 +209,7 @@ def test_processing_what_was_marked_ends_in_a_note_a_source_or_aside(app):
     assert rows[3]["chapter"] == 3 and app("GET", "/api/vault")[1]["waiting"] == 5
     # an idea note that cites an item processes it, however the citation was made
     note = app("POST", "/api/vault/notes", json_body={"title": "Boats come when they can", "body": "x", "source": {"job": jid, "block": first}})[1]
-    by_id = lambda: {r["id"]: r for r in app("GET", f"/api/process?job={jid}")[1]["books"][0]["items"]}
+    by_id = lambda: {r["id"]: r for r in app("GET", f"/api/process?job={jid}")[1]["books"][0]["items"]}  # noqa: E731
     assert by_id()[first]["state"] == "done" and by_id()[first]["notes"] == [{"id": note["id"], "title": "Boats come when they can", "untitled": False}]
     # added to a note that exists: a source line and the property, once
     added = app("POST", "/api/process/add", json_body={"note": note["id"], "job": jid, "block": second})[1]
@@ -299,7 +298,8 @@ def test_the_graph_a_neighbourhood_what_to_revisit_and_the_timeline(app):
     assert [n["id"] for n in again["unlinked"]] == [alone["id"]] and again["old"] == [] and [n["id"] for n in again["today"]] == [alone["id"]]
     assert [(n["id"], n["why"]) for n in app("GET", "/api/vault")[1]["revisit"]] == [(alone["id"], "unlinked")]
     # the timeline: today holds what was written, caught and marked; a note changed on a later day shows there as edited
-    import datetime, os
+    import datetime
+    import os
     line = app("GET", "/api/timeline")[1]
     today = datetime.date.today().isoformat()
     assert [d["day"] for d in line["days"]] == [today] and not line["more"]

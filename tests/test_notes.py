@@ -100,7 +100,7 @@ def test_the_notebook_follows_the_book_and_the_export_leaves_out_what_is_empty(b
     # A question shown at the start of its section before it was graded is marked; one first shown afterwards is not.
     early = notes.notebook(book, store, {**state, "x_previewed": {"c0001-p1": "s"}})   # "s" sorts before the grade's "t"
     late = notes.notebook(book, store, {**state, "x_previewed": {"c0001-p1": "u"}})
-    answer_of = lambda d: next(c for c in d["chapters"] if c["index"] == 2)["sections"][0]["answers"][0]
+    answer_of = lambda d: next(c for c in d["chapters"] if c["index"] == 2)["sections"][0]["answers"][0]  # noqa: E731
     assert answer_of(early)["previewed"] is True and answer_of(late)["previewed"] is False
     assert "(missed, previewed)\n" in notes.markdown(early) and "previewed" not in notes.markdown(late)
     assert "Winding the Clockwork" not in md and "The Fog Season" not in md  # nothing marked there

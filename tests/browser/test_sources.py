@@ -133,7 +133,6 @@ def test_a_file_that_cannot_be_taken_says_why(page: Page, own: App, tmp_path: Pa
 # ---- step 2: a web address, a Word file, a page saved by the browser
 
 
-from ebook_processor.sources import fetch  # noqa: E402
 from tests.sources.makers import make_docx  # noqa: E402
 from tests.sources.test_convert import FILL, PNG, the_web  # noqa: E402, F401 - the_web is a fixture
 

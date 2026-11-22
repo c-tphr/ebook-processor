@@ -7,12 +7,11 @@ Python pass and compares with what the prototype's own test expected.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
 
-from ebook_processor.prep import entities, words
+from ebook_processor.prep import words
 from ebook_processor.prep.words import (
     BYTE_SPLIT,
     HEADING,

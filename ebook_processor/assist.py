@@ -303,7 +303,8 @@ def propose(backend: Backend, vault: Vault, note: Note, asked: list[str], settin
         data = done.data if isinstance(done.data, dict) else {}
         try:
             question = hq.clean(data.get("question"), "a question", PROMPT_MAX_CHARS)
-            form = {} if settings.open_only else qforms.from_model(data, question, _flat)
+            # a member the reply left out is None here: it becomes "", and the reply is sent back with what is missing
+            form = {} if settings.open_only else qforms.from_model(data, question, lambda text: _flat(str(text or "")))
             if qforms.form_of(form) not in settings.forms:
                 raise hq.QuestionError(f"the form {qforms.NAMES[qforms.form_of(form)]} is not allowed; the allowed forms are "
                                        + ", ".join(qforms.NAMES[f] for f in settings.forms))

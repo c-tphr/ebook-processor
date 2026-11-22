@@ -8,7 +8,6 @@ login status, the model catalogue, and for ``exec`` a stream of JSON events plus
 from __future__ import annotations
 
 import json
-import sys
 import threading
 import urllib.request
 from pathlib import Path

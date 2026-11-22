@@ -130,6 +130,10 @@ def test_an_article_has_its_file_in_the_notes_folder_and_can_become_a_book(app):
     assert moved.is_file() and not file.exists() and "kind: book\n" in moved.read_text(encoding="utf-8")
     assert app("GET", f"/vault/notes/{note['id']}")[1]["links"][0]["to"]["kind"] == "book"  # the citation holds
     assert [j["type"] for j in app("GET", "/jobs")[1]["jobs"]] == ["book"]
+    # taken out of the library as an article, its file stays among the articles (it used to be moved to the books)
+    assert app("POST", f"/jobs/{job['id']}/type", json_body={"type": "article"})[1]["type"] == "article"
+    assert app("DELETE", f"/jobs/{job['id']}")[0] == 200
+    assert file.is_file() and not moved.exists() and "kind: article\n" in file.read_text(encoding="utf-8")
 
 
 def test_an_epub_can_be_called_an_article_and_old_runs_are_books(app):

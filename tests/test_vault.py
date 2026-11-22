@@ -90,7 +90,7 @@ The text.
 def test_properties_are_read_for_a_small_subset_and_the_rest_is_kept():
     front, body = V.split(FRONT)
     props = V.parse_props(front)
-    get = lambda name: V.prop(props, name)
+    get = lambda name: V.prop(props, name)  # noqa: E731
     assert body == "The text.\n"
     assert get("id") == "n7f3a2c91" and get("kind") == "idea" and get("created") == "2026-11-18T15:30:00Z"
     assert get("tags") == ["pricing", "two words", "markets"]
@@ -548,9 +548,9 @@ def test_the_graph_joins_notes_and_books_and_a_neighbourhood_is_two_steps(vault)
 def test_unlinked_and_old_notes_are_brought_back_a_few_each_day(vault):
     vault.put_book("b-20261118-101500-almanac", "The Almanac", BOOK)
     linked = vault.create("Linked", "To [[Other]].")
-    other = vault.create("Other", "x")
-    cites = vault.create("Cites only", "From [[The Almanac#^h3f9a]].")           # a source is not a link to another idea
-    alone = vault.create("Alone", "x")
+    vault.create("Other", "x")
+    vault.create("Cites only", "From [[The Almanac#^h3f9a]].")           # a source is not a link to another idea
+    vault.create("Alone", "x")
     vault.create("", "a quick thought", "quick")                                   # not an idea yet: not asked about
     vault.create("A project", "", "project")
     old = (dt.datetime(2026, 9, 1) - dt.datetime(1970, 1, 1)).total_seconds()

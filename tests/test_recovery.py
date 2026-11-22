@@ -295,3 +295,15 @@ def test_the_address_asked_follows_a_configured_claude_address(monkeypatch):
     assert llm.service_urls()["claude"] == "https://gateway.example.test"
     monkeypatch.delenv("ANTHROPIC_BASE_URL")
     assert llm.service_urls()["claude"] == "https://api.anthropic.com"
+
+
+def test_a_number_inside_a_longer_number_is_no_error_code():
+    """'215500 tokens' is not a 5xx answer, and '240100 tokens' is not a 401."""
+    from ebook_processor import llm
+    for transient in (llm._TRANSIENT_RE, llm._CODEX_TRANSIENT_RE):
+        assert not transient.search("Prompt is too long: 215500 tokens > 200000 maximum")
+        assert not transient.search("Invalid model name: claude-opus-4-5-20251101")
+        assert transient.search("API Error: 529 overloaded_error") and transient.search("HTTP 503")
+    for login in (llm._LOGIN_RE, llm._CODEX_LOGIN_RE):
+        assert not login.search("Prompt is too long: 240100 tokens")
+        assert login.search("API Error: 401 Unauthorized")

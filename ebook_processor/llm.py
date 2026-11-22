@@ -326,8 +326,8 @@ def _with_retries(tool: str, role: str, retries: int, backoff: tuple[float, ...]
 
 
 _LIMIT_RE = re.compile(r"usage limit|hit your limit|limit reached|out of extra usage|quota", re.I)
-_TRANSIENT_RE = re.compile(r"structured.?output|overloaded|rate.?limit|timed? ?out|timeout|connection|temporarily|5\d\d|ECONNRESET|socket", re.I)
-_LOGIN_RE = re.compile(r"/login|not logged in|invalid api key|authentication|unauthorized|401", re.I)
+_TRANSIENT_RE = re.compile(r"structured.?output|overloaded|rate.?limit|timed? ?out|timeout|connection|temporarily|\b5\d\d\b|ECONNRESET|socket", re.I)
+_LOGIN_RE = re.compile(r"/login|not logged in|invalid api key|authentication|unauthorized|\b401\b", re.I)
 
 
 def extract_json(text: str) -> dict[str, Any] | None:

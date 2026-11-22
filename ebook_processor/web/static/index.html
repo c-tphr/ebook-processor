@@ -1008,7 +1008,7 @@ async function showNotes(params) {
   const filters = h("div", { class: "nz-filters" }), body = h("div");
   put(app, h("div", { class: "title" }, h("h1", {}, "Notes"),
     h("div", { class: "nz-find" }, find, h("a", { class: "btn", id: "nz-ask", href: "#/notes/ask", title: "Ask a question and have it answered from your notes and highlights, by a model",
-      onclick: (e) => { if (find.value.trim()) { e.preventDefault(); location.hash = "#/notes/ask?" + new URLSearchParams({ q: find.value.trim() }); } } }, "Ask"),
+      onclick: (e) => { if (find.value.trim()) { e.preventDefault(); askNow = true; location.hash = "#/notes/ask?" + new URLSearchParams({ q: find.value.trim() }); } } }, "Ask"),
       h("a", { class: "btn primary", href: "#/notes/new" }, "New note"))), filters, body);
   let home = null, typing = null, turn = 0;
   const go = () => { history.replaceState(null, "", notesAt(state)); load(); };
@@ -1115,6 +1115,7 @@ async function showNotes(params) {
 // The question, and the notes and highlighted passages that share most with it, go to a model, which answers from
 // them alone and names its source after each statement. A source that was not sent is not accepted as one. The
 // answer is kept only when asked for, as a quick note that says who wrote it.
+let askNow = false;   // set by the Ask button of the Notes page for the one visit it opens
 async function showAsk(params) {
   const app = $("app"), out = h("div", { id: "az-out" });
   const box = h("input", { type: "text", id: "az-q", "aria-label": "Your question", placeholder: "What do my notes say about ...?", maxlength: "600", value: params.get("q") || "", autocomplete: "off", style: "flex:1 1 320px;min-width:0;font-size:17px;padding:12px 13px" });
@@ -1155,7 +1156,10 @@ async function showAsk(params) {
       h("div", { class: "actions", style: "margin-top:18px" }, keep, h("span", { class: "m mute" }, got.model ? "Answered by " + got.model : ""))),
       h("section", { class: "nz-part" }, h("h2", {}, "Sources", h("small", {}, String(got.sources.length))), h("div", { class: "nz-list nb", id: "az-sources" }, got.sources.map((s, i) => sourceRow(s, i + 1)))));
   }
-  if (box.value.trim()) ask(); else box.focus();
+  // A question in the address only fills the box: a reload, Back or a link from elsewhere must not ask a model.
+  // The Ask button of the Notes page, pressed with words in the search field, is a press of the button.
+  const pressed = askNow; askNow = false;
+  if (pressed && box.value.trim()) ask(); else box.focus();
 }
 
 /* ---------- notes: the graph ---------- */

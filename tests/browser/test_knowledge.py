@@ -677,6 +677,10 @@ def test_a_model_finds_connections_answers_from_the_notes_and_makes_a_card(page:
     expect(page.locator(".nt-toast")).to_contain_text("marked as written by the model")
     kept = next((vault / "Inbox").iterdir()).read_text(encoding="utf-8")
     assert "by: model\n" in kept and "kind: quick\n" in kept and "[[A duty is kept by rule]]" in kept and "Not my own words." in kept
+    page.reload()                             # the address holds the question: opening it must not ask a model
+    expect(page.locator("#az-q")).to_have_value("Why does the keeper light the lamp whatever the weather?")
+    page.wait_for_timeout(400)
+    expect(page.locator("#az-out")).to_be_empty()
     page.locator("#az-q").fill("UNANSWERABLE: what fuel did the lamp of the keeper burn?")
     page.get_by_role("button", name="Ask", exact=True).click()
     expect(page.locator("#az-none")).to_contain_text("Your notes do not answer this")

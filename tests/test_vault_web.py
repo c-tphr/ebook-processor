@@ -318,6 +318,15 @@ def test_the_graph_a_neighbourhood_what_to_revisit_and_the_timeline(app):
     assert b["id"] in {n["id"] for n in line["days"][0]["edited"]} and b["id"] not in {n["id"] for n in line["days"][0]["written"]}
     assert [d["day"] for d in app("GET", "/api/timeline?before=2026-03-09")[1]["days"]] == ["2026-01-05"]
     assert app("GET", "/api/timeline?before=yesterday")[0] == 400
+    # a day holds so many of a kind and says how many there are: a copied folder has every note on one day
+    assert day["counts"] == {"written": 3, "edited": 0, "quick": 1} and day["books"][0]["counts"] == {"highlights": 1, "notes": 1}
+    app.jobs.DAY_SHOWN = 2
+    cut = app("GET", "/api/timeline")[1]["days"][0]
+    assert len(cut["edited"]) + len(cut["written"]) <= 4 and cut["counts"]["written"] + cut["counts"]["edited"] == 3
+    # a file looked at in the Add form and left is dropped after its time, also when the form is not used again
+    app.jobs.held["left"] = {"time": web.time.monotonic() - app.jobs.HELD_SECONDS - 1}
+    app("GET", "/api/jobs")
+    assert "left" not in app.jobs.held
 
 
 @pytest.fixture

@@ -10,6 +10,7 @@ import hashlib
 import io
 import re
 import struct
+import time
 import uuid
 import zipfile
 from dataclasses import dataclass
@@ -57,6 +58,10 @@ def _is_dot(data: bytes, kind: str) -> bool:
     return width <= 2 or height <= 2
 
 
+MAX_TRIES = 150      # addresses asked for one text, whatever came of them
+MAX_SECONDS = 30.0   # for all the pictures of one text together
+
+
 def pictures(root: Any, get: Callable[[str], bytes | None]) -> tuple[dict[str, bytes], dict[str, int]]:
     """Take the pictures of the text into the book. ``get`` gives the bytes at an address, or None. Each image
     then points to its file (``images/p001.png``); one that could not be had leaves its description."""
@@ -64,14 +69,19 @@ def pictures(root: Any, get: Callable[[str], bytes | None]) -> tuple[dict[str, b
     by_hash: dict[str, str] = {}
     by_address: dict[str, str | None] = {}
     counts = {"kept": 0, "missing": 0}
-    total = 0
+    total = tries = 0
+    began = time.monotonic()
     for image in list(root.iter("img")):
         if image.getparent() is None:
             continue
         address = image.get("src") or ""
         if address not in by_address:
             name = None
-            data = get(address) if address and len(files) < MAX_PICTURES else None
+            # A page can name hundreds of pictures that are not there, or a host that answers slowly: asking stops
+            # after so many addresses or so many seconds, and the rest count as missing.
+            asked = bool(address) and len(files) < MAX_PICTURES and tries < MAX_TRIES and time.monotonic() - began < MAX_SECONDS
+            tries += asked
+            data = get(address) if asked else None
             kind = picture_type(data) if data else None
             if data and kind and len(data) <= MAX_PICTURE and total + len(data) <= MAX_PICTURES_TOTAL:
                 if _is_dot(data, kind):

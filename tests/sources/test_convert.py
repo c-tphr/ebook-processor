@@ -602,3 +602,16 @@ def test_a_word_file_that_unpacks_to_far_more_than_it_is_is_refused() -> None:
     assert len(packed.getvalue()) < 200_000
     with pytest.raises(sources.SourceError, match="unpacks to more than the app reads"):
         sources.convert("bomb.docx", packed.getvalue())
+
+
+def test_asking_for_pictures_stops_after_so_many_addresses_and_only_public_ones_are_asked(monkeypatch) -> None:
+    import lxml.html
+    asked: list[str] = []
+    monkeypatch.setattr(pack, "MAX_TRIES", 5)
+    root = lxml.html.fromstring("<div>" + "".join(f'<img src="https://example.org/{n}.png" alt="p{n}">' for n in range(9)) + "</div>")
+    files, counts = pack.pictures(root, lambda address: asked.append(address))
+    assert len(asked) == 5 and files == {} and counts == {"kept": 0, "missing": 9}
+    names = {"shared.example": "100.64.1.1", "home.example": "192.168.1.9", "here.example": "127.0.0.1", "mapped.example": "::ffff:10.0.0.1",
+             "public.example": "93.184.216.34"}
+    monkeypatch.setattr(fetch.socket, "getaddrinfo", lambda host, port: [(2, 1, 6, "", (names[host], 0))])
+    assert [fetch.is_private(h) for h in names] == [True, True, True, True, False]

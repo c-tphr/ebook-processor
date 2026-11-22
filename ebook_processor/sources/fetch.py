@@ -46,8 +46,8 @@ def is_private(host: str) -> bool:
             address = ipaddress.ip_address(entry[4][0].split("%")[0])
         except ValueError:
             continue
-        if address.is_private or address.is_loopback or address.is_link_local or address.is_reserved \
-                or address.is_multicast or address.is_unspecified:
+        address = getattr(address, "ipv4_mapped", None) or address
+        if not address.is_global:  # this computer, a home or office network, a carrier's or a VPN's shared range
             return True
     return False
 

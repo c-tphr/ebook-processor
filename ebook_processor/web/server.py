@@ -1351,10 +1351,20 @@ class Jobs:
                     book[what].append({"id": row["id"], "text": clip(row["text"])})
         ordered = [d for d in sorted(days.values(), key=lambda d: d["day"], reverse=True) if before is None or d["day"] < before]
         for d in ordered[:most]:
+            # A day has no natural limit: in a folder that was copied or restored, every note carries one date. A
+            # day shows so many of each kind, with the number there are; of a book's marks, the three the page shows.
             d["books"] = sorted(d["books"].values(), key=lambda b: b["title"].casefold())
+            d["counts"] = {}
             for name in ("written", "edited", "quick"):
                 d[name].sort(key=lambda n: n["modified"], reverse=True)
+                d["counts"][name] = len(d[name])
+                d[name] = d[name][:self.DAY_SHOWN]
+            for b in d["books"]:
+                b["counts"] = {"highlights": len(b["highlights"]), "notes": len(b["notes"])}
+                b["highlights"], b["notes"] = b["highlights"][:3], b["notes"][:3]
         return {"days": ordered[:most], "more": len(ordered) > most}
+
+    DAY_SHOWN = 200
 
     def vault_search(self, query: str, kind: str | None, tag: str | None, book: str | None) -> dict[str, Any]:
         found = self.vault().search(query[:200], kind or None, tag or None, book or None)
@@ -1614,6 +1624,7 @@ class Jobs:
                         "message": f"The files of this entry cannot be read ({exc!r}). They are in {self.folder(job['id'])}.",
                         "can_read": False, "reading": None, "practice": None, "notes": None}
         with self.lock:  # held to copy the list only: a long library does not hold up every other request
+            self._forget_held()
             jobs = sorted(self.jobs.values(), key=lambda j: j["created"], reverse=True)
         return [one(j) for j in jobs]
 
@@ -1822,10 +1833,17 @@ class Jobs:
                  "fetched": page.fetched, "charset": page.charset}
         return self._hold(entry, split_how)
 
+    def _forget_held(self) -> None:
+        """Drop the files of the Add form that were looked at and left (the caller holds the lock). A held file is up
+        to 50 MB with its pictures on top, and without this it stayed until the form was used again."""
+        for token in [t for t, e in self.held.items() if time.monotonic() - e["time"] > self.HELD_SECONDS]:
+            del self.held[token]
+
     def _hold(self, entry: dict[str, Any], split_how: str) -> dict[str, Any]:
         made = self._convert(entry, split_how)
         token = secrets.token_urlsafe(12)
         with self.lock:
+            self._forget_held()
             self.held[token] = entry
             for old in sorted(self.held, key=lambda t: self.held[t]["time"])[:-self.HELD]:
                 del self.held[old]

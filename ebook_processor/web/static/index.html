@@ -1345,17 +1345,18 @@ async function showTimeline() {
   put(app, h("a", { class: "back m", href: "#/notes" }, "← Notes"), h("div", { class: "title" }, h("h1", {}, "Timeline"),
     h("p", { style: "margin:0;max-width:46ch" }, "What you wrote and what you marked, day by day. A note shows on the day it was made, and again on the day of its last change.")), body, more);
   const note = (n) => h("a", { class: "n", href: "#/notes/" + encodeURIComponent(n.id) }, n.untitled ? (n.excerpt.split(/\s+/).slice(0, 12).join(" ") || "An empty note") : n.title);
-  const group = (label, rows) => (rows.length ? h("div", { class: "tl-group" }, h("span", { class: "m" }, `${label} ${rows.length}`), rows.map(note)) : null);
+  const group = (label, rows, count) => (rows.length ? h("div", { class: "tl-group" }, h("span", { class: "m" }, `${label} ${count}`), rows.map(note),
+    count > rows.length ? h("span", { class: "m mute" }, `and ${fmt(count - rows.length)} more`) : null) : null);   // a day shows 200 of a kind at most
   const dayOf = (d) => { const at = new Date(d.day + "T12:00:00"); return h("h3", {}, at.toLocaleDateString("en", { day: "numeric", month: "long", year: "numeric" }), h("small", {}, at.toLocaleDateString("en", { weekday: "long" }))); };
   async function load(before) {
     let got;
     try { got = await api("/timeline" + (before ? "?before=" + before : "")); } catch (e) { return put(more, h("p", { class: "msg err" }, e.message)); }
     if (!before && !got.days.length) return put(body, h("p", { class: "empty" }, "Nothing yet. What you write and mark will show here by day."));
     body.append(...got.days.map((d) => h("section", { class: "tl-day", id: "tl-" + d.day }, dayOf(d), h("div", {},
-      group("Written", d.written), group("Quick notes", d.quick), group("Changed", d.edited),
-      d.books.map((b) => h("div", { class: "tl-group" }, h("span", { class: "m" }, `${b.highlights.length} highlight${b.highlights.length === 1 ? "" : "s"}, ${b.notes.length} note${b.notes.length === 1 ? "" : "s"} in`),
+      group("Written", d.written, d.counts.written), group("Quick notes", d.quick, d.counts.quick), group("Changed", d.edited, d.counts.edited),
+      d.books.map((b) => h("div", { class: "tl-group" }, h("span", { class: "m" }, `${b.counts.highlights} highlight${b.counts.highlights === 1 ? "" : "s"}, ${b.counts.notes} note${b.counts.notes === 1 ? "" : "s"} in`),
         h("a", { class: "n", href: "#/notebook/" + b.job }, b.title), [...b.highlights, ...b.notes].slice(0, 3).map((x) => h("q", {}, x.text)),
-        b.highlights.length + b.notes.length > 3 ? h("span", { class: "m mute" }, `and ${b.highlights.length + b.notes.length - 3} more`) : null))))));
+        b.counts.highlights + b.counts.notes > 3 ? h("span", { class: "m mute" }, `and ${b.counts.highlights + b.counts.notes - 3} more`) : null))))));
     put(more, got.more ? h("button", { type: "button", onclick: () => load(got.days[got.days.length - 1].day) }, "Earlier") : null);
   }
   load(null);

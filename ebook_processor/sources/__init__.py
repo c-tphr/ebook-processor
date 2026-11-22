@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import functools
 import hashlib
 import re
 import urllib.parse
@@ -162,6 +163,18 @@ def _getter(base: str | None, folder: Path | None, web: bool, parts: dict[str, b
     return get
 
 
+def _not_too_deep(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """A file nested too deeply to be read is refused with a sentence, not a fault."""
+    @functools.wraps(fn)
+    def inner(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except RecursionError:
+            raise SourceError("This file is nested too deeply to be read.") from None
+    return inner
+
+
+@_not_too_deep
 def convert(name: str, data: bytes, *, url: str | None = None, folder: Path | None = None, split_how: str = "auto",
             whole: bool | None = None, title: str | None = None, author: str | None = None, web: bool = True,
             pictures: Callable[[Callable[[str], bytes | None]], Callable[[str], bytes | None]] | None = None,

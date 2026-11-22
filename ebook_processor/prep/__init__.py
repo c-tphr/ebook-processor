@@ -2,6 +2,14 @@
 
 Ported from tools/prep of c-tphr/eink-learner-aid (MIT). The prepared-EPUB format it writes is the one that
 repository's firmware reads, so the names starting with "rsvp" are kept.
+
+Where this copy differs from the port. Each edit is small and leaves the format and the engine's output as they
+were. Paths in the docstrings below are those of the other repository: its ``tools/prep`` is this package, its
+``fixtures/`` is ``tests/data/`` here, its ``tests/`` is ``tests/prep/`` here, and ``docs/PLAN.md`` and
+``docs/spikes/`` are its own documents.
+
+- ``epub.py``, ``load_book_bytes``: a chapter nested thousands of levels deep is refused with an ``EpubError``.
+  It ended in a ``RecursionError`` before.
 """
 
 from .checkpoints import (

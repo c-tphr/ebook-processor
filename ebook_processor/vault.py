@@ -49,6 +49,7 @@ KINDS = ("idea", "index", "quick", "project-note", "project", "book", "article")
 SOURCES = {"book": BOOKS, "article": ARTICLES}
 WRITABLE = ("idea", "index", "quick", "project-note", "project")  # the kinds a person's own note can have
 TITLE_MAX = 120
+TITLE_BYTES = 200  # a file's name can be 255 bytes on most systems; the rest is for the ending and a counter
 BODY_MAX = 400_000  # characters
 FORBIDDEN = '\\/:*?"<>|#^[]'  # not in a file name on Windows, or not in the target of a link
 RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
@@ -96,6 +97,9 @@ def title_problem(title: str) -> str | None:
         return "A note needs a title."
     if len(title) > TITLE_MAX:
         return f"A title can have {TITLE_MAX} characters; this one has {len(title)}."
+    if len(title.encode("utf-8")) > TITLE_BYTES:  # the title is the file's name, and a name is limited in bytes
+        return (f"This title is too long for a file's name: it takes {len(title.encode('utf-8'))} bytes and "
+                f"{TITLE_BYTES} fit. (A letter outside the Latin alphabet takes two to four.)")
     bad = sorted({c for c in title if c in FORBIDDEN or ord(c) < 32 or ord(c) == 127})
     if bad:
         shown = " ".join(c if c.isprintable() else "(a control character)" for c in bad)
@@ -120,7 +124,10 @@ def clean_title(raw: Any) -> str:
 def safe_title(text: str, fallback: str = "Untitled", limit: int = TITLE_MAX) -> str:
     """A title made from any text, for the names the app chooses itself. Never fails."""
     out = "".join(" " if c in FORBIDDEN or ord(c) < 32 or ord(c) == 127 else c for c in _nfc(text))
-    out = " ".join(out.split())[:limit].strip(" .")
+    out = " ".join(out.split())[:limit]
+    while len(out.encode("utf-8")) > TITLE_BYTES:
+        out = out[:-1]
+    out = out.strip(" .")
     if not out or title_problem(out):
         out = (out + " -").strip() if out and out.split(".")[0].strip().casefold() in RESERVED else fallback
     return out
@@ -347,10 +354,19 @@ def clean_tags(raw: Any) -> list[str]:
 
 LINK_RE = re.compile(r"(!?)\[\[([^\[\]|#\n]*)(?:#([^\[\]|\n]*))?(?:\|([^\[\]\n]*))?\]\]")
 TAG_RE = re.compile(r"(?<![\w/#&])#((?:[\w/-]*[^\W\d][\w/-]*))")
-HEADING_RE = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.*?)[ \t]*#*[ \t]*$")
+_HEAD_RE = re.compile(r"^ {0,3}(#{1,6})[ \t]+(.*)$")
 BLOCK_RE = re.compile(r"(?:^|\s)\^([A-Za-z0-9-]+)\s*$")
 FENCE_RE = re.compile(r"^ {0,3}(```|~~~)")
 ESCAPE_RE = re.compile(r"\\[\\`*_\[\]<>#~=^|!]")  # a backslash before a mark of Markdown
+
+
+def head_of(line: str) -> tuple[int, str] | None:
+    """A heading line as (level, text), its closing marks and spaces taken off; None for any other line.
+
+    The closing marks are stripped here and not in the pattern: a pattern that tries every place of a long run of
+    spaces takes time that grows with the cube of the run."""
+    m = _HEAD_RE.match(line)
+    return (len(m.group(1)), m.group(2).rstrip(" \t").rstrip("#").rstrip(" \t")) if m else None
 
 
 def mask_code(text: str) -> str:
@@ -398,12 +414,12 @@ def section(body: str, heading: str) -> tuple[int, int] | None:
     last). The heading is found in any letter case; None when it is not there."""
     lines, masked = body.split("\n"), mask_code(body).split("\n")
     for n, line in enumerate(masked):
-        head = HEADING_RE.match(line)
-        if head and key(_plain_text(head.group(2))) == key(heading):
-            level, end = len(head.group(1)), len(lines)
+        head = head_of(line)
+        if head and key(_plain_text(head[1])) == key(heading):
+            level, end = head[0], len(lines)
             for m in range(n + 1, len(lines)):
-                other = HEADING_RE.match(masked[m])
-                if other and len(other.group(1)) <= level:
+                other = head_of(masked[m])
+                if other and other[0] <= level:
                     end = m
                     break
             return n + 1, end
@@ -542,9 +558,9 @@ def read_text(text: str, path: str, stamp: tuple[int, int]) -> Note:
         for m in LINK_RE.finditer(line):
             note.links.append(Link(_nfc(m.group(2).strip()), (m.group(3) or "").strip(), (m.group(4) or "").strip(),
                                    bool(m.group(1)), _plain_text(_unquoted(plain[n]))[:300]))
-        head = HEADING_RE.match(line)
-        if head and head.group(2):
-            note.headings.append(_plain_text(head.group(2)))
+        head = head_of(line)
+        if head and head[1]:
+            note.headings.append(_plain_text(head[1]))
     for held in props:  # links kept in a property count as links of the note
         value = held.value if held.key else None
         for item in value if isinstance(value, list) else [value] if isinstance(value, str) else []:
@@ -586,17 +602,17 @@ def read_text(text: str, path: str, stamp: tuple[int, int]) -> Note:
                 pending.clear()
 
     for n, line in enumerate(lines):
-        head = HEADING_RE.match(line)
+        head = head_of(line)
         if head or not plain[n].strip():
             close()
             if head:
-                heading = _plain_text(head.group(2))
+                heading = _plain_text(head[1])
                 note.passages.extend(p for p in pending if p.block)
                 pending.clear()
         else:
             para.append(plain[n])
     close()
-    words = [_plain_text(_unquoted(line)) for line in plain if line.strip() and not HEADING_RE.match(line)]
+    words = [_plain_text(_unquoted(line)) for line in plain if line.strip() and not head_of(line)]
     note.excerpt = " ".join(w for w in words if w and not w.startswith("[!"))[:280]
     created = prop(props, "created")
     note.created = created if isinstance(created, str) else ""

@@ -63,8 +63,8 @@ def _entry(text: str, block: str) -> list[str]:
     """Something the reader wrote, ending with its block id."""
     lines = []
     for line in text.strip().split("\n"):
-        head = re.match(r"^ {0,3}#{1,6}[ \t]+(.*?)[ \t]*#*[ \t]*$", line)
-        lines.append(f"**{head.group(1)}**" if head and head.group(1) else line)  # the file's headings are the book's
+        head = vault.head_of(line)
+        lines.append(f"**{head[1]}**" if head and head[1] else line)  # the file's headings are the book's
     last = lines[-1] if lines else ""
     if not last.strip():
         return []

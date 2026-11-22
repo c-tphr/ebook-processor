@@ -17,9 +17,16 @@ NAMED = re.compile(rf"^(chapter|part|book|volume|section|letter|canto|act|scene)
 ALONE = re.compile(r"^(prologue|epilogue|introduction|preface|foreword|afterword|conclusion|appendix|interlude|"
                    r"postscript|contents)\.?$", re.I)
 NUMERAL = re.compile(r"^(?:[IVXLC]{1,7}|\d{1,3})\.?$")
-MARK = re.compile(r"^(#{1,6})\s+(.+?)\s*#*$")
+MARK = re.compile(r"^#{1,6}\s+(.*)$")  # the closing marks are stripped in the code: see _marked
 UNDERLINE = re.compile(r"^(=+|-+)\s*$")
 ENDS = {"the end", "fin", "finis", "end"}
+
+
+def _marked(line: str) -> str:
+    """The text of a line that opens with # marks, without its closing marks; "" for any other line. (A pattern
+    that strips the closing marks itself takes time that grows with the square of a run of spaces.)"""
+    m = MARK.match(line)
+    return m.group(1).rstrip().rstrip("#").rstrip() if m else ""
 
 
 def _blocks(text: str) -> list[list[str]]:
@@ -57,9 +64,9 @@ def _heading(block: list[str], rule: str) -> str | None:
         if len(lines) == 1 and NUMERAL.match(first):
             return first
     elif rule == "marks":
-        m = MARK.match(first)
-        if len(lines) == 1 and m:
-            return m.group(2)
+        text = _marked(first)
+        if len(lines) == 1 and text:
+            return text
         if len(lines) == 2 and UNDERLINE.match(lines[1]) and len(first) <= 120:
             return first
     return None

@@ -582,6 +582,13 @@ def load_book(path: str | Path) -> Book:
 
 def load_book_bytes(data: bytes, source_name: str) -> Book:
     try:
+        return _load_book_bytes(data, source_name)
+    except RecursionError:  # the walk over a chapter calls itself for each level of nesting
+        raise EpubError(f"{source_name}: a chapter is nested too deeply to be read") from None
+
+
+def _load_book_bytes(data: bytes, source_name: str) -> Book:
+    try:
         archive = Archive(data)
     except ZipFormatError as exc:
         raise EpubError(f"{source_name}: {exc}") from exc

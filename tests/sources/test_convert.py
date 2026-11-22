@@ -565,3 +565,16 @@ def test_other_things_at_an_address(the_web: str) -> None:
 def test_a_page_that_is_not_free_to_read_says_so(the_web: str) -> None:
     made = from_address(the_web + "/paywalled")
     assert "not free to read" in made.warnings[0] and "Save the page" in made.warnings[0]
+
+
+def test_an_encoding_python_refuses_is_treated_as_unknown() -> None:
+    assert decode(b'<meta charset="undefined"><p>caf\xc3\xa9</p>', "undefined").endswith("café</p>")
+
+
+def test_a_file_nested_too_deeply_is_refused_with_a_sentence() -> None:
+    deep = "\n".join("  " * n + "- item" for n in range(700)) + "\n\n" + FILL
+    try:
+        sources.convert("deep.md", deep.encode())
+    except sources.SourceError as exc:
+        assert "nested too deeply" in str(exc)
+    # a library that copes with the depth is as good: the file must only never end in a fault

@@ -13,7 +13,7 @@ from markdown.inlinepatterns import InlineProcessor
 from .. import vault
 
 WIKI = r"(!?)\[\[([^\[\]|#\n]*)(#[^\[\]|\n]*)?(?:\|([^\[\]\n]*))?\]\]"
-BLOCK_ID = re.compile(r"[ \t]+\^[A-Za-z0-9-]+[ \t]*$", re.M)
+BLOCK_ID = re.compile(r"(?<![ \t])[ \t]+\^[A-Za-z0-9-]+[ \t]*$", re.M)  # from the start of a run of spaces only: a long run is then read once
 COMMENT = re.compile(r"%%.*?%%", re.S)
 
 

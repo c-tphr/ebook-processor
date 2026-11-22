@@ -572,3 +572,37 @@ def test_unlinked_and_old_notes_are_brought_back_a_few_each_day(vault):
     assert len(picks) == 3                                                         # and other notes on other days
     assert vault.revisit(dt.date(2026, 9, 15))["old"] == [] and linked["id"] not in {n["id"] for n in got["today"]}
     assert Vault(vault.root / "none").revisit() == {"unlinked": [], "old": [], "old_days": 30, "today": []}
+
+
+def test_no_line_pattern_takes_long_on_a_long_run_of_one_character():
+    """A heading line with 2,000 spaces took 11 seconds, and nothing else ran meanwhile. Every pattern that reads
+    a line of a note, a text file or a Markdown file is tried on long runs of the characters that have a meaning."""
+    import re
+    import time
+
+    from ebook_processor import bookfile
+    from ebook_processor.sources import from_markdown, from_text
+    assert V.head_of("## A title ##  ") == (2, "A title") and V.head_of("   ### Deep") == (3, "Deep")
+    assert V.head_of("# ") == (1, "") and V.head_of("#no") is None and V.head_of("    # code") is None
+    assert V.head_of("# C# and F#") == (1, "C# and F") and V.head_of("# a  b") == (1, "a  b")
+    assert from_text._marked("# One #") == "One" and from_text._marked("One") == "" and from_text._marked("#") == ""
+    n = 50000
+    hard = ["# a" + " " * n + "b", "# a" + "\t" * n + "b #", " " * n, "[" * n, "[[" * (n // 2), "#" * n, "- " * (n // 2),
+            "a " * (n // 2) + "^x", "*" * n, "\\" * n, "`" * n, "![[" * (n // 3), "|" * n]
+    patterns = [value for module in (V, bookfile, from_text, from_markdown) for value in vars(module).values()
+                if isinstance(value, re.Pattern)]
+    assert len(patterns) > 10
+    began = time.monotonic()
+    for line in hard:
+        V.head_of(line)
+        from_text._marked(line)
+        for pattern in patterns:
+            pattern.search(line)
+    assert time.monotonic() - began < 4  # about 0.3 s here; the old heading pattern alone would take hours
+
+
+def test_a_title_is_limited_by_the_bytes_of_its_file_name():
+    long = "雪" * 100
+    assert "bytes" in V.title_problem(long) and V.title_problem("雪" * 60) is None
+    made = V.safe_title(long)
+    assert made and V.title_problem(made) is None and len(made.encode("utf-8")) <= V.TITLE_BYTES

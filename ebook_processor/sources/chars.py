@@ -21,7 +21,7 @@ def decode(data: bytes, declared: str | None = None) -> str:
             continue
         try:
             return data.decode(name)
-        except (LookupError, UnicodeDecodeError):
+        except (LookupError, UnicodeError):  # a name Python does not know, or one it refuses ('undefined')
             pass
     try:
         from charset_normalizer import from_bytes

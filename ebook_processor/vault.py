@@ -637,6 +637,7 @@ class Vault:
         self.by_name: dict[str, list[Note]] = {}
         self.aliases: dict[str, str] = {}  # the id a note had before its file named one -> the id it has now
         self._back: dict[str, list[tuple[Note, Link]]] | None = None
+        self._join: dict[str, set[str]] | None = None
         self._df: dict[str, int] | None = None  # in how many notes and passages each word is
         self._looked = 0.0
 
@@ -673,11 +674,34 @@ class Vault:
             return False
 
     def _files(self) -> Iterator[Path]:
-        for folder, folders, names in os.walk(self.root):
-            folders[:] = sorted(d for d in folders if not d.startswith("."))
-            for name in sorted(names):
-                if name.lower().endswith(".md") and not name.startswith("."):
-                    yield Path(folder) / name
+        for rel, _ in self._listed():
+            yield self.root / rel
+
+    def _listed(self) -> Iterator[tuple[str, tuple[int, int]]]:
+        """Every note of the folder with its stamp: (path below the folder, (time, size)), in the order of the
+        names. One listing of each folder gives both; a ``Path`` made and asked for each file took five times as
+        long, and the folder is listed on every save and every look."""
+        def walk(folder: str, prefix: str) -> Iterator[tuple[str, tuple[int, int]]]:
+            try:
+                with os.scandir(folder) as found:
+                    entries = sorted(found, key=lambda e: e.name)
+            except OSError:
+                return
+            later = []
+            for entry in entries:
+                if entry.name.startswith("."):
+                    continue
+                try:
+                    if entry.is_dir(follow_symlinks=False):  # a link to a folder is not followed, as before
+                        later.append(entry)
+                    elif entry.name.lower().endswith(".md") and not entry.is_dir():
+                        at = entry.stat()
+                        yield prefix + entry.name, (at.st_mtime_ns, at.st_size)
+                except OSError:
+                    continue  # gone between the listing and the look
+            for entry in later:
+                yield from walk(entry.path, prefix + entry.name + "/")
+        yield from walk(str(self.root), "")
 
     def _write(self, path: Path, text: str) -> None:
         """Through a temporary file beside it, so that a stop in the middle never leaves half a note."""
@@ -716,15 +740,13 @@ class Vault:
             seen: dict[str, Note] = {}
             changed = False
             if self.exists:
-                for path in self._files():
-                    rel = path.relative_to(self.root).as_posix()
+                for rel, stamp in self._listed():
+                    old = self.notes.get(rel)
+                    if old is not None and old.stamp == stamp:
+                        seen[rel] = old
+                        continue
                     try:
-                        stamp = self._stamp(path)
-                        old = self.notes.get(rel)
-                        if old is not None and old.stamp == stamp:
-                            seen[rel] = old
-                            continue
-                        seen[rel] = read_text(path.read_bytes().decode("utf-8", errors="replace"), rel, stamp)
+                        seen[rel] = read_text((self.root / rel).read_bytes().decode("utf-8", errors="replace"), rel, stamp)
                         changed = True
                     except OSError:
                         continue  # gone, or not readable, between the listing and the reading
@@ -735,7 +757,7 @@ class Vault:
 
     def _settle(self) -> None:
         """Give every note its id, and rebuild what is looked up by id and by name."""
-        self.by_id, self.by_name, self._back, self._df = {}, {}, None, None
+        self.by_id, self.by_name, self._back, self._df, self._join = {}, {}, None, None, None
         for path in sorted(self.notes):
             note = self.notes[path]
             own = prop(note.props, "id")
@@ -888,7 +910,10 @@ class Vault:
     # ---- seeing the whole, and coming back to what was left
 
     def _joined(self) -> dict[str, set[str]]:
-        """For each note, the notes it is joined to by a link in either direction, by path."""
+        """For each note, the notes it is joined to by a link in either direction, by path. Kept until a note
+        changes: the graph, a neighbourhood and Revisit all ask for it."""
+        if self._join is not None:
+            return self._join
         joined: dict[str, set[str]] = {path: set() for path in self.notes}
         for note in self.notes.values():
             for link in note.links:
@@ -896,6 +921,7 @@ class Vault:
                 if to is not None and to is not note:
                     joined[note.path].add(to.path)
                     joined[to.path].add(note.path)
+        self._join = joined
         return joined
 
     def graph(self) -> dict[str, Any]:
@@ -1422,7 +1448,7 @@ class Vault:
                 return {"titles": [], "notes": [], "passages": [], "more": False}
             citing = {o.path for o, _ in self.backlinks(cited)} if cited is not None else None
             tagged = key(tag) if tag else None
-            notes: list[tuple[int, Note, str]] = []
+            notes: list[tuple[int, Note]] = []
             passages: list[dict[str, Any]] = []
             for note in self.notes.values():
                 if note.source:
@@ -1441,12 +1467,15 @@ class Vault:
                     continue
                 title = key(note.title)
                 rank = 0 if words and not note.untitled and all(w in title for w in words) else 1
-                notes.append((rank, note, _snippet(_plain_text(note.body), words, 220) if words else note.excerpt[:220]))
+                notes.append((rank, note))
             notes.sort(key=lambda r: (r[0], -r[1].stamp[0]))
             q = key(query.strip())
-            titles = [self.brief(n) for r, n, _ in notes if q and q in key(n.title) and not n.untitled][:8]
-            return {"titles": titles, "notes": [{**self.brief(n), "snippet": s} for _, n, s in notes[:limit]],
-                    "passages": passages[:limit], "more": len(notes) > limit or len(passages) > limit}
+            titles = [self.brief(n) for r, n in notes if q and q in key(n.title) and not n.untitled][:8]
+            # a snippet is made for the notes that are shown, not for every note that matched
+            shown = [{**self.brief(n), "snippet": _snippet(_plain_text(n.body), words, 220) if words else n.excerpt[:220]}
+                     for _, n in notes[:limit]]
+            return {"titles": titles, "notes": shown, "passages": passages[:limit],
+                    "more": len(notes) > limit or len(passages) > limit}
 
 
 def _snippet(text: str, words: list[str], width: int) -> str:

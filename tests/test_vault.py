@@ -606,3 +606,31 @@ def test_a_title_is_limited_by_the_bytes_of_its_file_name():
     assert "bytes" in V.title_problem(long) and V.title_problem("雪" * 60) is None
     made = V.safe_title(long)
     assert made and V.title_problem(made) is None and len(made.encode("utf-8")) <= V.TITLE_BYTES
+
+
+def test_the_folder_is_listed_in_the_order_of_the_names_without_hidden_things(tmp_path):
+    """The listing was rewritten for speed; what it gives must be what it gave."""
+    root = tmp_path / "notes"
+    for rel in ("b.md", "A.MD", "sub/z.md", "sub/a.md", "sub/deep/n.md", ".hidden/x.md", ".dot.md", "not a note.txt", "aa/first.md"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text("text\n", encoding="utf-8")
+    vault = Vault(root)
+    listed = [rel for rel, _ in vault._listed()]
+    assert listed == ["A.MD", "b.md", "aa/first.md", "sub/a.md", "sub/z.md", "sub/deep/n.md"]
+    assert [p.relative_to(root).as_posix() for p in vault._files()] == listed
+    vault.refresh(force=True)
+    assert sorted(vault.notes) == sorted(listed) and all(vault.notes[rel].stamp == stamp for rel, stamp in vault._listed())
+    assert vault.notes["b.md"].stamp == Vault._stamp(root / "b.md")   # the two ways of asking for a stamp agree
+
+
+def test_search_makes_a_snippet_for_the_notes_it_shows_only(tmp_path, monkeypatch):
+    root = tmp_path / "notes"
+    root.mkdir()
+    for n in range(80):
+        (root / f"Note {n:02d}.md").write_text(f"The lamp is lit at dusk, note {n}.\n" + "More words. " * 50, encoding="utf-8")
+    vault = Vault(root)
+    made: list[int] = []
+    real = V._snippet
+    monkeypatch.setattr(V, "_snippet", lambda *a: (made.append(1), real(*a))[1])
+    found = vault.search("lamp", limit=10)
+    assert len(found["notes"]) == 10 and found["more"] and all("lamp" in n["snippet"] for n in found["notes"]) and len(made) == 10

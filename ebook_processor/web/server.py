@@ -1419,15 +1419,22 @@ class Jobs:
             write_json(self.folder(job_id) / reading.STATE_FILE, state)
         return state
 
+    def _new_id(self, stem: str) -> str:
+        """An id that no entry has: the time to the second and the name, with a counter when both are taken
+        (the caller holds the lock)."""
+        stamp, slug = _dt.datetime.now().strftime("%Y%m%d-%H%M%S"), _slug(stem)
+        job_id, n = f"{stamp}-{slug}", 1
+        while job_id in self.jobs or self.folder(job_id).exists():
+            n += 1
+            job_id = f"{stamp}-{slug[:40 - len(str(n)) - 1].rstrip('-')}-{n}"
+        return job_id
+
     def import_prepared(self, name: str, data: bytes) -> dict[str, Any]:
         """Add a prepared EPUB made elsewhere. It can be read; it has no run to rebuild from."""
         name = _safe_name(name)
         stem = name[:-len(".prepared.epub")] if name.lower().endswith(".prepared.epub") else stem_of(name)
-        stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
         with self.lock:
-            job_id = f"{stamp}-{_slug(stem)}"
-            while job_id in self.jobs:
-                job_id = job_id[:55] + "x"
+            job_id = self._new_id(stem)
             folder = self.folder(job_id)
             folder.mkdir(parents=True)
             path = folder / f"{stem}.prepared.epub"
@@ -1746,11 +1753,8 @@ class Jobs:
         trial = plan.get("trial")
         if trial is not None and (isinstance(trial, bool) or trial not in {c["index"] for c in chapters}):
             raise ApiError(HTTPStatus.BAD_REQUEST, "choose a chapter of the book to try")
-        stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
         with self.lock:
-            job_id = f"{stamp}-{_slug(stem_of(name))}"
-            while job_id in self.jobs:
-                job_id = job_id[:55] + "x"
+            job_id = self._new_id(stem_of(name))
             folder = self.folder(job_id)
             (folder / "input").mkdir(parents=True)
             (folder / "input" / name).write_bytes(data)

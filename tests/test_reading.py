@@ -12,6 +12,7 @@ import pytest
 
 from ebook_processor import reading
 from ebook_processor.runner import rebuild
+from ebook_processor.web import server as web
 from ebook_processor.web.server import make_server
 from tests.scripted import Script
 from tests.test_pipeline import FIXTURE, run
@@ -277,3 +278,17 @@ def test_a_place_can_be_set_in_a_book_not_yet_opened():
     book = reading.open_reading_book(PREPARED)
     state = reading.place(reading.new_state("x"), book.manifest(), 2, 0)
     assert state["position"] == {"chapter": 2, "word": 0, "mode": "page"} and state["x_furthest"] == {"chapter": 2, "word": 0}
+
+
+def test_entries_of_one_long_name_added_in_one_second_each_get_an_id(tmp_path, monkeypatch):
+    """The id is the second and 40 characters of the name; more of the same get a counter, however many."""
+    class Clock(web._dt.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 11, 22, 9, 0, 0)
+    monkeypatch.setattr(web._dt, "datetime", Clock)
+    jobs = web.Jobs(tmp_path, backend_factory=lambda settings: None)
+    name = "a-title-that-is-longer-than-forty-characters-by-far.prepared.epub"
+    ids = [jobs.import_prepared(name, PREPARED.read_bytes())["id"] for _ in range(12)]
+    assert len(set(ids)) == 12 and all(web.JOB_ID_RE.match(i) for i in ids)
+    assert ids[0].endswith("a-title-that-is-longer-than-forty-charac") and ids[1].endswith("-2") and ids[11].endswith("-12")

@@ -32,16 +32,7 @@ const GAP = "____";
 const LABEL = { choice: "Multiple choice", truefalse: "True or false", cloze: "Fill in the blank" };
 const LETTERS = "ABCD";
 
-function el(tag, attrs, ...kids) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs || {})) {
-    if (v == null || v === false) continue;
-    if (k === "class") node.className = v; else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
-    else if (k === "disabled" || k === "value") node[k] = v; else node.setAttribute(k, v === true ? "" : v);
-  }
-  for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false) node.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
-  return node;
-}
+const { h: el, api } = App;            // base.js
 
 const form = (q) => (q && LABEL[q.form] ? q.form : "open");
 const label = (q) => LABEL[form(q)] || "";
@@ -203,14 +194,6 @@ function compose() {
 }
 
 /* ---------- changing a book's own question, and adding one ---------- */
-async function api(path, options = {}) {
-  const headers = { "X-Ebook-Processor": "1" };
-  if (options.json !== undefined) { options.body = JSON.stringify(options.json); headers["Content-Type"] = "application/json"; }
-  const response = await fetch("/api" + path, { ...options, headers });
-  const data = await response.json().catch(() => ({ error: "The app gave an unreadable answer." }));
-  if (!response.ok) throw new Error(data.error || response.statusText);
-  return data;
-}
 let open = null;                        // the window that is open, if one is
 function windowFor(title, sub) {
   if (open) open.close();

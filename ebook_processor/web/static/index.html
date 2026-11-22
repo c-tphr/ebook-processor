@@ -320,6 +320,7 @@ body.dragging { cursor: col-resize; user-select: none; } body.dragging .side ifr
   .reg::before, .reg::after { display: none; }
 }
 </style>
+<script src="/static/base.js"></script>
 <script src="/static/settings.js"></script>
 <script src="/static/forms.js"></script>
 <script src="/static/notes.js"></script>
@@ -337,24 +338,7 @@ body.dragging { cursor: col-resize; user-select: none; } body.dragging .side ifr
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
-function h(tag, attrs, ...kids) {
-  const el = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs || {})) {
-    if (v == null || v === false) continue;
-    if (k === "class") el.className = v; else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
-    else if (k === "checked" || k === "disabled") el[k] = !!v; else el.setAttribute(k, v === true ? "" : v);
-  }
-  for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false) el.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
-  return el;
-}
-async function api(path, options = {}) {
-  const headers = { "X-Ebook-Processor": "1", ...(options.headers || {}) };
-  if (options.json !== undefined) { options.body = JSON.stringify(options.json); headers["Content-Type"] = "application/json"; }
-  const response = await fetch("/api" + path, { ...options, headers });
-  const data = await response.json().catch(() => ({ error: "The app gave an unreadable answer." }));
-  if (!response.ok) throw Object.assign(new Error(data.error || response.statusText), { status: response.status });
-  return data;
-}
+const { h, api } = App;                // base.js
 // A request the app did not answer at all (it is being started again, or the computer woke up): a line says so above
 // `el`, what is drawn stays, and the caller asks again. An answer that is an error is the caller's to show.
 function lost(e, el) {

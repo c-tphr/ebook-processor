@@ -70,25 +70,7 @@ function gatheredOf(text) {             // the links under "Gathered", as writte
 const blockEnd = (items, n) => { let m = n + 1; while (m < items.length && items[m].depth > items[n].depth) m++; return m; };
 const asWords = (text) => text.replace(/!?\[\[([^\[\]|#\n]*)(#[^\[\]|\n]*)?(?:\|([^\[\]\n]*))?\]\]/g, (_m, to, part, shown) => (shown || to).trim() + (part && !shown && part.startsWith("#^") ? " ¶" : ""));
 
-function el(tag, attrs, ...kids) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs || {})) {
-    if (v == null || v === false) continue;
-    if (k === "class") node.className = v; else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
-    else if (k === "checked" || k === "disabled" || k === "value" || k === "hidden" || k === "readOnly") node[k] = v; else node.setAttribute(k, v === true ? "" : v);
-  }
-  for (const kid of kids.flat(Infinity)) if (kid != null && kid !== false) node.append(kid.nodeType ? kid : document.createTextNode(String(kid)));
-  return node;
-}
-async function call(path, options = {}) {
-  const headers = { "X-Ebook-Processor": "1" };
-  if (options.json !== undefined) { options.body = JSON.stringify(options.json); headers["Content-Type"] = "application/json"; }
-  if (options.keepalive && options.body && options.body.length > 60000) options.keepalive = false;   // browsers refuse more on a page that is closing
-  const response = await fetch("/api" + path, { ...options, headers });
-  const data = await response.json().catch(() => ({ error: "The app gave an unreadable answer." }));
-  if (!response.ok) throw Object.assign(new Error(data.error || response.statusText), { status: response.status, data });
-  return data;
-}
+const { h: el, api: call } = App;      // base.js
 const query = (values) => new URLSearchParams(Object.entries(values).filter(([, v]) => v != null && v !== "")).toString();
 const day = (iso) => (iso ? new Date(iso).toLocaleDateString("en", { year: "numeric", month: "short", day: "numeric" }) : "");
 

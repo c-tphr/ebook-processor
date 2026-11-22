@@ -29,7 +29,7 @@ from .pipeline import load_state
 from .prep.epub import EpubError, load_book
 from .prep.limits import MAX_PROMPTS
 from .llm import BackendError, UsageLimitError
-from .runner import default_backend
+from .runner import ready_backend
 from .runner import Cancelled, PipelineError, default_out_dir, rebuild, run_book, trial_dir, try_chapter, work_dir
 from .settings import CONTENT_MODES, DENSITIES, EFFORTS, KINDS, MAX_QUESTIONS, Settings, SettingsError, from_options
 
@@ -269,8 +269,7 @@ def confirmed_steer(args: argparse.Namespace, epub: Path, out_dir: Path, setting
     if args.no_reading:
         return raw, []
     book = load_book(epub)
-    backend = default_backend(settings, None, cancel)
-    backend.check_available([settings.model])
+    backend = ready_backend(settings, ("draft",), None, cancel)
     spent: list[Any] = []
     previous, feedback, answers = None, "", None
     while True:

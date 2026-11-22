@@ -42,8 +42,8 @@ from ..pipeline import STATE_FILE
 from ..prompts import CRITERIA_WORDS
 from ..prep.epub import EpubError, load_book_bytes
 from ..prep.limits import MAX_PROMPTS
-from ..runner import (Cancelled, PipelineError, change_run, default_backend, rebuild, review_data, run_book, trial_dir,
-                      try_chapter, work_dir)
+from ..runner import (Cancelled, PipelineError, change_run, default_backend, models_for, rebuild, review_data, run_book,
+                      trial_dir, try_chapter, work_dir)
 from ..settings import DENSITIES, MAX_QUESTIONS, Settings, SettingsError, from_options
 from ..steer import Steer, SteerError
 from ..store import now, write_json
@@ -157,6 +157,7 @@ class Jobs:
         self.jobs: dict[str, dict[str, Any]] = {}
         self.cancels: dict[str, threading.Event] = {}
         self.stopping = threading.Event()  # set when the app ends: every model call still running gives up
+        self.looked: dict[tuple[str, ...], float] = {}  # when the tools for these models were last found ready
         self.books: dict[str, tuple[int, reading.ReadingBook]] = {}
         self.backend_factory = backend_factory
         # questions being written from highlights: book id -> what is under way (see ``propose``)
@@ -387,11 +388,22 @@ class Jobs:
         """The run's settings, a backend for a call the reader asked for, and what the reader wanted from the book."""
         job = self.get(job_id)
         settings = Settings.from_json(job["settings"])
+        return settings, self._backend(settings, roles), self._run_steer(job)
+
+    def _backend(self, settings: Settings, roles: list[str], cancel: threading.Event | None = None,
+                 progress: Any = None, waiting: bool = True) -> Any:
+        """A backend for these roles, its tools looked for: the stand-in of a test, or Claude Code and Codex. The
+        look at the tools (a program started, one request to the service) is good for a minute. ``waiting`` gives
+        the calls the short limits of a request the reader waits for; a set ``cancel``, or the end of the app,
+        gives them up."""
         if self.backend_factory:
-            return settings, self.backend_factory(settings), self._run_steer(job)
-        backend = default_backend(settings, cancel=self.stopping)
-        backend.check_available([settings.checker_model or settings.model if r == "check" else settings.model for r in roles])
-        return settings, backend, self._run_steer(job)
+            return self.backend_factory(settings)
+        models = tuple(sorted(set(models_for(settings, roles))))
+        backend = default_backend(settings, progress, cancel or self.stopping, waiting)
+        if time.monotonic() - self.looked.get(models, float("-inf")) > 60:
+            backend.check_available(list(models))
+            self.looked[models] = time.monotonic()
+        return backend
 
     def _asked(self, job_id: str, call: Any) -> Any:
         try:
@@ -575,11 +587,7 @@ class Jobs:
                 manifest = hq.with_questions(book.manifest(), store)
             if highlight is None:
                 return
-            if self.backend_factory:
-                backend = self.backend_factory(settings)
-            else:
-                backend = default_backend(settings, None, cancel)
-                backend.check_available([settings.model, settings.checker_model or settings.model] if auto else [settings.model])
+            backend = self._backend(settings, ["draft", "check"] if auto else ["draft"], cancel)
             made = hq.propose(backend, book, manifest, store, highlight, settings, steer, instruction)
             with self.lock:
                 store = notes.load(folder)
@@ -1040,14 +1048,10 @@ class Jobs:
     def _helper(self, roles: list[str]) -> tuple[Settings, Any]:
         """The settings and a backend for a call the reader asked for: the models of the Add a book tab."""
         settings = self.question_settings()
-        if self.backend_factory:
-            return settings, self.backend_factory(settings)
         try:
-            backend = default_backend(settings, cancel=self.stopping)
-            backend.check_available([settings.checker_model or settings.model if r == "check" else settings.model for r in roles])
+            return settings, self._backend(settings, roles)
         except BackendError as exc:
             raise ApiError(HTTPStatus.BAD_GATEWAY, f"The model could not be asked: {exc}") from exc
-        return settings, backend
 
     def _helped(self, call: Any) -> Any:
         try:
@@ -1848,8 +1852,7 @@ class Jobs:
         self._event(job, {"time": now(), "stage": "reading", "done": None, "total": None,
                           "message": "Reading what you want from the book, with a look at each chapter"})
         if backend is None:
-            backend = default_backend(settings, lambda e: self._event(job, e), cancel)
-            backend.check_available([settings.model])
+            backend = self._backend(settings, ["draft"], cancel, lambda e: self._event(job, e), waiting=False)
         mine, again = job["steer"], job.get("again") or {}
         try:
             book = load_book_bytes(epub.read_bytes(), job["file"])

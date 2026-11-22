@@ -343,3 +343,25 @@ def test_the_app_ending_stops_its_runs_and_they_save_themselves_as_stopped(tmp_p
     jobs.stop_all()
     assert time.monotonic() - started < 4 and jobs.stopping.is_set()
     assert jobs.get(job["id"])["status"] == "stopped" and not jobs.cancels
+
+
+def test_a_call_the_reader_waits_for_has_short_limits_and_the_look_at_the_tools_is_kept_a_minute(tmp_path, monkeypatch):
+    """A check or a rewrite went through the backend of a run: half an hour for a call, and three more tries."""
+    from ebook_processor import runner
+    from ebook_processor.web import server as web
+    waiting, run = default_backend(from_options(), waiting=True), default_backend(from_options())
+    assert (waiting.claude.timeout, waiting.claude.retries, waiting.codex.timeout, waiting.codex.retries) == (300.0, 1, 300.0, 1)
+    assert (run.claude.timeout, run.claude.retries) == (1800.0, 3)
+    settings = from_options(model="claude-a", checker_model="gpt-b")
+    assert runner.models_for(settings, ["draft", "check", "check"]) == ["claude-a", "gpt-b", "gpt-b"]
+    looks: list = []
+    monkeypatch.setattr(Backends, "check_available", lambda self, models=None: looks.append(tuple(models)))
+    jobs = Jobs(tmp_path / "data")
+    first = jobs._backend(settings, ["check"])
+    jobs._backend(settings, ["check"])
+    jobs._backend(settings, ["draft", "check"])
+    assert looks == [("gpt-b",), ("claude-a", "gpt-b")]            # the same models are not looked for twice in a minute
+    assert first.claude.cancel is jobs.stopping and first.claude.timeout == 300.0
+    jobs.looked.clear()
+    assert jobs._backend(settings, ["draft"], waiting=False).claude.timeout == 1800.0 and looks[-1] == ("claude-a",)
+    assert web.default_backend is runner.default_backend

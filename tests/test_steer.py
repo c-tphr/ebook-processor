@@ -474,7 +474,7 @@ def test_the_command_line_estimates_and_lists_the_chapters(capsys):
 
 def test_the_command_line_shows_the_reading_and_tries_a_chapter(tmp_path, monkeypatch, capsys):
     script = Script()
-    monkeypatch.setattr(cli, "default_backend", lambda *a, **k: type("B", (), {
+    monkeypatch.setattr(cli, "ready_backend", lambda *a, **k: type("B", (), {
         "check_available": lambda self, models=None: None,
         "complete": lambda self, **kw: script.backend().complete(**kw)})())
     seen = {}

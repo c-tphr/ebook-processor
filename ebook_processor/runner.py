@@ -37,10 +37,17 @@ def trial_dir(out_dir: Path) -> Path:
     return out_dir / "trial"
 
 
+# A call the reader waits for at the screen (a check, a rewrite, a question on a highlight, the model's help in the
+# notes folder) is given up much sooner than a call of a run, which may take half an hour and is tried four times.
+WAITING = {"timeout": 300.0, "retries": 1, "backoff": (5.0,)}
+
+
 def default_backend(settings: Settings, progress: Progress | None = None,
-                    cancel: threading.Event | None = None) -> Backends:
+                    cancel: threading.Event | None = None, waiting: bool = False) -> Backends:
     """Claude Code and Codex, each with a watch on its connection. When a call is lost to the network the run
-    says so, waits, and says when it goes on; a set ``cancel`` gives up calls that are running or waiting."""
+    says so, waits, and says when it goes on; a set ``cancel`` gives up calls that are running or waiting. With
+    ``waiting`` the calls have the short limits of a request the reader waits for."""
+    limits: dict[str, Any] = WAITING if waiting else {}
     def watch(provider: str) -> Connection:
         name = PROVIDERS[provider]
 
@@ -52,8 +59,22 @@ def default_backend(settings: Settings, progress: Progress | None = None,
                                      "when it is back."})
         return Connection(service_urls()[provider], name, on_change=changed)
 
-    return Backends(ClaudeCodeBackend(effort=settings.effort, cancel=cancel, link=watch("claude")),
-                    CodexBackend(effort=settings.effort, cancel=cancel, link=watch("codex")))
+    return Backends(ClaudeCodeBackend(effort=settings.effort, cancel=cancel, link=watch("claude"), **limits),
+                    CodexBackend(effort=settings.effort, cancel=cancel, link=watch("codex"), **limits))
+
+
+def models_for(settings: Settings, roles: Iterable[str]) -> list[str]:
+    """The models these roles use: the checker's own for a check, when one is set."""
+    return [settings.checker_model or settings.model if role == "check" else settings.model for role in roles]
+
+
+def ready_backend(settings: Settings, roles: Iterable[str] = ("draft", "check"), progress: Progress | None = None,
+                  cancel: threading.Event | None = None, waiting: bool = False) -> Backends:
+    """A backend whose tools are there for these roles. Claude Code and Codex both stand ready; only the ones the
+    roles' models name are looked for."""
+    backend = default_backend(settings, progress, cancel, waiting)
+    backend.check_available(models_for(settings, roles))
+    return backend
 
 
 def _ready(epub: Path, settings: Settings, backend: Backend | None, progress: Progress | None,
@@ -63,9 +84,7 @@ def _ready(epub: Path, settings: Settings, backend: Backend | None, progress: Pr
         raise PipelineError(f"{epub} does not exist")
     settings.validate()
     if backend is None:
-        # Claude Code and Codex both stand ready; only the ones the two model settings name are looked for.
-        backend = default_backend(settings, progress, cancel)
-        backend.check_available([settings.model, settings.checker_model or settings.model])
+        backend = ready_backend(settings, ("draft", "check"), progress, cancel)
     return epub, backend
 
 

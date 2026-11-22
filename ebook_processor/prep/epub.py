@@ -60,7 +60,7 @@ from typing import Any, Iterator
 from . import refs
 from .epubzip import Archive, ZipFormatError
 from . import words as W
-from .words import WordStream, tokenize, word_stream
+from .words import WordStream, is_separator_only, tokenize, word_stream
 from .xmltree import OPS_NS, XHTML_NS, Document, Element, XmlError, parse
 
 CONTAINER_PATH = "META-INF/container.xml"
@@ -366,11 +366,11 @@ def all_text(el: Element) -> str:
 def _has_own_text(el: Element) -> bool:
     for child in el.children:
         if isinstance(child, str):
-            if tokenize(child):
+            if not is_separator_only(child):
                 return True
         elif not (is_invisible(child) or _is_block_level(child) or atomic_kind(child) is not None
                   or is_footnote_container(child) or is_noteref(child)):
-            if tokenize(prose_text(child)):
+            if not is_separator_only(prose_text(child)):
                 return True
     return False
 
@@ -394,7 +394,7 @@ def placeholder_for(el: Element, kind: str) -> str:
         lines = el.text().strip("\n").split("\n")
         parts.append(f"{len(lines)} lines")
     captions = [c for c in el.iter() if c.local in ("figcaption", "caption")]
-    if captions and tokenize(captions[0].text()):
+    if captions and not is_separator_only(captions[0].text()):
         parts.append(f'caption "{_clip(captions[0].text())}"')
     label = {"image": "Image", "table": "Table", "code": "Code", "math": "Math", "media": "Media"}[kind]
     return f"[{label}: <{el.local}>" + ("; " + "; ".join(parts) if parts else "") + "]"
@@ -448,7 +448,7 @@ def _segment(body: Element) -> tuple[list[_Raw], list[_Raw]]:
             target.append(_Raw(el, "footnote" if note is not None else kind, placeholder_for(el, kind), note_id))
             return
         if _has_own_text(el):
-            if tokenize(prose_text(el)):
+            if not is_separator_only(prose_text(el)):
                 target.append(_Raw(el, "footnote" if note is not None else _prose_kind(el), None, note_id))
             return
         for child in el.elements():

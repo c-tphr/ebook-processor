@@ -36,6 +36,7 @@ Standard library only: the fixture generator imports it too.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 from dataclasses import dataclass, field
 
@@ -407,6 +408,12 @@ def tokenize(text: str) -> list[str]:
     return p.texts
 
 
+_WORD_CHARACTER = re.compile("[^" + re.escape("".join(sorted(SEPARATORS | REMOVED))) + "]")
+
+
 def is_separator_only(text: str) -> bool:
-    """True when ``text`` holds no word (empty, or only separators, soft hyphens and U+FEFF)."""
-    return not tokenize(text)
+    """True when ``text`` holds no word (empty, or only separators, soft hyphens and U+FEFF).
+
+    The same answer as ``not tokenize(text)``, without building the words: a run of plain text has a word exactly
+    when one of its characters is neither a separator nor a removed character."""
+    return _WORD_CHARACTER.search(text) is None

@@ -424,3 +424,19 @@ def test_spike_parity_flags(spike):
     assert w[8].flags & NOTEREF and w[25].flags & PARA_END and w[44].flags & NONPROSE  # the C++ test's checks
     assert {i: w[i].flags for i in SPIKE_PRINTED_FLAGS} == SPIKE_PRINTED_FLAGS
     assert [(r.mark, r.word) for r in spike.noterefs] == [("1", 8)]
+
+
+def test_the_quick_word_test_agrees_with_the_words_themselves():
+    """``is_separator_only`` no longer builds the words; it must still say what ``tokenize`` would."""
+    import random
+
+    from ebook_processor.prep.words import DASHES, REMOVED, SEPARATORS, is_separator_only, tokenize
+    special = sorted(SEPARATORS | REMOVED | DASHES)
+    singles = [chr(cp) for cp in range(0x3100) if not 0xD800 <= cp <= 0xDFFF] + [chr(cp) for cp in (0xFEFF, 0xFFFD, 0x1F600, 0xE0001, 0x10FFFF)]
+    for text in ["", *singles]:
+        assert is_separator_only(text) == (not tokenize(text)), repr(text)
+    rng = random.Random(7)
+    pool = special * 6 + list("ab1.-'́­​‍\x0b\x1c\x85")
+    for _ in range(20000):
+        text = "".join(rng.choice(pool) for _ in range(rng.randrange(1, 9)))
+        assert is_separator_only(text) == (not tokenize(text)), repr(text)

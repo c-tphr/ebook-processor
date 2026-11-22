@@ -10,6 +10,9 @@ were. Paths in the docstrings below are those of the other repository: its ``too
 
 - ``epub.py``, ``load_book_bytes``: a chapter nested thousands of levels deep is refused with an ``EpubError``.
   It ended in a ``RecursionError`` before.
+- ``words.py``, ``is_separator_only``: one regular expression in place of ``not tokenize(text)``, with the same
+  answer for every text. ``epub.py`` asks it in the four places that only want to know whether a text holds a
+  word (``_has_own_text``, ``placeholder_for``, ``_segment``). Opening a book takes about half the time.
 """
 
 from .checkpoints import (

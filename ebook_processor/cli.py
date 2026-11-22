@@ -110,7 +110,7 @@ def add_source_options(p: argparse.ArgumentParser) -> None:
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ebook-processor",
-        description="Add retrieval-practice checkpoints to an EPUB and export the questions for spaced repetition.",
+        description="Add retrieval-practice checkpoints to a book or an article and export the questions for spaced repetition.",
         epilog="'ebook-processor Book.epub' is short for 'ebook-processor process Book.epub'.")
     parser.add_argument("--version", action="version", version=f"ebook-processor {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")

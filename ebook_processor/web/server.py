@@ -1,7 +1,11 @@
-"""The local web app: add a book or an article, watch the run, review the questions, download the results.
+"""The local web app: the library, the reader, the notebook, Practice and the notes folder.
 
 It is a small HTTP server from the standard library plus its own pages (the files in ``static/``). It listens on this computer only
-(127.0.0.1) unless told otherwise, and runs one book at a time.
+(127.0.0.1) unless told otherwise, and runs one book at a time. This module holds the routes and what starts and
+stops the app. What the routes call is the class ``Jobs``, whose methods live in five files by area: ``library.py``
+(the entries and their books), ``runs.py`` (adding, running, rebuilding), ``study.py`` (reading, highlights,
+Practice), ``questions.py`` (a book's questions and those from highlights) and ``notes_folder.py``; ``common.py``
+holds what they share.
 
 Each run lives in its own folder under the data folder:
 

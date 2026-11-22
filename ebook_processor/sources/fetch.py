@@ -1,6 +1,6 @@
 """One web request, with limits.
 
-Used for the pictures of a document and, from step 2, for the page at an address. Standard library only.
+Used for the pictures of a document and for the page at an address. Standard library only.
 """
 
 from __future__ import annotations

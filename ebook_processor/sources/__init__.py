@@ -1,7 +1,8 @@
 """Other sources than EPUB, turned into an EPUB at the door.
 
 A Markdown, text, HTML or Word file, a saved page or the page at a web address goes in; a small EPUB comes out,
-and from there on the app sees an ordinary book. Nothing outside this package knows about formats. ``docs/SOURCES-PLAN.md`` has the design.
+and from there on the app sees an ordinary book. Nothing outside this package reads a format; the Add form alone knows the file endings, to offer them. ``docs/SOURCES-PLAN.md``
+has the design.
 """
 
 from __future__ import annotations

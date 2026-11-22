@@ -2,6 +2,8 @@
 
 This is the working plan for the knowledge system, agreed with the project owner in a six-round interview on 2026-11-18. It is written for whoever builds it, so that the work can start from this file alone. It holds what was decided, the phases, a design for each phase, and the questions that are still open. Keep it up to date as phases are finished: mark what is done, and move what was passed over to `DEFERRED.md`.
 
+**Sections 4 to 6 describe the plan as it stood when it was written (the app has more dependencies and files now); section 7 and the README describe what was built.**
+
 **Status: all five phases are built and on `main`. The plan is complete; what was passed over in each phase, and what is still to be verified in real use, is in `DEFERRED.md`.**
 
 ## 1. What it is for

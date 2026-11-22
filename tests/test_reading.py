@@ -219,6 +219,8 @@ def test_pages_are_the_ones_the_app_started_with(tmp_path, monkeypatch):
     (static / "index.html").write_text("<title>library, first version</title>", encoding="utf-8")
     (static / "reader.html").write_text("<title>reader, first version</title>", encoding="utf-8")
     (static / "base.js").write_text("// base, first version", encoding="utf-8")
+    (static / "graph.js").write_text("// graph, first version", encoding="utf-8")
+    (static / "process.js").write_text("// process, first version", encoding="utf-8")
     (static / "settings.js").write_text("// settings, first version", encoding="utf-8")
     (static / "forms.js").write_text("// forms, first version", encoding="utf-8")
     (static / "notes.js").write_text("// notes, first version", encoding="utf-8")

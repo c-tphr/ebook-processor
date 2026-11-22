@@ -58,6 +58,7 @@ ACTIVE = ("queued", "running")
 EVENTS_KEPT = 300
 PAGES = {"index.html": "text/html; charset=utf-8", "reader.html": "text/html; charset=utf-8",
          "base.js": "text/javascript; charset=utf-8",
+         "graph.js": "text/javascript; charset=utf-8", "process.js": "text/javascript; charset=utf-8",
          "settings.js": "text/javascript; charset=utf-8", "forms.js": "text/javascript; charset=utf-8",
          "notes.js": "text/javascript; charset=utf-8", "editor.js": "text/javascript; charset=utf-8"}   # the app's own files, by content type
 SETTINGS_FILE = "reader-settings.json"  # what the settings window keeps, for every page of the app

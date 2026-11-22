@@ -341,5 +341,5 @@ def practice_prompts(vault: Vault, store: dict[str, Any]) -> dict[str, tuple[Not
     for q in store["questions"]:
         note = vault.by_id.get(q["note"])
         if q["status"] == "accepted" and note is not None:
-            out[q["id"]] = (note, {"id": q["id"], "prompt": q["question"], "answer": q["answer"], **qforms.members(q)})
+            out[q["id"]] = (note, {"id": q["id"], **qforms.as_prompt(q)})
     return out

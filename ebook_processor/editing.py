@@ -103,7 +103,7 @@ def view(book: Book, state: dict[str, Any], qid: str) -> dict[str, Any]:
     q = find(state, qid)
     section = section_of(state, q["section"])
     return {"id": q["id"], "section": {"id": section["id"], "label": section["label"]},
-            "question": q["prompt"], "answer": q["answer"], **qforms.members(q), "status": q["status"],
+            **qforms.as_question(q), "status": q["status"],
             "kept": q["status"] in ("passed", "unchecked", "unverified", "edited") and not q.get("removed"),
             "edited": q.get("edited"), "added": bool(q.get("added")), "has_original": "original" in q,
             "left_out_because": q["problem"] if q["status"] in ("failed", "withdrawn") else "",

@@ -203,7 +203,7 @@ def notebook(book: ReadingBook, store: dict[str, Any], reading_state: dict[str, 
         for s in sections:
             mine = [i for i in items if s["start"] <= i["word"] < s["end"]]
             used.update(i["id"] for i in mine)
-            answers = [{"id": p["id"], "question": p["prompt"], "answer": p["answer"], **qforms.members(p),
+            answers = [{"id": p["id"], **qforms.as_question(p),
                         "first": grades.get(p["id"], {}).get("first"), "attempts": attempts.get(p["id"], []),
                         "previewed": previewed(p["id"]),
                         "go": sources.get(p["id"]) or {"chapter": c["index"], "word": s["start"]}}

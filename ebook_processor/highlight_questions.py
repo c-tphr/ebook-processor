@@ -189,8 +189,7 @@ def with_questions(manifest: dict[str, Any], store: dict[str, Any]) -> dict[str,
     extra: dict[str, list[dict[str, Any]]] = {}
     for q in accepted(store):
         if q["ask"] == "checkpoint" and q["section"]:
-            extra.setdefault(q["section"], []).append({"id": q["id"], "prompt": q["question"], "answer": q["answer"],
-                                                       **qforms.members(q), "hq": True})
+            extra.setdefault(q["section"], []).append({"id": q["id"], **qforms.as_prompt(q), "hq": True})
     if not extra:
         return manifest
     out = copy.copy(manifest)
@@ -203,7 +202,7 @@ def practice_prompts(manifest: dict[str, Any], store: dict[str, Any]) -> dict[st
     titles = {c["index"]: c["title"] for c in manifest["chapters"]}
     labels = {s["id"]: s["label"] for s in manifest["sections"]}
     return {q["id"]: ({"chapter": q["chapter"], "start": q["start"], "label": labels.get(q["section"]) or titles.get(q["chapter"], "")},
-                      {"id": q["id"], "prompt": q["question"], "answer": q["answer"], **qforms.members(q), "hq": True})
+                      {"id": q["id"], **qforms.as_prompt(q), "hq": True})
             for q in accepted(store) if q["ask"] == "practice"}
 
 
@@ -313,7 +312,7 @@ def check(backend: Backend, book: ReadingBook, manifest: dict[str, Any], q: dict
     place = around(book, manifest, q["chapter"], q["start"], q["end"])
     item = {"doc": place["doc"], "section": place["section"], "blocks": place["blocks"], "first": place["first"],
             "last": place["last"], "judge_break": False,
-            "questions": [{"id": q["id"], "prompt": q["question"], "answer": q["answer"], **qforms.members(q)}]}
+            "questions": [{"id": q["id"], **qforms.as_prompt(q)}]}
     if qforms.form_of(q) not in settings.forms:  # a form allowed when it was written: the check must know the forms
         settings = replace(settings, forms=qforms.clean_forms([*settings.forms, qforms.form_of(q)]))
     done = backend.complete(role="check", system=prompts.checker_system(settings, steer),

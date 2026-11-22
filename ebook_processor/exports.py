@@ -102,8 +102,8 @@ def questions_document(book: Book, state: dict[str, Any], results: dict[str, str
     for q in state["questions"]:
         s, sd = sections[q["section"]]
         base = {"id": q["id"], "checkpoint": s["checkpoint"], "section": s["id"], "section_label": s["label"],
-                "chapter_href": sd.href, "chapter": titles[sd.href], "question": q["prompt"], "answer": q["answer"],
-                "form": qforms.form_of(q), **{k: v for k, v in qforms.members(q).items() if k != "form"}}
+                "chapter_href": sd.href, "chapter": titles[sd.href],
+                **qforms.as_question(q), "form": qforms.form_of(q)}  # the form is named for an open question too
         if not kept(q):
             left_out.append({**base, "status": "removed" if q.get("removed") and q["status"] in KEPT_STATUSES
                              else q["status"], "reason": left_out_reason(q), "problem": q["problem"],

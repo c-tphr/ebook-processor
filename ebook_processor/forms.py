@@ -14,6 +14,9 @@ reader has answered. A question that is not open also has ``form`` and that form
     cloze       "accept": the answers that count, the first being the one shown
                                                  (``prompt`` is the statement, with ``GAP`` where the words go)
 
+Some records name the question's text ``question`` and not ``prompt``: a highlight's and a note's question,
+``questions.json``, the review page and the editor. ``as_prompt`` and ``as_question`` turn one into the other.
+
 ``as_text`` gives any question as a plain question and answer, for the places that can show nothing else: a
 firmware that knows only open questions, a text file of cards. In the firmware-format book each prompt carries
 that text, and its form in one extra member, ``x_form`` (``to_x`` and ``from_x``).
@@ -76,6 +79,18 @@ def members(q: dict[str, Any]) -> dict[str, Any]:
     if form == "cloze":
         return {"form": form, "accept": list(q.get("accept") or [])}
     return {}
+
+
+def as_prompt(q: dict[str, Any]) -> dict[str, Any]:
+    """The wording of a record that names its text ``question``, as a record with ``prompt`` holds it: ``prompt``,
+    ``answer`` and the members of its form."""
+    return {"prompt": q["question"], "answer": q["answer"], **members(q)}
+
+
+def as_question(q: dict[str, Any]) -> dict[str, Any]:
+    """The other way: the wording of a record with ``prompt``, as ``question``, ``answer`` and the members of its
+    form."""
+    return {"question": q["prompt"], "answer": q["answer"], **members(q)}
 
 
 def _order(seed: str, count: int) -> list[int]:

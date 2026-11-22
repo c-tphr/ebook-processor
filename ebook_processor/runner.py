@@ -244,7 +244,7 @@ def review_data(out_dir: Path) -> dict[str, Any]:
     by_section: dict[str, list[dict[str, Any]]] = {}
     for q in state["questions"]:
         by_section.setdefault(q["section"], []).append({
-            "id": q["id"], "question": q["prompt"], "answer": q["answer"], **qforms.members(q), "status": q["status"],
+            "id": q["id"], **qforms.as_question(q), "status": q["status"],
             "kept": kept(q), "removed": bool(q.get("removed")), "can_keep": q["status"] in KEPT,
             "edited": q["status"] == "edited" and not q.get("added"), "added": bool(q.get("added")), "verdict": q.get("verdict"),
             "failed_criteria": [c for c, ok in q["criteria"].items() if not ok], "problem": q["problem"],

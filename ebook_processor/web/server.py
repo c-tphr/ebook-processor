@@ -341,7 +341,7 @@ class Jobs:
             def shown(book: str, chapter: str, label: str, go: str | None, **own: Any) -> dict[str, Any]:
                 """The card as the page gets it. ``own`` is what differs between a book's card and a note's."""
                 return {"job": job_id, "id": pid, "book": book, "chapter": chapter, "section": label,
-                        "question": prompt["prompt"], "answer": prompt["answer"], **qforms.members(prompt), **own,
+                        **qforms.as_question(prompt), **own,
                         "state": state["state"], "again": state["again"], "interval": round(state["interval"], 1),
                         "first": srs.kind_of(state, today) == "first", "times": len(state["reviews"]), "go": go,
                         "preview": srs.preview(state, today, settings)}
@@ -424,7 +424,14 @@ class Jobs:
     def editable(self, job_id: str) -> bool:
         """Whether the book's questions can be changed: it was processed here, and its run is finished."""
         job = self.get(job_id)
-        return job["status"] == "done" and job.get("kind") != "imported"
+        return job["status"] == "done" and not self.imported(job)
+
+    @staticmethod
+    def imported(job: dict[str, Any]) -> bool:
+        """Whether an entry is a prepared book that was made elsewhere and added: it can be read, and has no run
+        to change or to build from. (An entry's ``kind`` says only this. Whether it is a book or an article is its
+        ``type``; the kind of book the questions are written for is in its settings.)"""
+        return job.get("kind") == "imported"
 
     @contextmanager
     def booked(self, job_id: str) -> Any:
@@ -760,7 +767,7 @@ class Jobs:
     def _exports_stale(self, job_id: str) -> None:
         """The deck and the other exports no longer hold the book's questions from highlights as they are now."""
         job = self.jobs[job_id]
-        if job.get("kind") != "imported":  # a number, not a yes: a build must see a change made while it ran
+        if not self.imported(job):  # a number, not a yes: a build must see a change made while it ran
             job["exports_stale"] = int(job.get("exports_stale") or 0) + 1
             self._store(job)
 
@@ -2105,7 +2112,7 @@ class Jobs:
         with self.booked(job_id):  # one build of a book's files at a time, and none during an edit
             with self.lock:
                 job = self.get(job_id)
-                if job["status"] != "done" or job.get("kind") == "imported":
+                if job["status"] != "done" or self.imported(job):
                     raise ApiError(HTTPStatus.CONFLICT, "this book has no finished run to rebuild from")
                 stale = job.get("exports_stale")
             try:
@@ -2578,7 +2585,7 @@ class Handler(BaseHTTPRequestHandler):
                 jobs.start(job_id)
                 return self.send_json({"ok": True})
             case ("GET", ["jobs", job_id, "review"]):
-                if jobs.get(job_id)["status"] != "done" or jobs.get(job_id).get("kind") == "imported":
+                if jobs.get(job_id)["status"] != "done" or jobs.imported(jobs.get(job_id)):
                     raise ApiError(HTTPStatus.CONFLICT, "this book has no finished run to review")
                 try:
                     return self.send_json(review_data(jobs.folder(job_id)))

@@ -269,6 +269,13 @@ class Jobs:
         except ValueError:
             return srs.clean_settings(None)
 
+    def save_srs_settings(self, raw: Any) -> dict[str, Any]:
+        """Keep the practice settings a page sent, and give them back as they are kept."""
+        settings = srs.clean_settings(raw)
+        with self.lock:
+            write_json(self.data / "srs-settings.json", settings)
+        return settings
+
     def cards(self, job_id: str) -> dict[str, Any]:
         """The book's cards, brought up to date with what was answered in the reader."""
         folder = self.folder(job_id)
@@ -681,6 +688,19 @@ class Jobs:
         for hid in todo:
             self.writers.submit(self._propose_one, job_id, hid, auto, cancel, instruction)
         return self.questions_state(job_id)
+
+    def propose_asked(self, job_id: str, r: dict[str, Any]) -> dict[str, Any]:
+        """Have written what a page asks for: a question for one highlight, or for every highlight of a chapter or
+        of the book that has none yet."""
+        if isinstance(r.get("highlight"), str):
+            return self.propose(job_id, [r["highlight"]], auto=r.get("auto") is True,
+                                instruction=_text(r.get("instruction"), steering.INSTRUCTION_MAX))
+        chapter = r.get("chapter")
+        if chapter is not None and (not isinstance(chapter, int) or isinstance(chapter, bool)):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "'chapter' must be a number")
+        if chapter is None and r.get("book") is not True:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "name a highlight, a chapter or the book")
+        return self.propose(job_id, None, chapter=chapter)
 
     def stop_questions(self, job_id: str) -> dict[str, Any]:
         with self.lock:
@@ -1335,6 +1355,9 @@ class Jobs:
         notes apart), notes on the day of their last change when that is another day, and for each book what
         was highlighted and noted in it. ``before`` gives the days earlier than a day. Days are those of this
         computer's clock."""
+        if before is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", before):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "'before' is a day, as 2026-11-19")
+
         def day(stamp: str) -> str | None:
             try:
                 at = _dt.datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_dt.timezone.utc)
@@ -1499,7 +1522,34 @@ class Jobs:
             return vault.delete(note_id)
         return self._vaulted(work)
 
+    def vault_restore(self, name: Any) -> dict[str, Any]:
+        """Put a note back from the trash, and give it as its page shows it."""
+        vault = self.vault()
+        return self._note(self._vaulted(lambda: vault.restore(name)))
+
+    def vault_neighbourhood(self, note_id: str) -> dict[str, Any]:
+        """A note and what is joined to it, for the graph."""
+        vault = self.vault()
+        return self._vaulted(lambda: vault.neighbourhood(note_id))
+
+    def vault_export(self, note_id: str) -> tuple[str, str]:
+        """A project's outline as one Markdown text, and the project's title, which names the download."""
+        vault = self.vault()
+        text = self._vaulted(lambda: vault.export(note_id))
+        return text, self._vaulted(lambda: vault.get(note_id)).title
+
+    def vault_token(self, note_id: str) -> str:
+        """The mark of a note's file as it is on disk now. A page sends it back with a save (see ``vault_save``)."""
+        vault = self.vault()
+        return self._vaulted(lambda: vault.get(note_id)).token
+
+    def vault_conflict(self, conflict: Conflict) -> dict[str, Any]:
+        """What a page is told when the note it saves has changed on disk: why, and the note as it now is."""
+        return {"error": str(conflict), "current": self._note(conflict.current)}
+
     def practice_answer(self, job_id: str, pid: str, remembered: bool, text: str) -> None:
+        if not isinstance(job_id, str) or not isinstance(pid, str) or not isinstance(remembered, bool):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "an answer needs job, id and remembered")
         folder = self.data / assist.FOLDER if job_id == assist.DECK else self.folder(self.get(job_id)["id"])
         with self.lock:
             store = srs.load(folder) if job_id == assist.DECK else self.cards(job_id)
@@ -2109,6 +2159,12 @@ class Jobs:
 
     def rebuild(self, job_id: str, removed: list[str] | None, cards: str | None = None,
                 preview: bool | None = None) -> dict[str, Any]:
+        if preview is not None and not isinstance(preview, bool):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "'preview' must be true or false")
+        if removed is not None and (not isinstance(removed, list) or not all(isinstance(r, str) for r in removed)):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "'removed' must be a list of question ids")
+        if cards is not None and not isinstance(cards, str):
+            raise ApiError(HTTPStatus.BAD_REQUEST, "'cards' must be all, missed or reached")
         with self.booked(job_id):  # one build of a book's files at a time, and none during an edit
             with self.lock:
                 job = self.get(job_id)
@@ -2185,6 +2241,18 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def send_text(self, text: str, name: str, kind: str) -> None:
+        """A text as a file to keep: a download called ``name``, of the content type ``kind``."""
+        data = text.encode("utf-8")
+        ascii_name = name.encode("ascii", "replace").decode("ascii").replace('"', "_")
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Disposition", f'attachment; filename="{ascii_name}"')
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     def body(self) -> bytes:
         try:
             length = int(self.headers.get("Content-Length") or 0)
@@ -2196,6 +2264,13 @@ class Handler(BaseHTTPRequestHandler):
             raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "the file is larger than 300 MB")
         return self.rfile.read(length) if length else b""
 
+    def upload(self) -> bytes:
+        """The file a request carries as its body."""
+        data = self.body()
+        if not data:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "no file was sent")
+        return data
+
     def json_body(self) -> dict[str, Any]:
         try:
             data = json.loads(self.body() or b"{}")
@@ -2204,6 +2279,15 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(data, dict):
             raise ApiError(HTTPStatus.BAD_REQUEST, "the request is not a JSON object")
         return data
+
+    def local_file(self, request: dict[str, Any]) -> Path:
+        """The file on this computer that a request names by its ``path``."""
+        path = Path(str(request.get("path", ""))).expanduser()
+        if not path.is_file():
+            raise ApiError(HTTPStatus.BAD_REQUEST, f"There is no file at {path}")
+        if path.stat().st_size > MAX_UPLOAD:
+            raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "the file is larger than 300 MB")
+        return path
 
     def settings(self, raw: Any) -> Settings:
         if not isinstance(raw, dict):
@@ -2266,13 +2350,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_page(parts[1])
         if not parts or parts[0] != "api":
             raise ApiError(HTTPStatus.NOT_FOUND, "not found")
+        # The cases stand by area. No two of them take the same request, so their order decides nothing.
         match (method, parts[1:]):
-            case ("GET", ["info"]):
-                defaults = Settings()
-                return self.send_json({"version": __version__, "claude": self.claude, "codex": self.codex, "data": str(jobs.data),
-                                       "densities": DENSITIES, "criteria": CRITERIA_WORDS, "defaults": defaults.as_json(), "max_questions": MAX_QUESTIONS,
-                                       "limits": {"text": steering.TEXT_MAX, "instruction": steering.INSTRUCTION_MAX},
-                                       "models": self.models})
+
+            # ---- the library and its runs: the list, and what the Add form sends
+
             case ("GET", ["jobs"]):
                 return self.send_json({"jobs": jobs.listing(), "notes_practice": jobs.notes_practice()})
             case ("POST", ["jobs"]):
@@ -2286,9 +2368,7 @@ class Handler(BaseHTTPRequestHandler):
                     plan = json.loads((query.get("plan") or ["{}"])[0])
                 except ValueError as exc:
                     raise ApiError(HTTPStatus.BAD_REQUEST, "the plan is not JSON") from exc
-                data = self.body()
-                if not data:
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "no file was sent")
+                data = self.upload()
                 return self.send_json(jobs.summary(jobs.add(name, data, settings, plan)), HTTPStatus.CREATED)
             case ("POST", ["jobs", "held"]):  # a file that is no EPUB, as the Add form holds it
                 request = self.json_body()
@@ -2297,29 +2377,29 @@ class Handler(BaseHTTPRequestHandler):
                                       HTTPStatus.CREATED)
             case ("POST", ["jobs", "local"]):
                 request = self.json_body()
-                path = Path(str(request.get("path", ""))).expanduser()
-                if not path.is_file():
-                    raise ApiError(HTTPStatus.BAD_REQUEST, f"There is no file at {path}")
-                if path.stat().st_size > MAX_UPLOAD:
-                    raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "the file is larger than 300 MB")
+                path = self.local_file(request)
                 settings = self.settings(request.get("settings") or {})
                 return self.send_json(jobs.summary(jobs.add(path.name, path.read_bytes(), settings, request.get("plan"),
                                                             path.parent)), HTTPStatus.CREATED)
+            case ("POST", ["jobs", "url"]):
+                request = self.json_body()
+                settings = self.settings(request.get("settings") or {})
+                plan = request.get("plan")
+                held = jobs.look_url(request.get("url"), _split_how(plan.get("split") if isinstance(plan, dict) else None))["held"]
+                return self.send_json(jobs.summary(jobs.create_held(held, settings, plan)), HTTPStatus.CREATED)
+            case ("POST", ["books", "import"]):
+                data = self.upload()
+                return self.send_json(jobs.summary(jobs.import_prepared((query.get("name") or ["book.epub"])[0], data)),
+                                      HTTPStatus.CREATED)
             case ("POST", ["look"]):  # a book's length and chapters, before anything is run or kept
-                data = self.body()
-                if not data:
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "no file was sent")
+                data = self.upload()
                 name = (query.get("name") or ["book.epub"])[0]
                 if _is_epub(name, data):
                     return self.send_json(look(name, data))
                 return self.send_json(jobs.look_source(name, data, _split_how((query.get("split") or [""])[0])))
             case ("POST", ["look", "local"]):
                 request = self.json_body()
-                path = Path(str(request.get("path", ""))).expanduser()
-                if not path.is_file():
-                    raise ApiError(HTTPStatus.BAD_REQUEST, f"There is no file at {path}")
-                if path.stat().st_size > MAX_UPLOAD:
-                    raise ApiError(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "the file is larger than 300 MB")
+                path = self.local_file(request)
                 data = path.read_bytes()
                 if _is_epub(path.name, data):
                     return self.send_json(look(path.name, data))
@@ -2330,191 +2410,63 @@ class Handler(BaseHTTPRequestHandler):
             case ("POST", ["look", "url"]):  # the page at a web address, fetched once and held
                 request = self.json_body()
                 return self.send_json(jobs.look_url(request.get("url"), _split_how(request.get("split"))))
-            case ("POST", ["jobs", "url"]):
-                request = self.json_body()
-                settings = self.settings(request.get("settings") or {})
-                plan = request.get("plan")
-                held = jobs.look_url(request.get("url"), _split_how(plan.get("split") if isinstance(plan, dict) else None))["held"]
-                return self.send_json(jobs.summary(jobs.create_held(held, settings, plan)), HTTPStatus.CREATED)
             case ("POST", ["estimate"]):
                 request = self.json_body()
                 return self.send_json(estimate(request.get("words"), self.settings(request.get("settings") or {}),
                                                request.get("steered") is True))
-            case ("POST", ["books", "import"]):
-                data = self.body()
-                if not data:
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "no file was sent")
-                return self.send_json(jobs.summary(jobs.import_prepared((query.get("name") or ["book.epub"])[0], data)),
-                                      HTTPStatus.CREATED)
-            case ("POST", ["shutdown"]):  # asked for by 'ebook-processor update', which holds the token
-                token = self.shutdown_token
-                if not token or self.headers.get("X-Shutdown-Token") != token:
-                    raise ApiError(HTTPStatus.FORBIDDEN, "stopping the app needs its token")
-                self.send_json({"stopping": True})
-                threading.Thread(target=self.server.shutdown, daemon=True).start()
-                return None
-            case ("GET", ["practice"]):
-                return self.send_json(jobs.practice((query.get("job") or [None])[0]))
-            case ("POST", ["practice", "answer"]):
-                request = self.json_body()
-                if not isinstance(request.get("job"), str) or not isinstance(request.get("id"), str) \
-                        or not isinstance(request.get("remembered"), bool):
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "an answer needs job, id and remembered")
-                jobs.practice_answer(request["job"], request["id"], request["remembered"], str(request.get("text") or ""))
-                return self.send_json(jobs.practice(request["only"] if isinstance(request.get("only"), str) else None))
-            case ("PUT", ["practice", "settings"]):
-                settings = srs.clean_settings(self.json_body())
-                write_json(jobs.data / "srs-settings.json", settings)
-                return self.send_json(settings)
-            case ("GET", ["practice", "settings"]):
-                return self.send_json(jobs.srs_settings())
-            case ("GET", ["settings"]):
-                return self.send_json(jobs.ui_settings())
-            case ("PUT", ["settings"]):
-                return self.send_json(jobs.ui_settings(self.json_body()))
-            case ("GET", ["vault"]):
-                return self.send_json(jobs.vault_home())
-            case ("GET", ["vault", "folder"]):
-                return self.send_json(jobs.folder_state())
-            case ("GET", ["vault", "search"]):
-                one = lambda name: (query.get(name) or [""])[0]  # noqa: E731
-                return self.send_json(jobs.vault_search(one("q"), one("kind"), one("tag"), one("book")))
-            case ("GET", ["vault", "complete"]):
-                return self.send_json({"notes": jobs.vault().complete((query.get("q") or [""])[0][:200])})
-            case ("GET", ["vault", "anchors"]):
-                return self.send_json(jobs.vault().anchors((query.get("target") or [""])[0][:300]))
-            case ("GET", ["vault", "peek"]):
-                one = lambda name: (query.get(name) or [""])[0][:300]  # noqa: E731
-                return self.send_json(jobs.vault_peek(one("target"), one("anchor"), one("from") or None, one("full") == "1"))
-            case ("GET", ["vault", "trash"]):
-                return self.send_json({"notes": jobs.vault().trash()})
-            case ("POST", ["vault", "trash", "restore"]):
-                vault = jobs.vault()
-                return self.send_json(jobs._note(jobs._vaulted(lambda: vault.restore(self.json_body().get("name")))))
-            case ("GET", ["process"]):
-                return self.send_json(jobs.process_view((query.get("job") or [None])[0]))
-            case ("POST", ["process", "aside"]):
-                return self.send_json(jobs.process_aside(self.json_body()))
-            case ("POST", ["process", "add"]):
-                return self.send_json(jobs.process_add(self.json_body()))
-            case ("POST", ["vault", "related"]):
-                return self.send_json(jobs.vault_related(self.json_body()))
-            case ("POST", ["vault", "cite"]):
-                return self.send_json(jobs.vault_cite(self.json_body()))
-            case ("POST", ["vault", "notes"]):
-                return self.send_json(jobs.vault_create(self.json_body()), HTTPStatus.CREATED)
-            case ("GET", ["vault", "notes", note_id]):
-                return self.send_json(jobs.vault_note(note_id))
-            case ("GET", ["assist", "connections"]):
-                return self.send_json(jobs.assist_sent((query.get("note") or [""])[0]))
-            case ("POST", ["assist", "connections"]):
-                return self.send_json(jobs.assist_connections(str(self.json_body().get("note") or "")))
-            case ("POST", ["assist", "answer"]):
-                return self.send_json(jobs.assist_answer(self.json_body()))
-            case ("GET", ["assist", "questions"]):
-                return self.send_json(jobs.note_questions((query.get("note") or [""])[0]))
-            case ("POST", ["assist", "questions"]):
-                r = self.json_body()
-                note_id = str(r.get("note") or "")
-                return self.send_json(jobs.note_question_write(note_id, r) if "question" in r else jobs.note_question_propose(note_id, r))
-            case ("PUT", ["assist", "questions", qid]):
-                return self.send_json(jobs.note_question_change(qid, self.json_body()))
-            case ("DELETE", ["assist", "questions", qid]):
-                return self.send_json(jobs.note_question_delete(qid))
-            case ("GET", ["vault", "graph"]):
-                return self.send_json(jobs.vault().graph())
-            case ("GET", ["vault", "revisit"]):
-                return self.send_json(jobs.vault().revisit(jobs.today()))
-            case ("GET", ["timeline"]):
-                before = (query.get("before") or [None])[0]
-                if before is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", before):
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "'before' is a day, as 2026-11-19")
-                return self.send_json(jobs.timeline(before))
-            case ("GET", ["vault", "notes", note_id, "neighbourhood"]):
-                vault = jobs.vault()
-                return self.send_json(jobs._vaulted(lambda: vault.neighbourhood(note_id)))
-            case ("GET", ["vault", "projects"]):
-                return self.send_json({"projects": jobs.vault().projects()})
-            case ("POST", ["vault", "projects", project_id, "gather"]):
-                return self.send_json(jobs.vault_gather(project_id, self.json_body()))
-            case ("GET", ["vault", "notes", note_id, "export.md"]):
-                vault = jobs.vault()
-                text = jobs._vaulted(lambda: vault.export(note_id)).encode("utf-8")
-                name = jobs._vaulted(lambda: vault.get(note_id)).title.encode("ascii", "replace").decode("ascii").replace('"', "_")
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", "text/markdown; charset=utf-8")
-                self.send_header("Content-Length", str(len(text)))
-                self.send_header("Content-Disposition", f'attachment; filename="{name}.md"')
-                self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                self.wfile.write(text)
-                return None
-            case ("GET", ["vault", "notes", note_id, "token"]):
-                vault = jobs.vault()
-                return self.send_json({"token": jobs._vaulted(lambda: vault.get(note_id)).token})
-            case ("PUT", ["vault", "notes", note_id]):
+
+            # ---- one run
+
+            case ("GET", ["jobs", job_id]):
+                return self.send_json(jobs.detail(job_id))
+            case ("DELETE", ["jobs", job_id]):
+                jobs.delete(job_id)
+                return self.send_json({"deleted": job_id})
+            case ("POST", ["jobs", job_id, "type"]):
+                return self.send_json(jobs.summary(jobs.set_type(job_id, self.json_body().get("type"))))
+            case ("POST", ["jobs", job_id, "cancel"]):
+                jobs.cancel(job_id)
+                return self.send_json({"ok": True})
+            case ("POST", ["jobs", job_id, "continue"]):
+                if jobs.get(job_id)["status"] not in ("stopped", "failed"):
+                    raise ApiError(HTTPStatus.CONFLICT, "this run cannot be continued")
+                jobs.start(job_id)
+                return self.send_json({"ok": True})
+            # The path ``reading`` has two meanings, and they differ. POST, here, answers the model's reading of
+            # what the reader wants from the book, while its run waits. GET and PUT, under "reading" below, are the
+            # reader's place and grades in the book. The path keeps its name: stored pages and the tests use it.
+            case ("POST", ["jobs", job_id, "reading"]):
+                jobs.answer_reading(job_id, self.json_body())
+                return self.send_json({"ok": True})
+            case ("POST", ["jobs", job_id, "next"]):
+                jobs.go_on(job_id, self.json_body())
+                return self.send_json({"ok": True})
+            case ("PUT", ["jobs", job_id, "steer"]):
+                return self.send_json(jobs.set_steer(job_id, self.json_body()))
+            case ("GET", ["jobs", job_id, "review"]):
+                if jobs.get(job_id)["status"] != "done" or jobs.imported(jobs.get(job_id)):
+                    raise ApiError(HTTPStatus.CONFLICT, "this book has no finished run to review")
                 try:
-                    return self.send_json(jobs.vault_save(note_id, self.json_body()))
-                except Conflict as exc:  # changed on disk since the page loaded it: the page asks which to keep
-                    return self.send_json({"error": str(exc), "current": jobs._note(exc.current)}, HTTPStatus.CONFLICT)
-            case ("DELETE", ["vault", "notes", note_id]):
-                return self.send_json(jobs.vault_delete(note_id))
-            case ("GET", ["jobs", job_id, "notes"]):
-                return self.send_json(jobs.notes_do(job_id))
-            case ("POST", ["jobs", job_id, "notes", "highlight"]):
-                r = self.json_body()
-                made: dict[str, Any] = {}
-                store = jobs.notes_do(job_id, lambda st, bk: made.update(
-                    notes.add_highlight(st, bk, r.get("chapter"), r.get("start"), r.get("end"), r.get("note"))))
-                return self.send_json({**store, "made": made.get("id")})
-            case ("PUT", ["jobs", job_id, "notes", "target"]):
-                r = self.json_body()
-                target = r.get("target") if isinstance(r.get("target"), dict) else {}
-                return self.send_json(jobs.notes_do(job_id, lambda st, bk: notes.set_note(st, bk, target, r.get("text"))))
-            case ("PUT", ["jobs", job_id, "notes", "item", item]):
-                r = self.json_body()
-                return self.send_json(jobs.notes_do(job_id, lambda st, bk: notes.update_item(st, item, r.get("text"))))
-            case ("DELETE", ["jobs", job_id, "notes", "item", item]):
-                keep = (query.get("questions") or ["remove"])[0] == "keep"
-                return self.send_json(jobs.remove_marked(job_id, item, keep))
-            case ("GET", ["jobs", job_id, "questions"]):
-                return self.send_json(jobs.questions_state(job_id))
-            case ("POST", ["jobs", job_id, "questions", "propose"]):
-                r = self.json_body()
-                if isinstance(r.get("highlight"), str):
-                    return self.send_json(jobs.propose(job_id, [r["highlight"]], auto=r.get("auto") is True,
-                                                       instruction=_text(r.get("instruction"), steering.INSTRUCTION_MAX)))
-                chapter = r.get("chapter")
-                if chapter is not None and (not isinstance(chapter, int) or isinstance(chapter, bool)):
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "'chapter' must be a number")
-                if chapter is None and r.get("book") is not True:
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "name a highlight, a chapter or the book")
-                return self.send_json(jobs.propose(job_id, None, chapter=chapter))
-            case ("POST", ["jobs", job_id, "questions", "stop"]):
-                return self.send_json(jobs.stop_questions(job_id))
-            case ("POST", ["jobs", job_id, "questions"]):
-                r = self.json_body()
-                return self.send_json(jobs.write_question(job_id, r.get("highlight"), r.get("question"), r.get("answer"), r.get("form")))
-            case ("PUT", ["jobs", job_id, "questions", qid]):
-                return self.send_json(jobs.change_question(job_id, qid, self.json_body()))
-            case ("DELETE", ["jobs", job_id, "questions", qid]):
-                return self.send_json(jobs.discard_question(job_id, qid))
-            case ("GET", ["jobs", job_id, "notebook"]):
-                return self.send_json(jobs.notebook(job_id))
-            case ("GET", ["jobs", job_id, "notebook.md"]):
-                data = jobs.notebook(job_id)
-                text = notes.markdown(data, (query.get("answers") or ["1"])[0] != "0").encode("utf-8")
-                name = stem_of(jobs.get(job_id)["file"]).encode("ascii", "replace").decode("ascii").replace('"', "_")
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", "text/markdown; charset=utf-8")
-                self.send_header("Content-Length", str(len(text)))
-                self.send_header("Content-Disposition", f'attachment; filename="{name}.notes.md"')
-                self.send_header("Cache-Control", "no-store")
-                self.end_headers()
-                self.wfile.write(text)
-                return None
-            case ("GET", ["jobs", job_id, "book"]):
-                return self.send_json(jobs.manifest(job_id))
+                    return self.send_json(review_data(jobs.folder(job_id)))
+                except PipelineError as exc:
+                    raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
+            case ("POST", ["jobs", job_id, "rebuild"]):
+                request = self.json_body()
+                return self.send_json(jobs.rebuild(job_id, request.get("removed"), request.get("cards"), request.get("preview")))
+            case ("GET", ["jobs", job_id, "files", name]):
+                job = jobs.get(job_id)
+                folder = jobs.folder(job_id)
+                stem = stem_of(job["file"])
+                path = folder / name
+                if Path(name).name != name or not name.startswith(stem + ".") or path.parent != folder \
+                        or not path.is_file():
+                    raise ApiError(HTTPStatus.NOT_FOUND, "no such file")
+                if job.get("exports_stale") and name.endswith((".anki.apkg", ".cards.tsv", ".questions.json")):
+                    jobs.fresh_exports(job_id)  # questions from highlights changed since the files were written
+                return self.send_file(path, download=True)
+
+            # ---- a book's questions (the editor)
+
             case ("GET", ["jobs", job_id, "book-questions", qid]):
                 return self.send_json(jobs.book_question(job_id, qid))
             case ("PUT", ["jobs", job_id, "book-questions", qid]):
@@ -2533,6 +2485,53 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(jobs.rewrite_question(job_id, qid, self.json_body()))
             case ("GET", ["jobs", job_id, "sections", sid, "paragraphs"]):
                 return self.send_json(jobs.section_paragraphs(job_id, sid))
+
+            # ---- questions from highlights
+
+            case ("GET", ["jobs", job_id, "questions"]):
+                return self.send_json(jobs.questions_state(job_id))
+            case ("POST", ["jobs", job_id, "questions", "propose"]):
+                return self.send_json(jobs.propose_asked(job_id, self.json_body()))
+            case ("POST", ["jobs", job_id, "questions", "stop"]):
+                return self.send_json(jobs.stop_questions(job_id))
+            case ("POST", ["jobs", job_id, "questions"]):
+                r = self.json_body()
+                return self.send_json(jobs.write_question(job_id, r.get("highlight"), r.get("question"), r.get("answer"), r.get("form")))
+            case ("PUT", ["jobs", job_id, "questions", qid]):
+                return self.send_json(jobs.change_question(job_id, qid, self.json_body()))
+            case ("DELETE", ["jobs", job_id, "questions", qid]):
+                return self.send_json(jobs.discard_question(job_id, qid))
+
+            # ---- highlights and notes
+
+            case ("GET", ["jobs", job_id, "notes"]):
+                return self.send_json(jobs.notes_do(job_id))
+            case ("POST", ["jobs", job_id, "notes", "highlight"]):
+                r = self.json_body()
+                made: dict[str, Any] = {}
+                store = jobs.notes_do(job_id, lambda st, bk: made.update(
+                    notes.add_highlight(st, bk, r.get("chapter"), r.get("start"), r.get("end"), r.get("note"))))
+                return self.send_json({**store, "made": made.get("id")})
+            case ("PUT", ["jobs", job_id, "notes", "target"]):
+                r = self.json_body()
+                target = r.get("target") if isinstance(r.get("target"), dict) else {}
+                return self.send_json(jobs.notes_do(job_id, lambda st, bk: notes.set_note(st, bk, target, r.get("text"))))
+            case ("PUT", ["jobs", job_id, "notes", "item", item]):
+                r = self.json_body()
+                return self.send_json(jobs.notes_do(job_id, lambda st, bk: notes.update_item(st, item, r.get("text"))))
+            case ("DELETE", ["jobs", job_id, "notes", "item", item]):
+                keep = (query.get("questions") or ["remove"])[0] == "keep"
+                return self.send_json(jobs.remove_marked(job_id, item, keep))
+            case ("GET", ["jobs", job_id, "notebook"]):
+                return self.send_json(jobs.notebook(job_id))
+            case ("GET", ["jobs", job_id, "notebook.md"]):
+                text = notes.markdown(jobs.notebook(job_id), (query.get("answers") or ["1"])[0] != "0")
+                return self.send_text(text, f"{stem_of(jobs.get(job_id)['file'])}.notes.md", "text/markdown; charset=utf-8")
+
+            # ---- reading: the book as the reader shows it, and the reader's place and grades
+
+            case ("GET", ["jobs", job_id, "book"]):
+                return self.send_json(jobs.manifest(job_id))
             case ("GET", ["jobs", job_id, "book", "chapter", number]):
                 try:
                     return self.send_json(jobs.book(job_id).chapter(int(number)))
@@ -2553,6 +2552,8 @@ class Handler(BaseHTTPRequestHandler):
                 return None
             case ("GET", ["jobs", job_id, "book", "search"]):
                 return self.send_json({"results": jobs.book(job_id).search((query.get("q") or [""])[0])})
+            # ``reading`` here is the reader's place and grades. (POST to the same path, under "one run", is another
+            # thing: the answer to the model's reading of the reader's wishes.)
             case ("GET", ["jobs", job_id, "reading"]):
                 return self.send_json(jobs.reading_state(job_id))
             case ("PUT", ["jobs", job_id, "reading"]):
@@ -2561,57 +2562,120 @@ class Handler(BaseHTTPRequestHandler):
             case ("PUT", ["jobs", job_id, "reading", "place"]):
                 state = jobs.set_place(job_id, self.json_body())
                 return self.send_json({"saved": True, "position": state["position"], "progress": state["x_progress"]})
-            case ("GET", ["jobs", job_id]):
-                return self.send_json(jobs.detail(job_id))
-            case ("DELETE", ["jobs", job_id]):
-                jobs.delete(job_id)
-                return self.send_json({"deleted": job_id})
-            case ("POST", ["jobs", job_id, "type"]):
-                return self.send_json(jobs.summary(jobs.set_type(job_id, self.json_body().get("type"))))
-            case ("POST", ["jobs", job_id, "cancel"]):
-                jobs.cancel(job_id)
-                return self.send_json({"ok": True})
-            case ("POST", ["jobs", job_id, "reading"]):
-                jobs.answer_reading(job_id, self.json_body())
-                return self.send_json({"ok": True})
-            case ("POST", ["jobs", job_id, "next"]):
-                jobs.go_on(job_id, self.json_body())
-                return self.send_json({"ok": True})
-            case ("PUT", ["jobs", job_id, "steer"]):
-                return self.send_json(jobs.set_steer(job_id, self.json_body()))
-            case ("POST", ["jobs", job_id, "continue"]):
-                if jobs.get(job_id)["status"] not in ("stopped", "failed"):
-                    raise ApiError(HTTPStatus.CONFLICT, "this run cannot be continued")
-                jobs.start(job_id)
-                return self.send_json({"ok": True})
-            case ("GET", ["jobs", job_id, "review"]):
-                if jobs.get(job_id)["status"] != "done" or jobs.imported(jobs.get(job_id)):
-                    raise ApiError(HTTPStatus.CONFLICT, "this book has no finished run to review")
-                try:
-                    return self.send_json(review_data(jobs.folder(job_id)))
-                except PipelineError as exc:
-                    raise ApiError(HTTPStatus.BAD_REQUEST, str(exc)) from exc
-            case ("POST", ["jobs", job_id, "rebuild"]):
+
+            # ---- practice
+
+            case ("GET", ["practice"]):
+                return self.send_json(jobs.practice((query.get("job") or [None])[0]))
+            case ("POST", ["practice", "answer"]):
                 request = self.json_body()
-                removed, cards, preview = request.get("removed"), request.get("cards"), request.get("preview")
-                if preview is not None and not isinstance(preview, bool):
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "'preview' must be true or false")
-                if removed is not None and (not isinstance(removed, list) or not all(isinstance(r, str) for r in removed)):
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "'removed' must be a list of question ids")
-                if cards is not None and not isinstance(cards, str):
-                    raise ApiError(HTTPStatus.BAD_REQUEST, "'cards' must be all, missed or reached")
-                return self.send_json(jobs.rebuild(job_id, removed, cards, preview))
-            case ("GET", ["jobs", job_id, "files", name]):
-                job = jobs.get(job_id)
-                folder = jobs.folder(job_id)
-                stem = stem_of(job["file"])
-                path = folder / name
-                if Path(name).name != name or not name.startswith(stem + ".") or path.parent != folder \
-                        or not path.is_file():
-                    raise ApiError(HTTPStatus.NOT_FOUND, "no such file")
-                if job.get("exports_stale") and name.endswith((".anki.apkg", ".cards.tsv", ".questions.json")):
-                    jobs.fresh_exports(job_id)  # questions from highlights changed since the files were written
-                return self.send_file(path, download=True)
+                jobs.practice_answer(request.get("job"), request.get("id"), request.get("remembered"), str(request.get("text") or ""))
+                return self.send_json(jobs.practice(request["only"] if isinstance(request.get("only"), str) else None))
+            case ("GET", ["practice", "settings"]):
+                return self.send_json(jobs.srs_settings())
+            case ("PUT", ["practice", "settings"]):
+                return self.send_json(jobs.save_srs_settings(self.json_body()))
+
+            # ---- the notes folder
+
+            case ("GET", ["vault"]):
+                return self.send_json(jobs.vault_home())
+            case ("GET", ["vault", "folder"]):
+                return self.send_json(jobs.folder_state())
+            case ("GET", ["vault", "search"]):
+                one = lambda name: (query.get(name) or [""])[0]  # noqa: E731
+                return self.send_json(jobs.vault_search(one("q"), one("kind"), one("tag"), one("book")))
+            case ("GET", ["vault", "complete"]):
+                return self.send_json({"notes": jobs.vault().complete((query.get("q") or [""])[0][:200])})
+            case ("GET", ["vault", "anchors"]):
+                return self.send_json(jobs.vault().anchors((query.get("target") or [""])[0][:300]))
+            case ("GET", ["vault", "peek"]):
+                one = lambda name: (query.get(name) or [""])[0][:300]  # noqa: E731
+                return self.send_json(jobs.vault_peek(one("target"), one("anchor"), one("from") or None, one("full") == "1"))
+            case ("GET", ["vault", "graph"]):
+                return self.send_json(jobs.vault().graph())
+            case ("GET", ["vault", "revisit"]):
+                return self.send_json(jobs.vault().revisit(jobs.today()))
+            case ("GET", ["timeline"]):
+                return self.send_json(jobs.timeline((query.get("before") or [None])[0]))
+            case ("GET", ["vault", "trash"]):
+                return self.send_json({"notes": jobs.vault().trash()})
+            case ("POST", ["vault", "trash", "restore"]):
+                return self.send_json(jobs.vault_restore(self.json_body().get("name")))
+            case ("POST", ["vault", "related"]):
+                return self.send_json(jobs.vault_related(self.json_body()))
+            case ("POST", ["vault", "cite"]):
+                return self.send_json(jobs.vault_cite(self.json_body()))
+            case ("POST", ["vault", "notes"]):
+                return self.send_json(jobs.vault_create(self.json_body()), HTTPStatus.CREATED)
+            case ("GET", ["vault", "notes", note_id]):
+                return self.send_json(jobs.vault_note(note_id))
+            case ("PUT", ["vault", "notes", note_id]):
+                try:
+                    return self.send_json(jobs.vault_save(note_id, self.json_body()))
+                except Conflict as exc:  # changed on disk since the page loaded it: the page asks which to keep
+                    return self.send_json(jobs.vault_conflict(exc), HTTPStatus.CONFLICT)
+            case ("DELETE", ["vault", "notes", note_id]):
+                return self.send_json(jobs.vault_delete(note_id))
+            case ("GET", ["vault", "notes", note_id, "token"]):
+                return self.send_json({"token": jobs.vault_token(note_id)})
+            case ("GET", ["vault", "notes", note_id, "neighbourhood"]):
+                return self.send_json(jobs.vault_neighbourhood(note_id))
+            case ("GET", ["vault", "notes", note_id, "export.md"]):
+                text, title = jobs.vault_export(note_id)
+                return self.send_text(text, f"{title}.md", "text/markdown; charset=utf-8")
+            case ("GET", ["vault", "projects"]):
+                return self.send_json({"projects": jobs.vault().projects()})
+            case ("POST", ["vault", "projects", project_id, "gather"]):
+                return self.send_json(jobs.vault_gather(project_id, self.json_body()))
+
+            # ---- processing: making something of what was marked
+
+            case ("GET", ["process"]):
+                return self.send_json(jobs.process_view((query.get("job") or [None])[0]))
+            case ("POST", ["process", "aside"]):
+                return self.send_json(jobs.process_aside(self.json_body()))
+            case ("POST", ["process", "add"]):
+                return self.send_json(jobs.process_add(self.json_body()))
+
+            # ---- the model's help in the notes folder
+
+            case ("GET", ["assist", "connections"]):
+                return self.send_json(jobs.assist_sent((query.get("note") or [""])[0]))
+            case ("POST", ["assist", "connections"]):
+                return self.send_json(jobs.assist_connections(str(self.json_body().get("note") or "")))
+            case ("POST", ["assist", "answer"]):
+                return self.send_json(jobs.assist_answer(self.json_body()))
+            case ("GET", ["assist", "questions"]):
+                return self.send_json(jobs.note_questions((query.get("note") or [""])[0]))
+            case ("POST", ["assist", "questions"]):
+                r = self.json_body()
+                note_id = str(r.get("note") or "")
+                return self.send_json(jobs.note_question_write(note_id, r) if "question" in r else jobs.note_question_propose(note_id, r))
+            case ("PUT", ["assist", "questions", qid]):
+                return self.send_json(jobs.note_question_change(qid, self.json_body()))
+            case ("DELETE", ["assist", "questions", qid]):
+                return self.send_json(jobs.note_question_delete(qid))
+
+            # ---- settings, and the app itself
+
+            case ("GET", ["info"]):
+                defaults = Settings()
+                return self.send_json({"version": __version__, "claude": self.claude, "codex": self.codex, "data": str(jobs.data),
+                                       "densities": DENSITIES, "criteria": CRITERIA_WORDS, "defaults": defaults.as_json(), "max_questions": MAX_QUESTIONS,
+                                       "limits": {"text": steering.TEXT_MAX, "instruction": steering.INSTRUCTION_MAX},
+                                       "models": self.models})
+            case ("GET", ["settings"]):
+                return self.send_json(jobs.ui_settings())
+            case ("PUT", ["settings"]):
+                return self.send_json(jobs.ui_settings(self.json_body()))
+            case ("POST", ["shutdown"]):  # asked for by 'ebook-processor update', which holds the token
+                token = self.shutdown_token
+                if not token or self.headers.get("X-Shutdown-Token") != token:
+                    raise ApiError(HTTPStatus.FORBIDDEN, "stopping the app needs its token")
+                self.send_json({"stopping": True})
+                threading.Thread(target=self.server.shutdown, daemon=True).start()
+                return None
         raise ApiError(HTTPStatus.NOT_FOUND, "not found")
 
 

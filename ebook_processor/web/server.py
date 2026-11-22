@@ -67,6 +67,7 @@ WAITING = ("asking", "tried")  # a run that waits for its reader: to confirm a r
 NOTES_FOLDER = "ebook-processor-notes"  # the notes folder's name where none was chosen: beside the data folder
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 CSRF_HEADER = "X-Ebook-Processor"  # a page of another site cannot send this header, so it cannot start runs
+CITED = ("id", "title", "block", "text", "found", "job", "go", "in_library")  # what a page is told of a cited passage
 
 
 class ApiError(Exception):
@@ -972,15 +973,23 @@ class Jobs:
 
     def _cited(self, to: dict[str, Any]) -> dict[str, Any]:
         """What a link into a book's file leads to, with the way to open the reader there."""
-        job_id = bookfile.job_of(to.get("id") or "") if to.get("kind") in SOURCE_KINDS else None
-        if job_id is None:
+        if to.get("kind") not in SOURCE_KINDS or bookfile.job_of(to.get("id") or "") is None:
             return to
-        out = {**to, "in_library": self._readable(job_id)}
-        if out["in_library"]:
-            out["job"] = job_id
-            if to.get("block"):
-                out["go"] = self._place(job_id, to["block"])
-        return out
+        return self._openable(dict(to), to["id"], to.get("block"))
+
+    def _openable(self, row: dict[str, Any], book_id: str, block: str | None, in_library: bool = True) -> dict[str, Any]:
+        """Say on a row where its passage of a book's file can be opened. ``in_library``: whether the book is in
+        the library and can be read (left out when asked). Then ``job``, the book's entry, and ``go``, the place of
+        the block in the reader. ``book_id`` is the id of the book's file, ``block`` the id of the entry in it."""
+        job_id = bookfile.job_of(book_id)
+        readable = self._readable(job_id or "")
+        if in_library:
+            row["in_library"] = readable
+        if readable:
+            row["job"] = job_id
+            if block:
+                row["go"] = self._place(job_id, block)
+        return row
 
     def _place(self, job_id: str, block: str) -> dict[str, int] | None:
         try:
@@ -999,7 +1008,7 @@ class Jobs:
             to = link["to"]
             if to.get("kind") in SOURCE_KINDS and to.get("block") and (to["id"], to["block"]) not in seen:
                 seen.add((to["id"], to["block"]))
-                detail["sources"].append({k: to.get(k) for k in ("id", "title", "block", "text", "found", "job", "go", "in_library")})
+                detail["sources"].append({k: to.get(k) for k in CITED})
         held = {p["key"]: p.get("value") for p in detail["props"]}
         where = next((k["to"] for k in detail["links"] if not k["anchor"] and k["to"].get("kind") in SOURCE_KINDS
                       and held.get("book") == f"[[{k['target']}]]"), None)
@@ -1149,10 +1158,7 @@ class Jobs:
         but = {b for b in r.get("but") or [] if isinstance(b, str)} if isinstance(r.get("but"), list) else set()
         found = self.vault().related(text[:20000], tags, but)
         for p in found["passages"]:
-            job_id = bookfile.job_of(p["book_id"])
-            p["in_library"] = self._readable(job_id or "")
-            if p["in_library"] and p["block"]:
-                p["job"], p["go"] = job_id, self._place(job_id, p["block"])
+            self._openable(p, p["book_id"], p["block"])
         return found
 
     # ---- the model's help in the notes folder (see assist.py)
@@ -1187,9 +1193,7 @@ class Jobs:
         got = self._helped(lambda: assist.connections(backend, vault, note_id, settings))
         for c in got["connections"]:
             if c["kind"] == "passage":
-                job_id = bookfile.job_of(c["id"])
-                if self._readable(job_id or ""):
-                    c["job"], c["go"] = job_id, self._place(job_id, c["block"])
+                self._openable(c, c["id"], c["block"], in_library=False)
         return got
 
     def assist_answer(self, r: dict[str, Any]) -> dict[str, Any]:
@@ -1197,9 +1201,8 @@ class Jobs:
         vault = self.vault()
         got = self._helped(lambda: assist.answer(backend, vault, r.get("question"), settings))
         for s in got["sources"] + got["closest"]:
-            job_id = bookfile.job_of(s["id"]) if s["kind"] == "passage" else None
-            if job_id and self._readable(job_id):
-                s["job"], s["go"] = job_id, self._place(job_id, s["block"])
+            if s["kind"] == "passage":
+                self._openable(s, s["id"], s["block"], in_library=False)
         if got["covered"]:  # the text of the quick note that "Keep" would make
             got["keep"] = assist.answer_markdown(str(r.get("question")), got, srs.day(self.today()))
         return got
@@ -1371,10 +1374,7 @@ class Jobs:
     def vault_search(self, query: str, kind: str | None, tag: str | None, book: str | None) -> dict[str, Any]:
         found = self.vault().search(query[:200], kind or None, tag or None, book or None)
         for p in found["passages"]:
-            job_id = bookfile.job_of(p["book_id"])
-            p["in_library"] = self._readable(job_id or "")
-            if p["in_library"] and p["block"]:
-                p["job"], p["go"] = job_id, self._place(job_id, p["block"])
+            self._openable(p, p["book_id"], p["block"])
         return found
 
     def vault_note(self, note_id: str) -> dict[str, Any]:
@@ -1456,7 +1456,7 @@ class Jobs:
         if book is None or block not in book.blocks:
             raise ApiError(HTTPStatus.BAD_REQUEST, "that highlight or note is not in the book's file")
         to = self._cited(vault.peek(book.title, "^" + block))
-        return {"link": f"[[{book.title}#^{block}]]", **{k: to.get(k) for k in ("id", "title", "block", "text", "found", "job", "go", "in_library")}}
+        return {"link": f"[[{book.title}#^{block}]]", **{k: to.get(k) for k in CITED}}
 
     def vault_save(self, note_id: str, r: dict[str, Any]) -> dict[str, Any]:
         """Save a note's text and properties, then give it the title that was sent, if it is a new one."""

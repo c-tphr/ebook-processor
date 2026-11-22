@@ -22,7 +22,7 @@ from ..settings import Settings
 from ..store import write_json
 from ..vault import SOURCES as SOURCE_KINDS
 from ..vault import Conflict, Missing, Vault, VaultError, clean_title, compose
-from .common import CITED, NOTES_FOLDER, ApiError, _text
+from .common import CITED, NOTES_FOLDER, ApiError, _text, home_path
 
 # The locks, as in every part of ``Jobs``: a book's lock (``self.booked(id)``) is taken first, the library's lock
 # (``self.lock``) second and for moments only, never across a call to a model or while a book's files are built. The
@@ -38,7 +38,7 @@ class NotesFolder:
     def _folder_setting(value: Any) -> str:
         if not isinstance(value, str) or not value.strip() or len(value) > 400:
             raise ApiError(HTTPStatus.BAD_REQUEST, "The notes folder is a path on this computer.")
-        path = Path(value.strip()).expanduser()
+        path = home_path(value.strip())
         if not path.is_absolute():
             raise ApiError(HTTPStatus.BAD_REQUEST, "Give the notes folder as a full path, such as "
                            + str(Path.home() / NOTES_FOLDER))

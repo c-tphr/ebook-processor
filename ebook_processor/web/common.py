@@ -88,3 +88,12 @@ def estimate(words: Any, settings: Settings, steered: bool) -> dict[str, Any]:
     out["steered"] = steered
     out["firmware_limit"] = MAX_PROMPTS if out["questions"][1] > MAX_PROMPTS else None
     return out
+
+
+def home_path(value: str) -> Path:
+    """A path a reader typed, with ``~`` as their home folder. ``~name`` for a user this computer does not have is
+    refused with a sentence: Python raises an error of its own for it, which would show as a fault of the app."""
+    try:
+        return Path(value).expanduser()
+    except RuntimeError:
+        raise ApiError(HTTPStatus.BAD_REQUEST, f"There is no such home folder: {value}") from None

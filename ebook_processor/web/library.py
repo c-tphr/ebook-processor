@@ -240,7 +240,7 @@ class Library:
 
     @contextmanager
     def booked(self, job_id: str) -> Any:
-        """Hold the lock of a book's run and its built files. See ``__init__`` for the order of the locks."""
+        """Hold the lock of a book's run and its built files. See ``Jobs.__init__`` (server.py) for the order of the locks."""
         mine = self._booked.__dict__.setdefault("held", {})
         if self.lock.held() and not mine.get(job_id):
             raise RuntimeError("a book's lock was asked for while the library's lock is held: a book's lock comes first")

@@ -378,3 +378,12 @@ def test_one_entry_that_cannot_be_read_costs_that_entry_only(tmp_path, capsys):
         (data / name / "job.json").write_text(text, encoding="utf-8")
     again = web.Jobs(data, backend_factory=lambda settings: Script().backend())
     assert set(again.jobs) == {good, bad} and capsys.readouterr().out.count("Skipped") == 2
+
+
+def test_a_home_folder_that_does_not_exist_is_refused_with_a_sentence(app):
+    """Python raises an error of its own for '~name' when there is no such user; it showed as a fault of the app."""
+    for method, path, body in (("POST", "/api/jobs/local", {"path": "~no-such-user-here/book.epub"}),
+                               ("POST", "/api/look/local", {"path": "~no-such-user-here/book.epub"}),
+                               ("PUT", "/api/settings", {"notes_folder": "~no-such-user-here/notes"})):
+        status, said = app(method, path, json_body=body)
+        assert status == 400 and "no such home folder" in said["error"], (path, status, said)

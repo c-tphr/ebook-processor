@@ -40,7 +40,7 @@ from ..runner import default_backend  # noqa: F401  kept for the tests, which lo
 from ..runner import PipelineError, review_data
 from ..settings import DENSITIES, MAX_QUESTIONS, Settings, SettingsError, from_options
 from ..vault import Conflict, Vault
-from .common import JOB_ID_RE, NOTES_FOLDER, ApiError, _is_epub, _looked, _safe_name, _split_how, estimate
+from .common import JOB_ID_RE, NOTES_FOLDER, ApiError, _is_epub, _looked, _safe_name, _split_how, estimate, home_path
 from .library import Library, LibraryLock
 from .notes_folder import NotesFolder
 from .questions import Questions
@@ -220,7 +220,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def local_file(self, request: dict[str, Any]) -> Path:
         """The file on this computer that a request names by its ``path``."""
-        path = Path(str(request.get("path", ""))).expanduser()
+        path = home_path(str(request.get("path", "")))
         if not path.is_file():
             raise ApiError(HTTPStatus.BAD_REQUEST, f"There is no file at {path}")
         if path.stat().st_size > MAX_UPLOAD:

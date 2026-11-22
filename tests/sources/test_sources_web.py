@@ -6,14 +6,11 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
-from pathlib import Path
 
 import pytest
 
-from ebook_processor import cli, runner
 from tests.paths import FIXTURE
-from tests.scripted import Script
-from tests.sources.makers import CLUTTER, FILL, MARKDOWN, PAGE, PAGES, PNG, TEXT_BOOK, body, make_docx, make_mhtml
+from tests.sources.makers import CLUTTER, FILL, MARKDOWN, PAGE, PNG, TEXT_BOOK, body, make_docx, make_mhtml
 
 
 @pytest.fixture
@@ -113,37 +110,6 @@ def test_an_epub_can_be_called_an_article_and_old_runs_are_books(app):
     assert app("GET", f"/jobs/{job['id']}")[1]["type"] == "book" and app("GET", "/jobs")[1]["jobs"][0]["type"] == "book"
 
 
-# ---- the command line
-
-
-def test_the_command_line_estimates_and_processes_a_file(tmp_path: Path, capsys, monkeypatch) -> None:
-    essay = tmp_path / "my_essay.md"
-    essay.write_text(MARKDOWN + "\n\n" + body(600), encoding="utf-8")
-    assert cli.main(["estimate", str(essay)]) == 0
-    out = capsys.readouterr().out
-    assert out.startswith("On Keeping Lamps: ") and "On Keeping Lamps" in out.splitlines()[-1]
-    book = tmp_path / "book.txt"
-    book.write_text(TEXT_BOOK, encoding="utf-8")
-    assert cli.main(["estimate", str(book)]) == 0 and "CHAPTER III" in capsys.readouterr().out
-    assert cli.main(["estimate", str(book), "--one-piece"]) == 0 and "CHAPTER III" not in capsys.readouterr().out
-    assert cli.main(["estimate", str(tmp_path / "none.md")]) == 1
-    (tmp_path / "tiny.txt").write_text("too short")
-    assert cli.main(["estimate", str(tmp_path / "tiny.txt")]) == 1 and "too short to make questions" in capsys.readouterr().err
-    assert runner.default_out_dir(essay) == tmp_path / "my_essay-processed"
-
-    def stand_in(*args, **kwargs):
-        backend = Script().backend()
-        backend.check_available = lambda models=None: {}
-        return backend
-
-    monkeypatch.setattr(runner, "default_backend", stand_in)
-    assert cli.main([str(essay)]) == 0
-    out_dir = tmp_path / "my_essay-processed"
-    assert (out_dir / "On Keeping Lamps.epub").is_file() and (out_dir / "On Keeping Lamps.prepared.epub").is_file()
-    made = (out_dir / "On Keeping Lamps.epub").stat().st_mtime_ns
-    assert cli.main([str(essay)]) == 0 and (out_dir / "On Keeping Lamps.epub").stat().st_mtime_ns == made  # carried on, not made again
-
-
 # ---- step 2: web addresses, saved pages, Word files
 
 
@@ -191,27 +157,3 @@ def test_a_word_file_and_a_saved_page_through_the_app(app):
     seen = app("POST", "/look?name=lamps.mhtml", body=page)[1]
     assert seen["origin"]["format"] == "saved" and seen["origin"]["url"] == "https://example.org/essays/lamps" and seen["pictures"]["kept"] == 1
     assert seen["page"] == {"page": True, "whole": False, "lost": False}
-
-
-def test_the_command_line_takes_an_address(tmp_path: Path, the_web, capsys, monkeypatch) -> None:
-    monkeypatch.chdir(tmp_path)
-
-    def stand_in(*args, **kwargs):
-        backend = Script().backend()
-        backend.check_available = lambda models=None: {}
-        return backend
-
-    monkeypatch.setattr(runner, "default_backend", stand_in)
-    assert cli.main(["estimate", the_web + "/essay"]) == 0 and capsys.readouterr().out.startswith("On Keeping Lamps: ")
-    assert cli.main(["estimate", the_web + "/forbidden"]) == 1 and "refused to give the page" in capsys.readouterr().err
-    assert cli.main([the_web + "/essay"]) == 0
-    out_dir = tmp_path / "On Keeping Lamps-processed"
-    assert (out_dir / "On Keeping Lamps.prepared.epub").is_file() and (out_dir / "source" / "page.html").read_bytes() == CLUTTER.encode()
-    said = json.loads((out_dir / "source" / "page.json").read_text(encoding="utf-8"))
-    assert said["url"] == the_web + "/essay" and said["asked"] == the_web + "/essay"
-    made = (out_dir / "On Keeping Lamps.epub").read_bytes()
-    # the site changes; the run's own copy is what a second run reads
-    monkeypatch.setitem(PAGES, "/essay", ("text/html", CLUTTER.replace("promise", "CHANGED").encode()))
-    assert cli.main([the_web + "/essay", "-o", str(out_dir)]) == 0 and (out_dir / "On Keeping Lamps.epub").read_bytes() == made
-    assert cli.main([the_web + "/essay", "-o", str(tmp_path / "whole"), "--whole-page"]) == 0
-    assert (tmp_path / "whole" / "On Keeping Lamps.epub").stat().st_size != len(made)

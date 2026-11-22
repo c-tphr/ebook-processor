@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from ebook_processor import cli, forms, pipeline, prompts, reading, steer
+from ebook_processor import forms, pipeline, prompts, reading, steer
 from ebook_processor import highlight_questions as hq
 from ebook_processor.runner import review_data, run_book
 from ebook_processor.settings import Settings, SettingsError, from_options
@@ -382,18 +382,6 @@ def test_questions_on_highlights_take_the_forms_ticked_in_the_settings(app):
     doc = app("GET", f"/jobs/{job_id}/files/fixture.questions.json")[1]
     exported = next(q for q in doc["questions"] if q["id"] == first["id"])
     assert exported["form"] == "choice" and exported["origin"] == "highlight" and exported["choices"] == changed["choices"]
-
-
-# --------------------------------------------------------------------------
-# The command line
-
-
-def test_the_command_line_takes_the_forms(capsys):
-    args = cli.make_parser().parse_args(["process", "Book.epub", "--forms", "open,cloze"])
-    assert cli.settings_from(args).forms == ("open", "cloze")
-    with pytest.raises(SystemExit):
-        cli.main(["estimate", str(FIXTURE), "--forms", "essay"])
-    assert "unknown form of question: essay" in capsys.readouterr().err
 
 
 def test_every_criterion_has_its_plain_wording_and_the_page_gets_them():

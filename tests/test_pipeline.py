@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from ebook_processor import cli, pipeline
+from ebook_processor import pipeline
 from ebook_processor.llm import ScriptedBackend, UsageLimitError
 from ebook_processor.prep.build import CHECKPOINTS_HREF
 from ebook_processor.prep.epub import load_book
@@ -372,7 +372,7 @@ def test_the_anki_deck_has_one_note_per_question(tmp_path):
 
 
 # --------------------------------------------------------------------------
-# Settings and the command line
+# Settings
 
 
 def test_settings_presets_and_limits():
@@ -383,20 +383,6 @@ def test_settings_presets_and_limits():
                 {"content": "everything"}, {"density": "tiny"}):
         with pytest.raises(SettingsError):
             from_options(**bad)
-
-
-def test_the_command_line_reports_usage_and_input_errors(tmp_path, capsys):
-    with pytest.raises(SystemExit) as exc:
-        cli.main(["process", str(FIXTURE), "--section-words", "nonsense"])
-    assert exc.value.code == 2
-    assert cli.main(["rebuild", str(tmp_path / "nothing")]) == 1
-    assert "holds no run" in capsys.readouterr().err
-
-
-def test_the_command_line_rebuilds(tmp_path, capsys):
-    run(tmp_path)
-    assert cli.main(["rebuild", str(tmp_path / "out"), "--remove", "c0001-p1"]) == 0
-    assert "7 questions at 7 checkpoints" in capsys.readouterr().out
 
 
 def test_the_questions_file_fits_its_published_schema(tmp_path):

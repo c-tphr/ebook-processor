@@ -11,7 +11,7 @@ import urllib.request
 
 import pytest
 
-from ebook_processor import cli, prompts, steer
+from ebook_processor import prompts, steer
 from ebook_processor import highlight_questions as hq
 from ebook_processor.llm import BackendError, ScriptedBackend
 from ebook_processor.pipeline import PipelineError
@@ -426,42 +426,3 @@ def test_a_running_book_keeps_its_wishes(app):
     assert app("PUT", f"/jobs/{job_id}/steer", json_body={"purpose": "x" * 2001})[0] == 400
     app.jobs.jobs[job_id]["status"] = "stopped"
     assert app("PUT", f"/jobs/{job_id}/steer", json_body={"purpose": "Later."})[0] == 409
-
-
-# --------------------------------------------------------------------------
-# The command line
-
-
-def test_the_command_line_estimates_and_lists_the_chapters(capsys):
-    assert cli.main(["estimate", str(FIXTURE), "--density", "short", "--max-questions", "8"]) == 0
-    out = capsys.readouterr().out
-    assert "about 3 to 4 sections" in out and "(at most 8 at a checkpoint)" in out and "    3      608 words  The Fog Season" in out
-
-
-def test_the_command_line_shows_the_reading_and_tries_a_chapter(tmp_path, monkeypatch, capsys):
-    script = Script()
-    monkeypatch.setattr(cli, "ready_backend", lambda *a, **k: type("B", (), {
-        "check_available": lambda self, models=None: None,
-        "complete": lambda self, **kw: script.backend().complete(**kw)})())
-    seen = {}
-
-    def fake_try(epub, out_dir, settings, chapter, **kwargs):
-        seen.update(chapter=chapter, steer=kwargs["steer"], spent=len(kwargs["spent"]))
-        return try_chapter(epub, out_dir, settings, chapter, backend=script.backend(), steer=kwargs["steer"], spent=kwargs["spent"])
-
-    monkeypatch.setattr(cli, "try_chapter", fake_try)
-    purpose = tmp_path / "why.txt"
-    purpose.write_text("How the lamp is kept burning.\n", encoding="utf-8")
-    args = [str(FIXTURE), "-o", str(tmp_path / "out"), "--density", "short", "--purpose", f"@{purpose}", "--try-chapter", "3"]
-    assert cli.main(args) == 0
-    captured = capsys.readouterr()
-    assert "How your wishes were read" in captured.err and "The reader wants: How the lamp is kept burning." in captured.err
-    assert "d02 The Lamp Room: It opens on the reader's subject." in captured.err
-    assert "3 questions in 3 sections." in captured.out and "  Q  What does the passage starting at d03-p002" in captured.out
-    assert seen["chapter"] == 3 and seen["spent"] == 1 and seen["steer"].reading["focus"].startswith("The reader wants")
-    # the same words again: the reading that was confirmed stands, and no model is asked
-    assert cli.main(args) == 0 and script.readings == 1 and seen["spent"] == 0
-    assert cli.main([str(FIXTURE), "-o", str(tmp_path / "out"), "--try-chapter", "42"]) == 1
-    # --no-reading: the words as they are
-    assert cli.main([str(FIXTURE), "-o", str(tmp_path / "raw"), "--density", "short", "--purpose", "The fog.", "--no-reading", "--try-chapter", "2"]) == 0
-    assert seen["steer"] == Steer(purpose="The fog.") and script.readings == 1

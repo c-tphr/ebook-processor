@@ -355,6 +355,16 @@ async function api(path, options = {}) {
   if (!response.ok) throw Object.assign(new Error(data.error || response.statusText), { status: response.status });
   return data;
 }
+// A request the app did not answer at all (it is being started again, or the computer woke up): a line says so above
+// `el`, what is drawn stays, and the caller asks again. An answer that is an error is the caller's to show.
+function lost(e, el) {
+  if (e.status && e.status < 500) return false;
+  let line = $("lost");
+  if (!line) el.before(line = h("p", { class: "msg err", id: "lost", role: "status" }));
+  line.textContent = `The app does not answer (${e.message}). This page asks again every few seconds.`;
+  return true;
+}
+const found = () => { const line = $("lost"); if (line) line.remove(); };
 const put = (el, ...kids) => el.replaceChildren(...kids.flat(Infinity).filter((k) => k != null && k !== false));
 const fmt = (n) => Number(n).toLocaleString("en");
 const kv = (key, value) => h("div", { class: "kv" }, h("span", {}, key), h("i"), h("b", {}, value));
@@ -657,7 +667,11 @@ function showLibrary() {
     widths.map((w) => h("div", { class: "col", style: `--w:${w}` }, h("span", { class: "sec" }), h("i"))));
   async function refresh() {
     let jobs, ofNotes;
-    try { ({ jobs, notes_practice: ofNotes } = await api("/jobs")); } catch (e) { return put(runs, h("p", { class: "msg err" }, e.message)); }
+    try { ({ jobs, notes_practice: ofNotes } = await api("/jobs")); } catch (e) {
+      if (!lost(e, runs)) return put(runs, h("p", { class: "msg err" }, e.message));
+      timer = setTimeout(refresh, 5000); return;   // the app did not answer: what is drawn stays, and the page asks again
+    }
+    found();
     const last = jobs.filter((j) => j.reading).sort((a, b) => (b.reading.last_read || "").localeCompare(a.reading.last_read || ""))[0];
     if (last) {
       const r = last.reading;
@@ -1629,7 +1643,11 @@ async function showRun(id) {
 
   async function poll() {
     try { job = await api("/jobs/" + id); }
-    catch (e) { put(head, h("p", { class: "msg err" }, e.message)); return; }
+    catch (e) {
+      if (!lost(e, head)) return put(head, h("p", { class: "msg err" }, e.message));
+      timer = setTimeout(poll, 5000); return;      // a run goes on while the app is out of reach for a moment
+    }
+    found();
     drawHead();
     if (job.status === "done" && lastStatus !== "done") await (job.report ? loadReview() : drawImported());
     else if (job.status === "asking") { if (lastStatus !== "asking") drawAsking(); }   // not redrawn while you write in it

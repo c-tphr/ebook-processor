@@ -87,3 +87,15 @@ def test_an_answered_question_comes_back_in_practice(reader: Reader, page: Page,
     page.wait_for_timeout(300)
     cards = book.call("GET", "/practice")["counts"]
     assert cards["cards"] == 2 and cards["due"] + cards["new"] + cards["again"] >= 0
+
+
+def test_the_library_asks_again_when_the_app_did_not_answer(page: Page, book: App):
+    """One request that failed (the app being started again, the computer waking) used to stop the page for good."""
+    page.goto(book.url + "/#/add")
+    page.wait_for_function("() => !!info")
+    page.route("**/api/jobs", lambda route: route.abort())
+    page.goto(book.url + "/#/")
+    expect(page.locator("#lost")).to_contain_text("does not answer")
+    page.unroute("**/api/jobs")
+    expect(page.locator("#lost")).to_have_count(0, timeout=9000)   # it asked again by itself
+    expect(page.locator(".run .t").first).to_have_text("The Lighthouse Keeper's Almanac")

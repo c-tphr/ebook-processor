@@ -70,6 +70,8 @@ I read all three reviews in full. Then I went to the code for every finding wher
 
 None of these blocks stage 1.
 
+**Decided by the owner on 2026-11-22:** D1 yes (small edits to `prep/`, each listed in `prep/__init__.py`); D2 as recommended (`Jobs` is split after stage 3, a view moves to its own file when it is reworked); D3 yes (`ruff` in CI); D4 the library appears in under two seconds, so `speed/S1` is left out. All six stages are to be built in one go.
+
 **D1. May `prep/` differ from the code it was ported from?** `speed/R2` makes every opening of a book about twice as fast and changes four lines of `prep/epub.py` and one function of `prep/words.py`. The limits of `speed/L1` change `prep/epubzip.py`. The output of the engine stays the same byte for byte (the reviews compared 16 books; the plan adds a test). *My recommendation:* yes, in small edits, each listed in a short table in `prep/__init__.py` (file, what, why), in the manner of `docs/BASE.md` of the firmware repository. Then the dead code of `structure/C4` in `prep/` stays (it is the port), and the wrong paths in its docstrings (`structure/D2`) are answered by one paragraph in `prep/__init__.py` that maps old paths to their places here.
 
 **D2. How far to go with the two large splits?** `structure/S1` (the class `Jobs`, 1,761 lines) and `structure/P2` (the script of `index.html`, 1,600 lines). Both are sound and neither fixes a fault. *My recommendation:* do S1 after stage 3, one part at a time, beginning with the notes folder; do not do P2 as one piece of work, but move a view into its own file whenever that view is reworked (the graph and the Process view are the first two).
@@ -343,3 +345,8 @@ If one of these matters to you, it can be a fourth review of its own. The first 
 - Stages 2 to 6 are developed on `claude/dreamy-allen-6un3tt` and go to `main` on the owner's word, a stage at a time.
 - Where an item says "gain to confirm by measurement", a short script is kept in `tools/measure/` and its numbers before and after go into the commit message. The reviewers' own scripts are in the session's scratch folder and will not outlive it; the tests named in this plan are their lasting form.
 - `DEFERRED.md` is brought up to date at the end of each stage: what was left out (section 6) and what is still unverified (section 7).
+
+## 9. Record of progress
+
+One line for each item when it is done, with its commit.
+

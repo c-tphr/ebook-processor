@@ -240,12 +240,29 @@ Three reviews of the code and a plan for what they found are in `docs/reviews/`.
 - **One shared card for a highlight's questions, one style sheet for both pages, the side panels of a note's page as functions of their own** (`structure/P4`, `P3`, `P6`). No fault depends on them; they are for when those parts are next worked on. The other views of the library page stay in its one script until they are reworked; the graph and the Process view have moved to files of their own.
 - **Not reviewed by anyone:** Windows and macOS in real use; the real tools and real web pages; the logic of the EPUB engine beyond the word pass and the zip reader; how a typed answer is matched (`forms.js`); a hostile Word file beyond its size.
 
+### The graduated pathway (ephemeral questions)
+
+Built on 2026-11-23 from `docs/COMPREHENSION-PLAN.md`. Considered and left for later:
+
+| Item | What it means |
+| --- | --- |
+| Ephemeral questions in the other books | The firmware-format book and the book with visible checkpoints hold the practice questions only. The firmware knows nothing of a question inside a section, and its checkpoint file has a size limit. The app keeps the pathway in `pathway.json` beside the book |
+| Ephemeral questions for a book that has none | A book prepared without them, or imported as a ready-made prepared EPUB, cannot be given them afterwards. It must be added again |
+| A model's reading of your typed answer | For a question with more than one defensible answer the feedback is written when the book is prepared: the evidence a well-supported answer accounts for. A button that sends your answer to the model and says which evidence it accounts for was considered and not built (owner's decision, 2026-11-23) |
+| Questions that reach far back | A higher-order question can draw on the earlier sections of the part its drafter was given, and on about 3,000 words of the text before that part. A question that connects chapter 2 with chapter 20 is not written: the drafter is not shown that much earlier text |
+| Changing which questions an ephemeral question supports | The links are written when the book is prepared. The editor changes a question's wording, its evidence and its passage, not its links or its place |
+| Taking an ephemeral question out of a book | There is Skip while reading and the choice of fewer or none. A question the check failed is left out. Removing one for good from the book's page is not offered |
+| A promoted question at the checkpoint | A promoted question is a card at once and is not asked at the section's checkpoint in the app (owner's decision). In the firmware-format book it stands at the checkpoint, after the book's own questions: that format has no other place for it |
+| An ephemeral question left open when the window closes | A checkpoint's question comes back after the window is closed in the middle of it. An ephemeral question does not: it is asked again when you read past its place |
+
 ## To verify
 
 Things that work in tests but have not been confirmed in real use, and facts that are still unknown.
 
 | Item | What is missing |
 | --- | --- |
+| The graduated pathway with a real model | **Not tried.** The session that built it had no model to call. The instructions for ephemeral and higher-order questions (`instructions/pathway_drafter.md`, `pathway_checker.md`) were tested only for what the script holds a reply to, with a stand-in model that writes the plan's worked example. Whether a real model places checks at good pauses, judges recall against reasoning as the plan asks, and writes evidence that lets a different answer be judged fairly needs a run of a chapter you know well: try one with `ebook-processor beta` and read its questions on the book's page before reading the book |
+| Ephemeral questions in Firefox and Safari | The page view finds the page a question's paragraph ends on from the paragraph's last box on the page. Tested in Chromium here, and by the GitHub jobs in Firefox and WebKit once pushed |
 | Real web sites | **Not tried at all.** The session that built this could not reach the web, so fetching and article finding were tested against a small site run by the tests themselves (a page with a menu, an advert, a related box, comments and a footer; a redirect; refusals; a PDF; a script-only page; a paywalled page). Try five or six of your own addresses with `ebook-processor beta` before trusting it |
 | A page saved by Firefox or Safari | A `.mhtml` file written by Chromium itself is tested. Firefox saves `.html` with a folder beside it (the pictures are then missing unless the page names them by full address); Safari's `.webarchive` is refused with a hint |
 | Real Word files | Tried on files built by the tests and on one written by Pandoc. Files from Word, Google Docs and Pages differ in their styles |

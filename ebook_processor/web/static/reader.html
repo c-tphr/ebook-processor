@@ -1225,7 +1225,7 @@ function syncPrompts() {
 // One of the book's own questions was changed in the editor: take the questions as they now are, and go on with
 // the checkpoint that is open. A question started over counts as never answered here too.
 async function questionChanged(change) {
-  if (change.restarted || change.deleted) { delete S.grades[change.id]; delete S.x_cleared[change.id]; delete S.x_previewed[change.id]; }
+  if (change.restarted || change.deleted) { delete S.grades[change.id]; delete S.x_cleared[change.id]; delete S.x_previewed[change.id]; delete S.x_helped[change.id]; }
   let fresh;
   try { fresh = await api(`/jobs/${ID}/book`); } catch (e) { return; }
   for (const now of fresh.sections) {

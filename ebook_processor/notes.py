@@ -170,6 +170,12 @@ def notebook(book: ReadingBook, store: dict[str, Any], reading_state: dict[str, 
         """The question was shown ahead of its section before it was first graded (or has no grade yet)."""
         return pid in shown and (pid not in grades or shown[pid] <= grades[pid].get("at", ""))
 
+    cued = (reading_state or {}).get("x_helped") or {}
+
+    def helped(pid: str) -> bool:
+        """The reader asked for "Help me recall" before the question was first graded (or it has no grade yet)."""
+        return pid in cued and (pid not in grades or cued[pid] <= grades[pid].get("at", ""))
+
     attempts: dict[str, list[dict[str, Any]]] = {}
     for a in (reading_state or {}).get("x_attempts") or []:
         attempts.setdefault(a["id"], []).append({"at": a["at"], "grade": a["grade"], "text": a.get("text") or ""})
@@ -205,7 +211,7 @@ def notebook(book: ReadingBook, store: dict[str, Any], reading_state: dict[str, 
             used.update(i["id"] for i in mine)
             answers = [{"id": p["id"], **qforms.as_question(p),
                         "first": grades.get(p["id"], {}).get("first"), "attempts": attempts.get(p["id"], []),
-                        "previewed": previewed(p["id"]),
+                        "previewed": previewed(p["id"]), "helped": helped(p["id"]),
                         "go": sources.get(p["id"]) or {"chapter": c["index"], "word": s["start"]}}
                        for p in s["prompts"] if not p.get("hq") and (p["id"] in grades or p["id"] in attempts)]
             rows.append({"id": s["id"], "label": s["label"], "start": s["start"], "end": s["end"],
@@ -278,7 +284,7 @@ def markdown(data: dict[str, Any], answers: bool = True) -> str:
                 for a in s["answers"]:
                     grade = {"correct": "recalled", "incorrect": "missed"}.get(a["first"] or "", "not graded")
                     asked, reference = qforms.as_text(a, a["question"], a["answer"])
-                    part += [f"- **{asked}** ({grade}{', previewed' if a.get('previewed') else ''})"]
+                    part += [f"- **{asked}** ({grade}{', previewed' if a.get('previewed') else ''}{', with a recall prompt' if a.get('helped') else ''})"]
                     typed = next((t["text"] for t in a["attempts"] if t["text"]), "")
                     if typed:
                         part += ["  - Answered: " + typed.replace("\n", " ")]

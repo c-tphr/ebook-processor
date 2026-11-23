@@ -213,6 +213,27 @@ A new book starts with open questions only, as before: recalling an answer from 
 - **In the files.** The book with visible checkpoints shows the choices on the question page and the right one on the answer page. The Anki deck and the cards text put the choices on the front; Anki does not grade them. `questions.json` has each question's `form` and its members.
 - **On the Picco.** The firmware today knows open questions only. In the firmware-format book every question is therefore also there as plain text that it can show: "True or false: ...", the statement with its gap, the multiple-choice question without its choices, each with the right answer at the start of its answer, to grade yourself. The form itself travels beside that text, ready for a firmware that supports it: `docs/question-forms.md` says exactly how.
 
+### Ephemeral questions, and questions that ask for reasoning
+
+By default a book's questions come together at the end of each section, and a reader who likes long stretches of uninterrupted reading can keep it so. The **graduated pathway** (`docs/COMPREHENSION-PLAN.md`; the words are in `GLOSSARY.md`) adds two things for the app's reader. You choose it when you add a book, under **Ephemeral questions**, or with `--ephemeral` on the command line.
+
+| Choice | What guides the ephemeral questions |
+| --- | --- |
+| **None** | There are none. Questions at the end of each section only. |
+| **To sustain my attention** (`attention`) | A brief check after a meaningful passage, when recalling it helps you follow what comes next. A detail can qualify on that basis alone, and the check needs no link to any later question. |
+| **To build toward practice** (`linked`) | Each check rehearses a detail, an idea or a relationship that you will use to answer one or more later practice questions. The link is kept. The check shows only its own question. |
+
+- **An ephemeral question** is brief and is asked inside a section, right after the paragraph that holds what it needs, with the text hidden. Recall the answer in your head, **Reveal answer**, **Continue**. That completes it. Nothing is graded, and it is not a card. **Skip** leaves it out. It can have any of the kinds of question you ticked: how a question is answered and what it is for are separate things.
+- **If you lost the thread**, **I lost the thread: show me the passage** takes you back to where the passage begins and lights it. From there, **Try again with the text hidden** asks the question once more, and **Continue reading** leaves it and returns you to your place. Reading forward to the question's place also asks it again.
+- **How many** is yours to change while you read: **All**, **Fewer** (every second one) or **None**, on any ephemeral question and in Settings, on the Reader tab.
+- **Where it is asked.** In the page view, before the turn of the page its paragraph ends on. In the scroll view the text stops at it, as it does at a checkpoint. RSVP pauses at it and plays on when you continue.
+- **The checkpoint opens with a higher-order question** wherever the text rewards one: a question that asks you to use what you remember to work something out (explain, interpret, compare, put passages together, apply, predict, give an example, judge a claim). The model judges this by what the book says outright: asking for three causes the author lists is recall; connecting clues from three episodes is not. Such a question may draw on earlier chapters you have read; the paragraphs it uses, in its own section and before it, are all named and checked, and Practice shows them with the card. Further practice questions may follow it, up to your maximum for a checkpoint. It is the same question you later meet in Practice, with the same history.
+- **Help me recall**, at the checkpoint, shows a short recall prompt and then returns you to the same question, with what you typed still there. With links it is the ephemeral question that supports the practice question, whether you answered it, skipped it or never met it. Without links it is a cue written for the question. The notebook marks an answer given after it as "Answered with a recall prompt".
+- **More than one defensible answer.** For such a question the reveal shows the evidence a well-supported answer accounts for, and one such answer. You judge how your own reasoning connects that evidence to your answer, and mark yourself.
+- **Keep for Practice** promotes an ephemeral question: as it is written, as you change it, or as the model rewrites it when you say what you want to remember. It is a new card in Practice at once, and it is not asked again at the section's checkpoint. You find it on the question once it is revealed, and on the book's page, where a section lists its ephemeral questions under "Asked while reading". A promoted question is a question of the book like one you add yourself: you can edit it, start it over, or delete it, and it is in the deck and the other files.
+- **In the files.** Ephemeral questions are for the app's reader. The firmware-format book, the book with visible checkpoints, the deck and the cards text hold the practice questions, as before. The app keeps the pathway in `pathway.json` in the book's folder, and what you did with each ephemeral question in `reading.json` under `x_checks`, as done or skipped and never as a grade.
+- **Books you already have** are not changed, and neither are their cards, grades or places. To read a book with ephemeral questions, add it again with one of the two choices.
+
 ### Editing a question, and adding your own
 
 A book's questions are yours to change. **Edit question** is on the book's page beside every question, at a checkpoint and in Practice once you have seen the answer, and on a checkpoint answer in the notebook. It opens the same window everywhere:
@@ -261,6 +282,8 @@ What you write in these boxes is sent to the model with every request that write
 | Page | Whole pages, two side by side on a wide window. Turn with the arrow keys, the space bar, or a click near the edge of the page. |
 | Scroll | One chapter as a long column. Each checkpoint is a bar across the text; what follows it stays hidden until you have been through it. |
 | RSVP | One word at a time (or two or three) at a pace you set, aligned on a focus letter, with longer holds at punctuation. Paused, it shows the paragraph around the word; click a word to move there. It stops at pictures, tables and listings and shows them. |
+
+In a book prepared with ephemeral questions the reader also stops briefly inside a section (see "Ephemeral questions, and questions that ask for reasoning" above).
 
 At the end of each section the reader stops for its **checkpoint**, one question at a time:
 
@@ -438,6 +461,8 @@ Reading state lives in `reading.json` in the book's folder. It follows the saved
 
 When you have said what you want from the book, a step comes first: the model reads your wishes beside a skim of the book and you confirm its reading (see "What you want from a book").
 
+For a book prepared with ephemeral questions the same four steps write and check those too. The drafter is also shown up to about 3,000 words of the text before each part, so that a higher-order question can draw on it. The script holds an ephemeral question to its place (every paragraph its answer rests on comes no later than the paragraph it follows) and a higher-order question to the earlier paragraphs the drafter was shown. The checker judges an ephemeral question against the section up to its place only, and a higher-order question against its section and the earlier paragraphs it names, which it is given in full. The rules are in `instructions/pathway_drafter.md` and `pathway_checker.md`, and are added only for such a book.
+
 The rules Claude follows are in `ebook_processor/instructions/drafter.md` and `checker.md`; `reading.md` holds the rules for reading your wishes and `highlight.md` those for a question on a highlight. Read them to see exactly what a good section, question and answer are taken to be; change them to change the questions.
 
 ### Questions that stand alone
@@ -528,7 +553,8 @@ After every push GitHub runs both (`.github/workflows/tests.yml`): the test suit
 | `ebook_processor/settings.py` | The settings of a run: their limits, their defaults and what they are saved as |
 | `ebook_processor/steer.py`, `instructions/reading.md` | What you want from a book: your texts, the model's reading of them, and what the drafter and the checker are told |
 | `ebook_processor/forms.py` | The kinds of question (open, multiple choice, true or false, fill in the blank): their members, their checks and their plain-text form |
-| `ebook_processor/editing.py` | Changes to a finished run's questions: edit, add, delete, restore, check, rewrite |
+| `ebook_processor/pathway.py`, `instructions/pathway_drafter.md`, `pathway_checker.md` | The graduated pathway: ephemeral questions inside a section and what a practice question carries for it, the rules a draft is held to, and what the app's reader is given |
+| `ebook_processor/editing.py` | Changes to a finished run's questions: edit, add, delete, restore, check, rewrite, and the promotion of an ephemeral question |
 | `ebook_processor/content.py` | What of a section is sent to a model: its text, its pictures, its tables |
 | `ebook_processor/asking.py` | One question asked of a model, with one more try when the reply cannot be used, and the check of one question |
 | `ebook_processor/bookinfo.py` | A book's authors and the names of its chapters |

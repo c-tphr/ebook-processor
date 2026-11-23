@@ -863,7 +863,8 @@ async function showNotebook(id) {
       typed.map((t) => h("p", {}, h("span", { class: "hang m mute" }, "Answered"), t)), h("p", {}, h("span", { class: "hang m mute" }, "Reference"), QForms.plain(a).answer),
       h("div", { class: "row" }, h("a", { class: "m", ...openAt(a.go.chapter, a.go.word) }, "Open the passage"),
         data.editable ? h("button", { class: "text", "aria-label": "Edit question " + a.id, onclick: () => QForms.openEditor({ job: id, id: a.id, onChange: () => load() }) }, "Edit question") : null,
-        a.previewed ? h("span", { class: "m mute", title: "The question was shown at the start of its section, before you read it" }, "Previewed before reading") : null));
+        a.previewed ? h("span", { class: "m mute", title: "The question was shown at the start of its section, before you read it" }, "Previewed before reading") : null,
+        a.helped ? h("span", { class: "m mute", title: "You asked for Help me recall before you answered it" }, "Answered with a recall prompt") : null));
   }
   function section(c, s) {
     const empty = !s.note && !s.items.length && !s.answers.length;

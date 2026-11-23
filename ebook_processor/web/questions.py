@@ -133,7 +133,7 @@ class Questions:
             was = state.get("grades", {}).get(qid)
             if was:  # a page that still shows this grade must not bring it back with its next save
                 state.setdefault("x_restarted", {})[qid] = was.get("at")
-            for part in ("grades", "x_cleared", "x_previewed"):
+            for part in ("grades", "x_cleared", "x_previewed", "x_helped"):
                 state.get(part, {}).pop(qid, None)
             write_json(folder / reading.STATE_FILE, state)
 

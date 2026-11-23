@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 import pytest
 from playwright.sync_api import Page, expect
+from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 from tests import messenger
 from tests.browser.helpers import READY, App
@@ -247,6 +248,7 @@ def test_practice_has_the_checkpoints_question_and_an_ephemeral_one_only_when_it
     assert set(cards) == {REACTIONS, "c0001-p2"}
     assert cards[REACTIONS]["state"] == "learned" and cards["c0001-p2"]["state"] == "new"
     page.goto(f"{app.url}/#/practice/{app.id}")
+    page.locator(".pr h1").wait_for()                          # the page has drawn its first card
     seen = []
     for _ in range(3):
         if not page.locator(".pr h1").count():
@@ -256,7 +258,11 @@ def test_practice_has_the_checkpoints_question_and_an_ephemeral_one_only_when_it
         if "Varga" in seen[-1]:
             expect(page.locator(".pr .qf-evidence li")).to_have_count(3)
         page.get_by_role("button", name="Remembered").click()
-        page.wait_for_timeout(300)
+        try:                                                   # the next card, or none; the same card may also come again
+            page.wait_for_function("(was) => { const now = document.querySelector('.pr h1'); return !now || now.textContent !== was; }",
+                                   arg=seen[-1], timeout=2500)
+        except PlaywrightTimeout:
+            pass
     assert any("Why do Councillors Varga and Oduya" in text for text in seen)
     assert any("Who knows that the letter Tomas carries was forged?" in text for text in seen)
     assert not any("Which road" in text or "gatekeeper" in text for text in seen)

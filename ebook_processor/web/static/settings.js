@@ -129,12 +129,12 @@ function processing(inf, initial, onchange) {
   // The kinds of question a run may write. At least one stays ticked.
   const formBoxes = FORMS.map(([k, t, what]) => [k, el("input", { type: "checkbox", value: k, ...(formList(v.forms).includes(k) ? { checked: true } : {}),
     onchange: (e) => { if (!formBoxes.some(([, b]) => b.checked)) e.target.checked = true; fire("forms"); } }), t, what]);
-  const forms = el("div", { class: "st-ticks", role: "group", "aria-label": "Kinds of question" },
+  const forms = el("div", { class: "st-ticks", role: "group", "aria-label": "Practice questions" },
     formBoxes.map(([, box, t, what]) => el("label", { title: what }, box, el("span", {}, t))));   // what each is, on hover
   // Ephemeral questions: none, or one of the two things that can guide where they go and what they ask.
   const ephemeralSaid = el("small", {});
   const sayEphemeral = () => { ephemeralSaid.textContent = (EPHEMERAL.find(([k]) => k === ephemeral.querySelector("input:checked").value) || EPHEMERAL[0])[2]
-    + " Either choice adds brief questions inside a section, close to the passage they are about and never graded, and opens each checkpoint with a question that asks for reasoning where the text rewards one. You can ask for fewer, or none, while you read."; };
+    + " Either choice adds brief questions inside a section, close to the passage they are about and never graded, and opens each checkpoint with a question that asks for reasoning where the text rewards one. They take the kinds ticked above. You can ask for fewer, or none, while you read."; };
   const ephemeral = el("div", { class: "st-seg", role: "radiogroup", "aria-label": "Ephemeral questions" },
     EPHEMERAL.map(([k, t]) => el("label", {}, el("input", { type: "radio", name: name + "-e", value: k, checked: k === v.ephemeral, onchange: () => { sayEphemeral(); fire("ephemeral"); } }), t)));
   sayEphemeral();
@@ -197,7 +197,7 @@ function processing(inf, initial, onchange) {
       el("small", {}, "A checkpoint follows each section. Breaks fall at natural boundaries, so lengths vary.")),
     field("Maximum questions per checkpoint", c.max_questions, "The model chooses how many, up to this: more for a long or dense section, and for one that bears on what you want from the book."),
     field("Kind of book", c.kind),
-    el("div", { class: "st-field wide" }, el("span", { class: "m" }, "Kinds of question"), forms,
+    el("div", { class: "st-field wide" }, el("span", { class: "m" }, "Practice questions"), forms,
       el("small", {}, "For each idea the model picks the kind that suits it, among those you tick. The app grades the last three itself. Recalling an answer from nothing is the strongest practice; the others are quicker.")),
     el("div", { class: "st-field wide", id: "st-ephemeral" }, el("span", { class: "m" }, "Ephemeral questions"), ephemeral, ephemeralSaid),
     field("Tables, code, formulas, figures", c.content, "What the model may see and ask about beyond the running text."),

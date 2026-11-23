@@ -249,11 +249,11 @@ def _forms_rule(settings: Settings) -> str:
     missing = [names[f] for f in names if f not in settings.forms and f != "open"]
     if settings.open_only:
         return ("Questions are open questions recalled from memory: no multiple choice, no true-or-false, no "
-                "fill-in-the-blank. The reader allows those kinds with the ticks under \"Kinds of question\" on the Add a "
+                "fill-in-the-blank. The reader allows those kinds with the ticks under \"Practice questions\" on the Add a "
                 "book page, not with a wish: when they ask for one, say that under `cannot`.")
     return ("The reader has ticked these kinds of question: " + ", ".join(allowed) + ". A wish can shift how often each "
             "of these is used (put it in `style`), but cannot add another kind"
-            + (" (" + ", ".join(missing) + "): that is done with the ticks under \"Kinds of question\" on the Add a book "
+            + (" (" + ", ".join(missing) + "): that is done with the ticks under \"Practice questions\" on the Add a book "
                "page, and you say so under `cannot`." if missing else "."))
 
 

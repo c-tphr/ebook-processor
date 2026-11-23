@@ -192,7 +192,7 @@ A change applies at once, also in other open tabs of the app. Settings are kept 
 
 ### Kinds of question
 
-A question can take one of four forms. On the Add a book page you tick the ones a run may write, under **Kinds of question**; the ticks are also in Settings, on the Add a book tab, as what the form starts with.
+A question can take one of four forms. On the Add a book page you tick the ones a run may write, under **Practice questions**; the ticks are also in Settings, on the Add a book tab, as what the form starts with.
 
 | Kind | What you do | Graded by |
 | --- | --- | --- |
@@ -223,7 +223,7 @@ By default a book's questions come together at the end of each section, and a re
 | **To sustain my attention** (`attention`) | A brief check after a meaningful passage, when recalling it helps you follow what comes next. A detail can qualify on that basis alone, and the check needs no link to any later question. |
 | **To build toward practice** (`linked`) | Each check rehearses a detail, an idea or a relationship that you will use to answer one or more later practice questions. The link is kept. The check shows only its own question. |
 
-- **An ephemeral question** is brief and is asked inside a section, right after the paragraph that holds what it needs, with the text hidden. Recall the answer in your head, **Reveal answer**, **Continue**. That completes it. Nothing is graded, and it is not a card. **Skip** leaves it out. It can have any of the kinds of question you ticked: how a question is answered and what it is for are separate things.
+- **An ephemeral question** is brief and is asked inside a section, right after the paragraph that holds what it needs, with the text hidden. Recall the answer in your head, **Reveal answer**, **Continue**. That completes it. Nothing is graded, and it is not a card. **Skip** leaves it out. It can have any of the kinds you ticked under **Practice questions**: how a question is answered and what it is for are separate things.
 - **If you lost the thread**, **I lost the thread: show me the passage** takes you back to where the passage begins and lights it. From there, **Try again with the text hidden** asks the question once more, and **Continue reading** leaves it and returns you to your place. Reading forward to the question's place also asks it again.
 - **How many** is yours to change while you read: **All**, **Fewer** (every second one) or **None**, on any ephemeral question and in Settings, on the Reader tab.
 - **Where it is asked.** In the page view, before the turn of the page its paragraph ends on. In the scroll view the text stops at it, as it does at a checkpoint. RSVP pauses at it and plays on when you continue.
@@ -261,7 +261,7 @@ Left to itself, the model asks about each section's own main ideas. You can tell
 
 **What it changes.** Which of a section's ideas are asked about, and from which side. How many questions a section gets: the model chooses the number up to your limit (1 to 8) by the section's length, its density and how strongly it bears on what you want. And the manner of the questions, where your wishes win over the tool's own taste (a reader preparing for an exam can have the dates the tool otherwise calls trivia).
 
-**What it never changes.** Every answer comes from the section it belongs to, so there are no questions about how something applies to your own work. Which kinds of question are written is set by the ticks under "Kinds of question", not by a wish. Every section is still asked about: your wishes move the emphasis, they do not skip the parts you care less about. The independent check judges the same points as before; it is told your manner only so that it does not remark on, say, a date you asked for.
+**What it never changes.** Every answer comes from the section it belongs to, so there are no questions about how something applies to your own work. Which kinds of question are written is set by the ticks under "Practice questions", not by a wish. Every section is still asked about: your wishes move the emphasis, they do not skip the parts you care less about. The independent check judges the same points as before; it is told your manner only so that it does not remark on, say, a date you asked for.
 
 **How your wishes were read.** Before anything is written, the model states in its own words what it will favour and how it will write, after a look at how each chapter opens. It lists the chapters your purpose bears on most (they may get more questions), says which wishes cannot be followed and what the book does not seem to hold, and may ask you up to three questions. You correct the reading in place, or tell the model what to change and have it read again, as often as you like. What you confirm is handed to the question writers word for word; they do not see your own words. **Go on without them** processes the book with no wishes at all. This step is one short call. It can be switched off in Settings; your words then go to the writers as they are.
 

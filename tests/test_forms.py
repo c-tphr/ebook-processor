@@ -128,7 +128,7 @@ def test_with_open_questions_only_nothing_about_forms_is_said():
     assert prompts.draft_schema(plain) is prompts.DRAFT_SCHEMA and prompts.check_schema(plain) is prompts.CHECK_SCHEMA
     assert prompts.revise_schema(plain) is prompts.REVISE_SCHEMA and prompts.criteria(plain) == prompts.CRITERIA
     assert hq.propose_schema(plain) is hq.PROPOSE_SCHEMA and "The form of the question" not in hq.system(plain)
-    assert "no multiple choice" in steer.reading_system(plain) and "Kinds of question" in steer.reading_system(plain)
+    assert "no multiple choice" in steer.reading_system(plain) and "Practice questions" in steer.reading_system(plain)
     assert "it is the only form of question" in prompts.drafter_system(plain, steer.Steer(purpose="x"))
 
 

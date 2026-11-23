@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from . import forms as qforms
-from . import sources
+from . import pathway, sources
 from .bookinfo import chapter_titles
 from .exports import CARD_CHOICES
 from .llm import PROVIDERS, Backend, Backends, ClaudeCodeBackend, CodexBackend, Completion, Connection, service_urls
@@ -247,11 +247,25 @@ def review_data(out_dir: Path) -> dict[str, Any]:
             "failed_criteria": [c for c, ok in q["criteria"].items() if not ok], "problem": q["problem"],
             "minor_note": q["minor_note"], "evidence": q["evidence"], "revisions": len(q["history"]),
             "supporting_paragraphs": q["supporting_paragraphs"]})
+    known = {q["id"]: q for q in state["questions"]}
+    inside: dict[str, list[dict[str, Any]]] = {}
+    for c in pathway.ephemeral(state):  # the graduated pathway: the questions asked inside a section
+        promoted = c.get("promoted") if c.get("promoted") in known and kept(known[c["promoted"]]) else None
+        inside.setdefault(c["section"], []).append({
+            "id": c["id"], **qforms.as_question(c), "status": c["status"], "kept": kept(c), "after": c["after"],
+            "purpose": c.get("purpose", "attention"), "supports": [i for i in c["supports"] if i in known],
+            "promoted": promoted, "failed_criteria": [k for k, ok in c["criteria"].items() if not ok],
+            "problem": c["problem"], "revisions": len(c["history"])})
+    for rows in by_section.values():
+        for row in rows:
+            q = known[row["id"]]
+            row.update({k: q[k] for k in ("reasoning", "accounts_for", "cue", "earlier_paragraphs", "promoted_from") if q.get(k)})
     return {
-        "book": state["source"], "stage": state["stage"],
+        "book": state["source"], "stage": state["stage"], "ephemeral": state["settings"].get("ephemeral", "none"),
         "sections": [{"id": s["id"], "label": s["label"], "chapter": titles.get(s["chapter_href"], s["chapter_href"]),
                       "first_paragraph": s["first_paragraph"], "last_paragraph": s["last_paragraph"],
                       "words": where[s["last_paragraph"]].end - where[s["first_paragraph"]].start,
                       "natural_boundary": s["natural_boundary"], "boundary_note": s["boundary_note"],
-                      "questions": by_section.get(s["id"], [])} for s in state["sections"]],
+                      "questions": by_section.get(s["id"], []),
+                      "ephemeral": inside.get(s["id"], [])} for s in state["sections"]],
     }

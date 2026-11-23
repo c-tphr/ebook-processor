@@ -7,7 +7,7 @@ from typing import Any
 
 from .forms import FORMS, FormError, clean_forms
 
-INSTRUCTIONS_VERSION = "2.2"
+INSTRUCTIONS_VERSION = "2.3"
 
 # Target section length in words, by name. At 240 words per minute "medium" is 3 to 8 minutes of reading.
 DENSITIES = {
@@ -19,6 +19,7 @@ CONTENT_MODES = ("prose", "text", "figures")
 KINDS = ("auto", "expository", "narrative", "technical")
 MAX_QUESTIONS = 8  # the highest limit a checkpoint's questions can be given
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
+EPHEMERAL = ("none", "attention", "linked")  # see ``pathway``
 
 
 class SettingsError(ValueError):
@@ -42,6 +43,9 @@ class Settings:
     title_suffix: str = " (checkpoints)"  # added to the title of the book with visible checkpoint pages
     preview: bool = False  # the book with visible checkpoints also shows a section's questions before the section
     forms: tuple[str, ...] = ("open",)  # the forms a question may take (see ``forms``); the model picks among them
+    # Ephemeral questions inside the sections (see ``pathway``): none, to sustain attention generally ("attention"),
+    # or to build toward the practice questions explicitly ("linked")
+    ephemeral: str = "none"
 
     def validate(self) -> None:
         if not 50 <= self.min_words < self.max_words <= 20000:
@@ -61,6 +65,8 @@ class Settings:
                 raise FormError(f"the forms of question are given in this order, each once: {', '.join(FORMS)}")
         except FormError as exc:
             raise SettingsError(str(exc)) from exc
+        if self.ephemeral not in EPHEMERAL:
+            raise SettingsError(f"ephemeral questions must be one of {', '.join(EPHEMERAL)}")
         if not 1 <= self.jobs <= 8:
             raise SettingsError("jobs must be 1 to 8")
         if not 2000 <= self.part_words <= 60000:
@@ -75,10 +81,15 @@ class Settings:
     def open_only(self) -> bool:
         return tuple(self.forms) == ("open",)
 
+    @property
+    def pathway(self) -> bool:
+        """Whether the book is prepared for the graduated pathway: ephemeral questions inside its sections."""
+        return self.ephemeral != "none"
+
     def drafting_key(self) -> dict[str, Any]:
         """The options that decide what the drafter writes. A run can be resumed only while these are unchanged."""
         return {**{k: getattr(self, k) for k in ("min_words", "max_words", "max_questions", "content", "kind", "part_words")},
-                "forms": list(self.forms)}
+                "forms": list(self.forms), "ephemeral": self.ephemeral}
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> Settings:

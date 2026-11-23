@@ -27,7 +27,7 @@ Read the whole section before judging its questions.
 
 A question **passes** only when all five are true. Style points outside these five (wording, a two-part question, a detail that is slightly trivial) never fail a question on their own: put them in `minor_note`.
 $kind_rules
-${form_rules}${reader_rules}
+${form_rules}${pathway_rules}${reader_rules}
 ## Citations and evidence
 
 - `citations`: the paragraph references **inside the question's own section** that support (or, for a failing answer, bear on) the answer, exactly as the block headers show them. Never cite a paragraph outside the section. A passing question needs at least one citation.

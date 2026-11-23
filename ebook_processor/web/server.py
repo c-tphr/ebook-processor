@@ -235,7 +235,7 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(raw, dict):
             raise ApiError(HTTPStatus.BAD_REQUEST, "settings must be an object")
         allowed = {"density", "section_words", "max_questions", "content", "kind", "rounds", "model", "checker_model",
-                   "effort", "jobs", "epubcheck", "preview", "forms"}
+                   "effort", "jobs", "epubcheck", "preview", "forms", "ephemeral"}
         options = {k: (v if v != "" else None) for k, v in raw.items() if k in allowed}
         try:
             return from_options(**options)
@@ -425,6 +425,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(jobs.check_question(job_id, qid))
             case ("POST", ["jobs", job_id, "book-questions", qid, "rewrite"]):
                 return self.send_json(jobs.rewrite_question(job_id, qid, self.json_body()))
+            case ("GET", ["jobs", job_id, "ephemeral", eid]):
+                return self.send_json(jobs.ephemeral_question(job_id, eid))
+            case ("POST", ["jobs", job_id, "ephemeral", eid, "promote"]):
+                return self.send_json(jobs.promote_ephemeral(job_id, eid, self.json_body()))
+            case ("POST", ["jobs", job_id, "ephemeral", eid, "rewrite"]):
+                return self.send_json(jobs.rewrite_question(job_id, eid, self.json_body()))
             case ("GET", ["jobs", job_id, "sections", sid, "paragraphs"]):
                 return self.send_json(jobs.section_paragraphs(job_id, sid))
 

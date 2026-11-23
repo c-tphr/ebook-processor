@@ -49,6 +49,9 @@ def card_text(q: dict[str, Any]) -> tuple[str, str, list[str]]:
     """A question of the questions document as a card for a program that knows only a front and a back: the
     front, the back, and the choices that belong on the front of a multiple-choice card."""
     front, back = qforms.as_text(q, q["question"], q["answer"])
+    if q.get("accounts_for"):  # several answers are defensible: the evidence comes first, then one answer
+        back = ("A well-supported answer accounts for:\n" + "\n".join(f"- {text}" for text in q["accounts_for"])
+                + "\n\nOne such answer: " + back)
     return front, back, list(q["choices"]) if qforms.form_of(q) == "choice" else []
 
 
@@ -93,11 +96,15 @@ def questions_document(book: Book, state: dict[str, Any], results: dict[str, str
                              "history": q["history"]})
             continue
         passage = []
-        for ref in q["supporting_paragraphs"]:
+        earlier = [r for r in q.get("earlier_paragraphs") or [] if r in index.where]
+        for ref in [*earlier, *q["supporting_paragraphs"]]:  # in reading order: what came before the section first
             doc, at = index.where[ref]
-            passage.append({"ref": ref, "text": passage_text(doc.blocks[at])})
+            passage.append({"ref": ref, "text": passage_text(doc.blocks[at]), **({"earlier": True} if ref in earlier else {})})
         questions.append({
             **base, "order": len(questions) + 1, "supporting_paragraphs": q["supporting_paragraphs"],
+            # the graduated pathway (see ``pathway``): only a question that has these members carries them
+            **({"earlier_paragraphs": earlier} if earlier else {}),
+            **{k: q[k] for k in ("reasoning", "accounts_for") if q.get(k)},
             "passage": passage, "status": q["status"],
             "check": {"criteria": q["criteria"], "citations": q["citations"], "evidence": q["evidence"],
                       "minor_note": q["minor_note"], "times_checked": q["checks"],

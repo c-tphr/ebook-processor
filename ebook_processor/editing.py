@@ -4,6 +4,12 @@ A question the reader has changed, or written, has the status ``edited``: it is 
 wrote it, and no check removes it. The first change to a question keeps what the run wrote in ``original``, so that
 it can be put back. A question the reader wrote has ``added`` and belongs to a section like any other.
 
+In a book prepared for the graduated pathway (``pathway``) the reader can also **promote** an ephemeral question:
+a practice question is made of it, as it is written, as the reader changed it, or as a model rewrote it to the
+reader's wish (``rewrite`` takes an ephemeral question's id too). The new question has ``added``, ``promoted_from``
+and ``ask`` set to ``practice``: it is a card in Practice from the start, and the app's reader does not ask it at
+the checkpoint.
+
 Everything here works on the state of a finished run (``work/state.json``), which is what the outputs are built
 from; ``runner.change_run`` applies a change and builds them again. Three things call a model, each only when the
 reader asks: a rewrite to a wish (``rewrite``), an independent check of an edited question (``check``), and the
@@ -18,12 +24,13 @@ from dataclasses import replace
 from typing import Any
 
 from . import forms as qforms
-from . import prompts
+from . import pathway, prompts
 from .asking import Unusable, ask_with_retry, check_one
 from .llm import Backend, BackendError, Completion
 from .pipeline import (BookIndex, clean_text, kept, new_question, next_checkpoint, normal_question, question_problems,
                        sort_questions)
 from .store import now
+from .prep.checkpoints import plain_text_problem
 from .prep.epub import Block, Book, SpineDoc
 from .settings import Settings
 from .steer import INSTRUCTION_MAX, Steer
@@ -42,6 +49,17 @@ def find(state: dict[str, Any], qid: str) -> dict[str, Any]:
         if q["id"] == qid:
             return q
     raise EditError("no such question")
+
+
+def find_ephemeral(state: dict[str, Any], eid: Any) -> dict[str, Any]:
+    for c in pathway.ephemeral(state):
+        if c["id"] == eid:
+            return c
+    raise EditError("no such ephemeral question")
+
+
+def _one_line(text: Any) -> str:
+    return clean_text(text).replace("\n", " ")
 
 
 def section_of(state: dict[str, Any], sid: Any) -> dict[str, Any]:
@@ -110,7 +128,32 @@ def view(book: Book, state: dict[str, Any], qid: str) -> dict[str, Any]:
             "edited": q.get("edited"), "added": bool(q.get("added")), "has_original": "original" in q,
             "left_out_because": q["problem"] if q["status"] in ("failed", "withdrawn") else "",
             "verdict": q.get("verdict"), "supporting_paragraphs": q["supporting_paragraphs"],
-            "paragraphs": paragraphs(book, state, section["id"], q["supporting_paragraphs"])}
+            "paragraphs": paragraphs(book, state, section["id"], q["supporting_paragraphs"]),
+            # the graduated pathway: what the question carries of it, and whether it was an ephemeral question
+            **{k: q[k] for k in ("reasoning", "accounts_for", "cue") if q.get(k)},
+            "earlier": _earlier(book, q), "promoted_from": q.get("promoted_from")}
+
+
+def _earlier(book: Book, q: dict[str, Any]) -> list[dict[str, str]]:
+    """The paragraphs from before its section that a question also draws on, as the editor shows them."""
+    where = BookIndex(book).where
+    out = []
+    for ref in q.get("earlier_paragraphs") or []:
+        if ref in where:
+            sd, at = where[ref]
+            text = " ".join(sd.words[sd.blocks[at].start : sd.blocks[at].end])
+            out.append({"ref": ref, "text": text if len(text) <= SHOWN else text[: SHOWN - 1].rstrip() + "…"})
+    return out
+
+
+def ephemeral_view(book: Book, state: dict[str, Any], eid: str) -> dict[str, Any]:
+    """An ephemeral question as the window that promotes it shows it."""
+    c = find_ephemeral(state, eid)
+    section = section_of(state, c["section"])
+    promoted = c.get("promoted") if any(q["id"] == c.get("promoted") and kept(q) for q in state["questions"]) else None
+    return {"id": c["id"], "section": {"id": section["id"], "label": section["label"]}, **qforms.as_question(c),
+            "supporting_paragraphs": c["supporting_paragraphs"], "promoted": promoted,
+            "paragraphs": paragraphs(book, state, section["id"], c["supporting_paragraphs"])}
 
 
 # --------------------------------------------------------------------------
@@ -129,11 +172,18 @@ def edit(state: dict[str, Any], book: Book, qid: str, raw: dict[str, Any]) -> di
     made = _wording({"question": raw.get("question", q["prompt"]), "answer": raw.get("answer", q["answer"]),
                      "form": {**qforms.members(q), **members}}, {b.ref for b in blocks},
                     _passage(raw.get("supporting_paragraphs"), inside, q["supporting_paragraphs"]))
+    if "accounts_for" in raw or "cue" in raw:  # the pathway: the evidence a good answer accounts for, and the cue
+        more = pathway.extras({"accounts_for": raw.get("accounts_for", q.get("accounts_for")), "cue": raw.get("cue", q.get("cue"))}, _one_line)
+        more.update(reasoning=q.get("reasoning", ""), earlier_paragraphs=list(q.get("earlier_paragraphs") or []))
+        wrong = pathway.extras_problems({**made, **more}, set(more["earlier_paragraphs"]), plain_text_problem)
+        if wrong:
+            raise EditError(wrong[0][0].upper() + wrong[0][1:] + ".")
+        made.update(accounts_for=more["accounts_for"], cue=more["cue"])
     if all(q.get(k) == v for k, v in made.items()):
         return q
     if "original" not in q and not q.get("added"):
         q["original"] = copy.deepcopy({k: q[k] for k in ("prompt", "answer", "supporting_paragraphs", *CHECKED)}
-                                      | qforms.members(q))
+                                      | qforms.members(q) | pathway.extras_of(q))
     for member in qforms.MEMBERS:
         q.pop(member, None)
     q.update(made, status="edited", edited=now(), criteria={}, citations=[], evidence="", problem="", suggested_fix="",
@@ -177,11 +227,44 @@ def add(state: dict[str, Any], book: Book, sid: Any, raw: dict[str, Any]) -> dic
 
 
 def delete(state: dict[str, Any], qid: str) -> dict[str, Any]:
-    """Remove a question the reader added. (One the run wrote is taken out instead, and can be put back.)"""
+    """Remove a question the reader added. (One the run wrote is taken out instead, and can be put back.) An
+    ephemeral question it was made of is ephemeral again, and can be promoted again."""
     q = find(state, qid)
     if not q.get("added"):
         raise EditError("only a question you added can be deleted; take this one out instead")
     state["questions"].remove(q)
+    for c in pathway.ephemeral(state):
+        if c.get("promoted") == qid:
+            c["promoted"] = None
+    return q
+
+
+def promote(state: dict[str, Any], book: Book, eid: Any, raw: Any = None) -> dict[str, Any]:
+    """Keep an ephemeral question for Practice: a practice question of its section is made of it. Without ``raw``
+    it keeps its wording; ``raw`` may give ``question``, ``answer``, the members of its ``form`` and
+    ``supporting_paragraphs``, as an edit does. The ephemeral question itself stays what it is, with ``promoted``
+    naming the new question."""
+    c = find_ephemeral(state, eid)
+    if any(q["id"] == c.get("promoted") for q in state["questions"]):
+        raise EditError("This question is already kept for Practice.")
+    section = section_of(state, c["section"])
+    _, blocks, _, _ = blocks_of(book, section)
+    inside = [b.ref for b in citable(blocks)]
+    raw = raw if isinstance(raw, dict) else {}
+    members = raw.get("form") if isinstance(raw.get("form"), dict) else {}
+    if members.get("form", qforms.form_of(c)) != qforms.form_of(c):
+        raise EditError("A question keeps its kind.")
+    made = _wording({"question": raw.get("question", c["prompt"]), "answer": raw.get("answer", c["answer"]),
+                     "form": {**qforms.members(c), **members}}, {b.ref for b in blocks},
+                    _passage(raw.get("supporting_paragraphs"), inside, [r for r in c["supporting_paragraphs"] if r in inside] or inside))
+    if section["checkpoint"] is None:
+        section["checkpoint"] = next_checkpoint(state)
+    taken = [int(x["id"].rsplit("-p", 1)[1]) for x in state["questions"] if x["section"] == section["id"]]
+    q = new_question(f"{section['checkpoint']}-p{max(taken, default=0) + 1}", section["id"], made, status="edited",
+                     added=now(), edited=now(), promoted_from=c["id"], ask="practice")
+    state["questions"].append(q)
+    sort_questions(state)
+    c["promoted"] = q["id"]
     return q
 
 
@@ -228,12 +311,22 @@ def keep_verdict(state: dict[str, Any], qid: str, verdict: dict[str, Any], was: 
     return verdict
 
 
+FOR_PRACTICE = ("Until now this question was asked inside the section, right after its passage, as a quick check that is "
+                "not kept. The reader now keeps it for spaced practice. As you rewrite it, it must follow every rule "
+                "of a practice question: above all it stands alone, weeks later, without the page.")
+
+
 def rewrite(backend: Backend, book: Book, state: dict[str, Any], qid: str, wish: Any, settings: Settings,
             steer: Steer | None = None, draft: dict[str, Any] | None = None) -> dict[str, Any]:
     """Have the model rewrite a question as the reader asks, in the same form. Nothing is kept: the result is for
     the reader to take or change: ``{"question", "answer", "form", "supporting_paragraphs"}``. ``draft`` is the
-    wording in the reader's form when it differs from what is saved."""
-    q = find(state, qid)
+    wording in the reader's form when it differs from what is saved.
+
+    ``qid`` may name an ephemeral question that the reader is promoting: it is then rewritten as a practice
+    question. For a practice question of a book prepared for the graduated pathway the result also has
+    ``accounts_for`` and ``cue``, as the rewrite needs them."""
+    check = next((c for c in pathway.ephemeral(state) if c["id"] == qid), None)
+    q = check or find(state, qid)
     wish = clean_text(wish).replace("\n", " ")
     if not wish:
         raise EditError("Say what should be different.")
@@ -241,13 +334,15 @@ def rewrite(backend: Backend, book: Book, state: dict[str, Any], qid: str, wish:
         raise EditError(f"the wish can hold {INSTRUCTION_MAX} characters")
     item = _item(book, state, q)
     inside = {b.ref for b in item["blocks"]}
-    current = q
+    current = {k: v for k, v in q.items() if k not in ("after", "supports", "purpose", "promoted")}
     if draft:
-        current = {**{k: v for k, v in q.items() if k not in qforms.MEMBERS},
+        current = {**{k: v for k, v in current.items() if k not in qforms.MEMBERS},
                    **_wording({**draft, "form": {**qforms.members(q), **(draft.get("form") or {})}}, inside, q["supporting_paragraphs"])}
-    only = replace(settings, forms=(qforms.form_of(q),))  # the form stays what it is
+    # the form stays what it is; a question that is being promoted is written by the rules of a practice question
+    only = replace(settings, forms=(qforms.form_of(q),), **({"ephemeral": "none"} if check is not None else {}))
     others = [x for x in state["questions"] if x["section"] == q["section"] and x["id"] != qid and kept(x)]
-    message = prompts.rewrite_message(book, {**item, "question": {**current, "id": qid}, "others": others}, only, wish)
+    message = prompts.rewrite_message(book, {**item, "question": {**current, "id": qid}, "others": others}, only, wish,
+                                      FOR_PRACTICE if check is not None else "")
 
     def read(done: Completion) -> dict[str, Any]:
         entries = done.data.get("revisions") if isinstance(done.data, dict) else None
@@ -256,10 +351,18 @@ def rewrite(backend: Backend, book: Book, state: dict[str, Any], qid: str, wish:
             raise BackendError("the model could not rewrite the question that way")
         made = normal_question(entry)
         wrong = question_problems(made, inside, only.forms)
+        more: dict[str, Any] = {}
+        if only.pathway:  # its reasoning and the earlier paragraphs it draws on stay as they are
+            given = pathway.extras(entry, _one_line)
+            given.update(reasoning=q.get("reasoning", ""), earlier_paragraphs=list(q.get("earlier_paragraphs") or []))
+            if not given["reasoning"]:
+                given["cue"] = None
+            wrong += pathway.extras_problems({**made, **given}, set(given["earlier_paragraphs"]), plain_text_problem)
+            more = {"accounts_for": given["accounts_for"], "cue": given["cue"]}
         if wrong:
             raise Unusable(wrong)
         return {"question": made["prompt"], "answer": made["answer"], "form": qforms.members(made),
-                "supporting_paragraphs": made["supporting_paragraphs"]}
+                "supporting_paragraphs": made["supporting_paragraphs"], **more}
 
     return ask_with_retry(backend, role="revise", system=prompts.drafter_system(only, steer), message=message,
                           schema=prompts.revise_schema(only), model=settings.model, read=read,

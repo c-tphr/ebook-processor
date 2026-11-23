@@ -322,7 +322,8 @@ def render_chapter(book: Book, sd: SpineDoc) -> str:
 
 def new_state(sha256: str) -> dict[str, Any]:
     return {"version": STATE_VERSION, "book_sha256": sha256, "overrides": {"wpm": 240, "words_per_update": 1},
-            "position": None, "grades": {}, "x_attempts": [], "x_cleared": {}, "x_previewed": {}, "x_furthest": None,
+            "position": None, "grades": {}, "x_attempts": [], "x_cleared": {}, "x_previewed": {}, "x_checks": {},
+            "x_helped": {}, "x_furthest": None,
             "x_progress": 0.0,
             "x_stats": {"seconds": {m: 0 for m in MODES}, "words": {m: 0 for m in MODES}, "last_read": None}}
 
@@ -338,10 +339,19 @@ def _position(value: Any, need_mode: bool = True) -> dict[str, Any] | None:
     return out
 
 
-def clean_state(raw: Any, sha256: str, known: set[str]) -> dict[str, Any]:
+CHECK_OUTCOMES = ("done", "skipped")
+
+
+def clean_state(raw: Any, sha256: str, known: set[str], checks: set[str] | None = None) -> dict[str, Any]:
     """The state as it is stored: what the page sent, with anything malformed dropped.
 
     ``known`` are the book's question ids. A first grade is never replaced: that is settled in ``merge_state``.
+
+    ``checks`` are the ids of the book's ephemeral questions (see ``pathway``). What the reader did with one is
+    kept in ``x_checks``, apart from the answers: ``done`` or ``skipped`` and when, never a grade, so that it never
+    becomes a card. For a form the app grades, ``right`` says how the answer was judged; ``revisits`` counts the
+    times the reader went back to the passage. ``x_helped`` says when "Help me recall" was first used on a
+    practice question.
     """
     state = new_state(sha256)
     if not isinstance(raw, dict):
@@ -373,6 +383,17 @@ def clean_state(raw: Any, sha256: str, known: set[str]) -> dict[str, Any]:
     for pid, at in (raw.get("x_previewed") if isinstance(raw.get("x_previewed"), dict) else {}).items():
         if pid in known and isinstance(at, str):
             state["x_previewed"][pid] = at[:32]
+    for eid, done in (raw.get("x_checks") if isinstance(raw.get("x_checks"), dict) else {}).items():
+        if eid in (checks or ()) and isinstance(done, dict) and done.get("outcome") in CHECK_OUTCOMES and isinstance(done.get("at"), str):
+            entry: dict[str, Any] = {"at": done["at"][:32], "outcome": done["outcome"]}
+            if isinstance(done.get("right"), bool):
+                entry["right"] = done["right"]
+            if isinstance(done.get("revisits"), int) and not isinstance(done["revisits"], bool) and done["revisits"] > 0:
+                entry["revisits"] = min(done["revisits"], 99)
+            state["x_checks"][eid] = entry
+    for pid, at in (raw.get("x_helped") if isinstance(raw.get("x_helped"), dict) else {}).items():
+        if pid in known and isinstance(at, str):
+            state["x_helped"][pid] = at[:32]
     stats = raw.get("x_stats") if isinstance(raw.get("x_stats"), dict) else {}
     for key in ("seconds", "words"):
         values = stats.get(key) if isinstance(stats.get(key), dict) else {}
@@ -441,6 +462,15 @@ def merge_state(old: dict[str, Any] | None, new: dict[str, Any], known: set[str]
                 not mine or mine.get("chapter") not in order
                 or (order.index(far["chapter"]), far.get("word", 0)) > (order.index(mine["chapter"]), mine.get("word", 0))):
             new["x_furthest"] = far
+        # what was done with an ephemeral question stays: of two records of one question the later wins
+        met = new.setdefault("x_checks", {})
+        for eid, done in (old.get("x_checks") or {}).items():
+            if isinstance(done, dict) and (eid not in met or str(done.get("at")) > str(met[eid].get("at"))):
+                met[eid] = done
+        helped = new.setdefault("x_helped", {})
+        for pid, at in (old.get("x_helped") or {}).items():
+            if isinstance(at, str) and (pid not in helped or at < helped[pid]):
+                helped[pid] = at
         overruled = {(a["id"], a["at"]) for a in new.get("x_attempts", []) if a.get("overruled")}
         for pid, grade in old.get("grades", {}).items():
             mine = new["grades"].get(pid)

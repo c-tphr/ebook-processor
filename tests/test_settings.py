@@ -128,12 +128,12 @@ def test_settings_cannot_be_changed_once_made():
 def test_what_is_saved_with_a_run_is_loaded_again_as_the_same_settings():
     settings = from_options(section_words="400-1200", max_questions=5, content="figures", kind="technical", rounds=1,
                             model="small", checker_model="codex:gpt", effort="high", jobs=2, part_words=5000,
-                            epubcheck=True, preview=True, forms="open,cloze")
+                            epubcheck=True, preview=True, forms="open,cloze", ephemeral="linked")
     saved = settings.as_json()
     assert saved == {"min_words": 400, "max_words": 1200, "max_questions": 5, "content": "figures", "kind": "technical",
                      "rounds": 1, "model": "small", "checker_model": "codex:gpt", "effort": "high", "jobs": 2,
                      "part_words": 5000, "epubcheck": True, "title_suffix": " (checkpoints)", "preview": True,
-                     "forms": ["open", "cloze"]}   # a list, as JSON has no tuple
+                     "forms": ["open", "cloze"], "ephemeral": "linked"}   # a list, as JSON has no tuple
     assert Settings.from_json(saved) == settings and Settings.from_json(saved).forms == ("open", "cloze")
     assert set(saved) == {f.name for f in dataclasses.fields(Settings)}  # every option is saved
 
@@ -158,7 +158,8 @@ def test_the_drafting_key_holds_only_what_changes_the_draft():
     """A run can be continued with another model or more checks, but not with other sections or forms."""
     first = from_options(density="short")
     assert first.drafting_key() == {"min_words": 300, "max_words": 1000, "max_questions": 3, "content": "text",
-                                    "kind": "auto", "part_words": 10000, "forms": ["open"]}
+                                    "kind": "auto", "part_words": 10000, "forms": ["open"],
+                                        "ephemeral": "none"}
     same = from_options(density="short", model="small", checker_model="other", effort="low", rounds=0, jobs=1, epubcheck=True, preview=True)
     assert same.drafting_key() == first.drafting_key()
     for change in ({"density": "medium"}, {"density": "short", "max_questions": 2}, {"density": "short", "content": "prose"},

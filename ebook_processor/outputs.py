@@ -16,7 +16,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import __version__, exports, reading
+from . import __version__, exports, pathway, reading
+from . import forms as qforms
 from . import highlight_questions as hq
 from . import notes as notes_mod
 from .pipeline import KEPT, draft_bytes, kept
@@ -64,6 +65,43 @@ def try_build(book: Book, state: dict[str, Any]) -> tuple[list[str], bytes | Non
         return [], build_bytes(book, draft_raw).data
     except BuildError as exc:
         return [str(i) for i in exc.issues[:5]], None
+
+
+def pathway_document(state: dict[str, Any]) -> dict[str, Any] | None:
+    """What the app's reader is given of the graduated pathway (``pathway.into_manifest`` reads it): the kept
+    ephemeral questions, and for each kept practice question what the pathway adds to it. None for a book that
+    has none of it.
+
+    ``help`` names the ephemeral questions "Help me recall" brings back for a practice question: those that
+    support it. A higher-order question that has neither those nor a cue gets the ephemeral questions of its own
+    section that rest on a paragraph it rests on too, so that help is there wherever the book can give it."""
+    practice = {q["id"]: q for q in state["questions"] if kept(q)}
+    checks = [c for c in pathway.ephemeral(state) if kept(c)]
+    questions: dict[str, dict[str, Any]] = {}
+    for qid, q in practice.items():
+        entry: dict[str, Any] = {k: q[k] for k in ("reasoning", "accounts_for", "cue") if q.get(k)}
+        if q.get("earlier_paragraphs"):
+            entry["earlier"] = list(q["earlier_paragraphs"])
+        helps = [c["id"] for c in checks if qid in c["supports"]]
+        if not helps and q.get("reasoning") and not q.get("cue"):
+            mine = set(q["supporting_paragraphs"])
+            helps = [c["id"] for c in checks if c["section"] == q["section"] and mine & set(c["supporting_paragraphs"])]
+        if helps:
+            entry["help"] = helps
+        if q.get("promoted_from"):
+            entry["promoted_from"] = q["promoted_from"]
+        if entry:
+            questions[qid] = entry
+    if not questions and not checks:
+        return None
+    return {"format": pathway.FORMAT, "version": pathway.VERSION, "mode": state["settings"].get("ephemeral", "none"),
+            "questions": questions,
+            "ephemeral": [{"id": c["id"], "section": c["section"], "after": c["after"], "purpose": c.get("purpose", "attention"),
+                           "prompt": c["prompt"], "answer": c["answer"], **qforms.members(c),
+                           "supporting_paragraphs": c["supporting_paragraphs"],
+                           "supports": [i for i in c["supports"] if i in practice],
+                           "promoted": c.get("promoted") if c.get("promoted") in practice else None}
+                          for c in checks]}
 
 
 def build_outputs(book: Book, original: bytes, state: dict[str, Any], out_dir: Path,
@@ -129,6 +167,11 @@ def build_outputs(book: Book, original: bytes, state: dict[str, Any], out_dir: P
                      + ("those you missed on the first try." if cards == "missed" else "those you have met while reading."))
     write_json(out_dir / f"{stem}.questions.json", doc)
     files["questions"] = f"{stem}.questions.json"
+    made = pathway_document(state)  # for the app's reader only: no other reader knows questions inside a section
+    if made is not None:
+        write_json(out_dir / pathway.FILE, made)
+    else:
+        (out_dir / pathway.FILE).unlink(missing_ok=True)
     write_text(out_dir / f"{stem}.cards.tsv", exports.tsv_text(doc, cards), newline="")
     files["tsv"] = f"{stem}.cards.tsv"
     try:
@@ -152,6 +195,7 @@ def make_report(state: dict[str, Any], doc: dict[str, Any], files: dict[str, str
     questions = state["questions"]
     sections = state["sections"]
     kept_questions = [q for q in questions if kept(q)]
+    inside = pathway.ephemeral(state)
     counts = {
         "sections": len(sections),
         "checkpoints": len({q["section"] for q in kept_questions}),
@@ -168,6 +212,11 @@ def make_report(state: dict[str, Any], doc: dict[str, Any], files: dict[str, str
         "from_highlights": sum(q.get("origin") == "highlight" for q in doc["questions"]),
         "words_in_sections": sum(s["word_count"] for s in doc["sections"]),
         "words": state["source"]["words"],
+        # the graduated pathway: the questions asked inside the sections, and the questions that ask for reasoning
+        "ephemeral": sum(kept(c) for c in inside),
+        "ephemeral_left_out": sum(not kept(c) for c in inside),
+        "ephemeral_promoted": sum(bool(c.get("promoted")) for c in inside),
+        "higher_order": sum(bool(q.get("reasoning")) for q in kept_questions),
     }
     by_id = {s["id"]: s for s in sections}
     return {
@@ -256,6 +305,11 @@ def report_markdown(r: dict[str, Any]) -> str:
         parts = [f"{c[k]} {word}" for k, word in (("failed", "failed the check"), ("withdrawn", "withdrawn by the drafter"),
                                                    ("removed", "removed by you")) if c[k]]
         summary += f" {c['left_out']} left out ({', '.join(parts)})."
+    if c.get("ephemeral") or c.get("ephemeral_left_out"):
+        summary += (f" Inside the sections, the app's reader asks {c['ephemeral']} ephemeral question{'s' if c['ephemeral'] != 1 else ''}"
+                    + (f"; {c['ephemeral_left_out']} more were left out" if c["ephemeral_left_out"] else "")
+                    + (f". {c['higher_order']} of the questions at checkpoints ask for reasoning" if c.get("higher_order") else "")
+                    + ".")
     lines += [summary, ""]
 
     f = r["files"]
@@ -323,6 +377,7 @@ def report_markdown(r: dict[str, Any]) -> str:
         ("Tables, code, formulas, figures", {"prose": "not shown to the model", "text": "shown as text; figures by caption only",
                                              "figures": "shown as text; figures viewed"}[s["content"]]),
         ("Kind of book", s["kind"]),
+        ("Ephemeral questions", pathway.MODE_WORDS.get(s.get("ephemeral", "none"), "none")),
         ("Checks per question", "none" if s["rounds"] == 0 else f"up to {s['rounds']}"),
         ("Question previews", "a page before each section, in the book with visible checkpoints" if s.get("preview") else "none"),
         ("Instructions version", r["instructions_version"]),

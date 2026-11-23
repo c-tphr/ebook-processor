@@ -7,6 +7,7 @@ from string import Template
 from typing import Any
 
 from . import forms as qforms
+from . import pathway
 from .bookinfo import book_line
 from .content import clipped, render_blocks
 from .prep.checkpoints import ANSWER_MAX_CHARS, PROMPT_MAX_CHARS
@@ -215,6 +216,62 @@ def highlight_forms(settings: Settings) -> tuple[str, str]:
     return "\n".join(rules) + "\n", reply
 
 
+_PURPOSE = {
+    "attention": (
+        "**What they are for in this book: attention.** The reader wants ephemeral questions to help them sustain "
+        "their attention generally. Place a brief check after a meaningful passage when recalling it will help the "
+        "reader follow what comes next. A detail qualifies on that basis alone: the road a messenger takes is worth "
+        "a check when the next scene follows him along it. A check may happen to support a later practice question "
+        "as well. That is not required and is not recorded: leave `supports` empty."),
+    "linked": (
+        "**What they are for in this book: building toward the practice questions.** The reader wants ephemeral "
+        "questions to build toward practice questions explicitly. Write a section's practice questions first. Then, "
+        "for each ephemeral question, identify one or more practice questions, of this section's checkpoint or of a "
+        "later section in your reply, and the detail, idea or relationship the reader will use to answer them. Ask "
+        "for that, and place the check once that material has appeared. Give each practice question a short `key` "
+        "(`\"q1\"`, `\"q2\"`, and so on, each used once in your reply) and list in `supports` the keys of the practice "
+        "questions the check supports. Every ephemeral question supports at least one. The check helps the reader "
+        "retrieve the material and leaves the conclusion for them to discover: it never states the practice "
+        "question, its answer, or the conclusion the reader is meant to reach. The reader sees only the check's own "
+        "question."),
+}
+_HELP = {
+    "attention": "In this book you write that prompt with the question, as its cue. Every higher-order question has one.",
+    "linked": ("In this book the prompt is an ephemeral question that supports the practice question, so every "
+               "higher-order question has at least one ephemeral question that supports it. Only when a higher-order "
+               "question has none, because the material it needs lies in earlier text, write a cue for it."),
+}
+_EMPTY_PATHWAY = '`"key": ""`, `"reasoning": ""`, `"earlier_paragraphs": []`, `"accounts_for": []`, `"cue_prompt": ""`, `"cue_answer": ""`'
+
+
+def drafter_pathway(settings: Settings) -> str:
+    """Section 12 of the drafting instructions, for a book prepared with ephemeral questions."""
+    if not settings.pathway:
+        return ""
+    return _template("pathway_drafter.md").substitute(
+        purpose=_PURPOSE[settings.ephemeral], help=_HELP[settings.ephemeral], max_questions=settings.max_questions,
+        check_prompt=pathway.CHECK_PROMPT_MAX, check_answer=pathway.CHECK_ANSWER_MAX, max_checks=pathway.MAX_CHECKS,
+        max_accounts=pathway.ACCOUNTS_MAX, account_chars=pathway.ACCOUNT_CHARS)
+
+
+def drafter_pathway_reply(settings: Settings) -> str:
+    """A part of section 8 of the drafting instructions: what a reply has for the pathway."""
+    if not settings.pathway:
+        return ""
+    return ("In this book every range also has `checks`: a section's ephemeral questions (section 12), in reading "
+            "order, possibly none; always empty for an excluded range. Each has `prompt`, `answer`, "
+            "`supporting_paragraphs`, `after_paragraph` and `supports`"
+            + ("" if settings.open_only else ", and `form` with the members of the forms, filled in as for any question")
+            + ". Each question in `prompts` also has `key`, `reasoning` (" + ", ".join(f'`"{r}"`' for r in pathway.REASONING)
+            + ", or empty for a recall question), `earlier_paragraphs`, `accounts_for`, `cue_prompt` and `cue_answer`. "
+            f"Leave empty what does not apply: {_EMPTY_PATHWAY}.\n\n")
+
+
+def checker_pathway(settings: Settings) -> str:
+    """Added to the checking instructions for a book prepared with ephemeral questions."""
+    return _template("pathway_checker.md").substitute() if settings.pathway else ""
+
+
 def criteria(settings: Settings) -> tuple[str, ...]:
     """The criteria a check gives a verdict on: five, and a sixth where the app grades questions."""
     return CRITERIA if settings.open_only else CRITERIA + (ONE_RIGHT,)
@@ -227,7 +284,8 @@ def _template(name: str) -> Template:
 def drafter_system(settings: Settings, steer: Steer | None = None) -> str:
     return _template("drafter.md").substitute(
         reader_rules=drafter_rules(steer, settings.forms), form_rules=drafter_forms(settings),
-        form_reply=drafter_reply(settings),
+        form_reply=drafter_reply(settings), pathway_rules=drafter_pathway(settings),
+        pathway_reply=drafter_pathway_reply(settings),
         version=INSTRUCTIONS_VERSION, min_words=settings.min_words, max_words=settings.max_words,
         max_questions=settings.max_questions, prompt_chars=PROMPT_MAX_CHARS, answer_chars=ANSWER_MAX_CHARS,
         content_rules=CONTENT_RULES[settings.content], kind_rules=DRAFTER_KIND[settings.kind])
@@ -235,7 +293,7 @@ def drafter_system(settings: Settings, steer: Steer | None = None) -> str:
 
 def checker_system(settings: Settings, steer: Steer | None = None) -> str:
     return _template("checker.md").substitute(
-        reader_rules=checker_rules(steer), form_rules=checker_forms(settings),
+        reader_rules=checker_rules(steer), form_rules=checker_forms(settings), pathway_rules=checker_pathway(settings),
         version=INSTRUCTIONS_VERSION, min_words=settings.min_words, max_words=settings.max_words,
         content_rules=CONTENT_RULES[settings.content], kind_rules=CHECKER_KIND)
 
@@ -290,13 +348,26 @@ def _form(settings: Settings) -> dict[str, Any]:
     return {"form": {"type": "string", "enum": list(settings.forms)}, **_FORM_MEMBERS}
 
 
+_PATHWAY_MEMBERS = {"reasoning": {"type": "string", "enum": ["", *pathway.REASONING]}, "earlier_paragraphs": _REFS,
+                    "accounts_for": {"type": "array", "items": _STR}, "cue_prompt": _STR, "cue_answer": _STR}
+
+
+def _question_members(settings: Settings, **more: Any) -> dict[str, Any]:
+    """The members a question has in a reply: its form first and that form's members last, when forms are in use."""
+    form = {} if settings.open_only else {"form": _form(settings)["form"]}
+    return {**form, "prompt": _STR, "answer": _STR, "supporting_paragraphs": _REFS,
+            **({} if settings.open_only else _FORM_MEMBERS), **more}
+
+
 def draft_schema(settings: Settings) -> dict[str, Any]:
-    if settings.open_only:
+    if settings.open_only and not settings.pathway:
         return DRAFT_SCHEMA
-    prompt = _obj(form=_form(settings)["form"], prompt=_STR, answer=_STR, supporting_paragraphs=_REFS, **_FORM_MEMBERS)
+    prompt = _obj(**_question_members(settings, **({"key": _STR, **_PATHWAY_MEMBERS} if settings.pathway else {})))
+    checks = {"checks": {"type": "array", "items": _obj(**_question_members(settings, after_paragraph=_STR, supports=_REFS))}} \
+        if settings.pathway else {}
     return _obj(ranges={"type": "array", "items": _obj(
         kind={"type": "string", "enum": ["section", "excluded"]}, first_paragraph=_STR, last_paragraph=_STR, label=_STR,
-        reason=_STR, prompts={"type": "array", "items": prompt})})
+        reason=_STR, prompts={"type": "array", "items": prompt}, **checks)})
 
 
 def check_schema(settings: Settings) -> dict[str, Any]:
@@ -307,19 +378,38 @@ def check_schema(settings: Settings) -> dict[str, Any]:
 
 
 def revise_schema(settings: Settings) -> dict[str, Any]:
-    if settings.open_only:
+    if settings.open_only and not settings.pathway:
         return REVISE_SCHEMA
     return _obj(revisions={"type": "array", "items": _obj(
-        id=_STR, action={"type": "string", "enum": ["revise", "withdraw"]}, form=_form(settings)["form"], prompt=_STR,
-        answer=_STR, supporting_paragraphs=_REFS, **_FORM_MEMBERS)})
+        id=_STR, action={"type": "string", "enum": ["revise", "withdraw"]},
+        **_question_members(settings, **(_PATHWAY_MEMBERS if settings.pathway else {})))})
 
 
-def question_lines(q: dict[str, Any], mark: str, prompt: str | None = None, answer: str | None = None) -> list[str]:
-    """One question as a checker or a reviser is shown it."""
+def question_lines(q: dict[str, Any], mark: str, prompt: str | None = None, answer: str | None = None,
+                   questions: dict[str, dict[str, Any]] | None = None) -> list[str]:
+    """One question as a checker or a reviser is shown it. ``questions`` are the run's practice questions by id,
+    for an ephemeral question that supports some of them."""
     graded = qforms.form_of(q) != "open"
-    return [mark, *qforms.model_lines(q), f"{'Statement' if graded and q['form'] != 'choice' else 'Question'}: "
+    return [mark, *pathway.model_lines(q, questions), *qforms.model_lines(q),
+            f"{'Statement' if graded and q['form'] != 'choice' else 'Question'}: "
             f"{q['prompt'] if prompt is None else prompt}",
-            f"{'Explanation shown after answering' if graded else 'Reference answer'}: {q['answer'] if answer is None else answer}"]
+            f"{'Explanation shown after answering' if graded else 'Reference answer'}: {q['answer'] if answer is None else answer}",
+            *pathway.after_lines(q)]
+
+
+def earlier_view(book: Book, questions: list[dict[str, Any]], settings: Settings,
+                 images: dict[str, list[str]] | None) -> list[str]:
+    """The earlier paragraphs some of a section's questions draw on, with their text, for a checker or a reviser."""
+    wanted = [r for q in questions for r in q.get("earlier_paragraphs") or []]
+    if not wanted:
+        return []
+    where = {b.ref: (sd, b) for sd in book.spine for b in sd.blocks}
+    parts = ["EARLIER PARAGRAPHS (from before this section; the reader has read them)"]
+    for ref in dict.fromkeys(wanted):
+        if ref in where:
+            sd, block = where[ref]
+            parts.append(render_blocks(sd, [block], settings.content, images))
+    return parts + [""]
 
 
 # --------------------------------------------------------------------------
@@ -350,9 +440,11 @@ def book_header(book: Book, current: set[int]) -> str:
 
 def draft_message(book: Book, groups: list[tuple[SpineDoc, list[Block]]], settings: Settings,
                   images: dict[str, list[str]] | None, continues: Block | None = None,
-                  previous: str | None = None, feedback: str | None = None, steer: Steer | None = None) -> str:
+                  previous: str | None = None, feedback: str | None = None, steer: Steer | None = None,
+                  context: list[tuple[SpineDoc, list[Block]]] | None = None) -> str:
     """The task for one part. ``groups`` are (document, blocks to cover); ``continues`` is the last block of the
-    document when the part stops before it."""
+    document when the part stops before it. ``context`` is text from just before the part, which a higher-order
+    question of the graduated pathway may draw on."""
     parts = [book_header(book, {sd.index for sd, _ in groups}), "", "TASK"]
     for sd, blocks in groups:
         whole = blocks[0] is sd.blocks[0] and blocks[-1] is sd.blocks[-1]
@@ -375,6 +467,11 @@ def draft_message(book: Book, groups: list[tuple[SpineDoc, list[Block]]], settin
                  "say. Reply with the JSON object only.")
     if feedback:
         parts += ["", feedback_block(feedback)]
+    if context:
+        parts += ["", "EARLIER TEXT (the reader has read it; it is already divided, so it goes in no range. A "
+                      "higher-order question may draw on it: section 12.2)"]
+        for sd, blocks in context:
+            parts += [f"--- {sd.prefix} {sd.href} ---", render_blocks(sd, blocks, settings.content, images), ""]
     parts += ["", "TEXT"]
     for sd, blocks in groups:
         parts += [f"=== {sd.prefix} {sd.href} ===", render_blocks(sd, blocks, settings.content, images), ""]
@@ -401,9 +498,11 @@ def section_view(sd: SpineDoc, section: dict[str, Any], blocks: list[Block], fir
 
 
 def check_message(book: Book, items: list[dict[str, Any]], settings: Settings,
-                  images: dict[str, list[str]] | None, feedback: str | None = None) -> str:
+                  images: dict[str, list[str]] | None, feedback: str | None = None,
+                  practice: dict[str, dict[str, Any]] | None = None) -> str:
     """``items``: one per section, with ``doc``, ``section``, ``blocks``, ``first``, ``last``, ``questions`` (to
-    judge) and ``judge_break``."""
+    judge) and ``judge_break``. ``practice`` are the run's practice questions by id, for the ephemeral questions
+    that support some of them."""
     parts = [book_header(book, {i["doc"].index for i in items}), "", "TASK",
              "Judge every question listed below against its own section, and the break of each section marked "
              "JUDGE THE BREAK. Reply with the JSON object only."]
@@ -416,14 +515,16 @@ def check_message(book: Book, items: list[dict[str, Any]], settings: Settings,
         parts.append(f"JUDGE THE BREAK of {item['section']['id']}: {'yes' if item['judge_break'] else 'no'}")
         if not item["questions"]:
             parts.append("QUESTIONS: none to judge in this section.")
+        parts += earlier_view(book, item["questions"], settings, images)
         for q in item["questions"]:
-            parts += question_lines(q, f"QUESTION [{q['id']}]")
+            parts += question_lines(q, f"QUESTION [{q['id']}]", questions=practice)
         parts.append("")
     return "\n".join(parts)
 
 
 def revise_message(book: Book, items: list[dict[str, Any]], settings: Settings,
-                   images: dict[str, list[str]] | None, feedback: str | None = None) -> str:
+                   images: dict[str, list[str]] | None, feedback: str | None = None,
+                   practice: dict[str, dict[str, Any]] | None = None) -> str:
     """``items``: one per section, with ``doc``, ``section``, ``blocks``, ``first``, ``last``, ``failed`` (the
     questions to fix) and ``others`` (the section's other questions)."""
     parts = [book_header(book, {i["doc"].index for i in items}), "", "TASK",
@@ -433,7 +534,13 @@ def revise_message(book: Book, items: list[dict[str, Any]], settings: Settings,
              "\"prompt\": ..., \"answer\": ..., \"supporting_paragraphs\": [...]}]}, one entry per question to fix. "
              "For \"withdraw\", leave the other members empty."
              + ("" if settings.open_only else " Each entry also has `form` and the members of the forms, as a question "
-                "in a draft has. Keep a question's form unless its form is what is wrong with it.")]
+                "in a draft has. Keep a question's form unless its form is what is wrong with it.")
+             + ("" if not settings.pathway else " Each entry also has `reasoning`, `earlier_paragraphs`, `accounts_for`, "
+                "`cue_prompt` and `cue_answer`, as a practice question in a draft has: give them again as they should "
+                "be now (of the earlier paragraphs only those shown with the question). Leave them empty for an "
+                "ephemeral question, which keeps its role, its place and the questions it supports: its revision is "
+                "as brief as section 12.1 asks, and its supporting paragraphs still come no later than the paragraph "
+                "it follows.")]
     if feedback:
         parts += ["", feedback_block(feedback)]
     parts.append("")
@@ -442,9 +549,10 @@ def revise_message(book: Book, items: list[dict[str, Any]], settings: Settings,
                               images)
         for q in item["others"]:
             parts += [f"OTHER QUESTION OF THIS SECTION (do not change or repeat it): {q['prompt']}"]
+        parts += earlier_view(book, item["failed"], settings, images)
         for q in item["failed"]:
             failed = [c for c in (*CRITERIA, ONE_RIGHT) if q.get("criteria", {}).get(c) is False]
-            parts += [*question_lines(q, f"QUESTION TO FIX [{q['id']}]"),
+            parts += [*question_lines(q, f"QUESTION TO FIX [{q['id']}]", questions=practice),
                       f"Failed: {', '.join(failed) or 'see the finding'}",
                       f"Checker's finding: {q.get('problem') or '(none given)'}",
                       f"Suggested fix: {q.get('suggested_fix') or '(none given)'}"]
@@ -452,9 +560,10 @@ def revise_message(book: Book, items: list[dict[str, Any]], settings: Settings,
     return "\n".join(parts)
 
 
-def rewrite_message(book: Book, item: dict[str, Any], settings: Settings, wish: str) -> str:
+def rewrite_message(book: Book, item: dict[str, Any], settings: Settings, wish: str, note: str = "") -> str:
     """The task of rewriting one question as its reader asks. ``item`` has ``doc``, ``section``, ``blocks``,
-    ``first``, ``last``, ``question`` (as it stands now) and ``others`` (the section's other questions)."""
+    ``first``, ``last``, ``question`` (as it stands now) and ``others`` (the section's other questions). ``note``
+    says one more thing about the question (that it is being kept for practice, for example)."""
     q = item["question"]
     parts = [book_header(book, {item["doc"].index}), "", "TASK",
              "The reader of the book asks for a change to the question marked QUESTION TO CHANGE. Rewrite it as they "
@@ -464,8 +573,13 @@ def rewrite_message(book: Book, item: dict[str, Any], settings: Settings, wish: 
              "allow. Reply with one JSON object: {\"revisions\": [{\"id\": ..., \"action\": \"revise\", \"prompt\": ..., "
              "\"answer\": ..., \"supporting_paragraphs\": [...]}]}, with one entry, for this question."
              + ("" if settings.open_only else " The entry also has `form` and the members of the forms, as a question "
-                "in a draft has."), ""]
+                "in a draft has.")
+             + ("" if not settings.pathway else " The entry also has `reasoning`, `earlier_paragraphs`, `accounts_for`, "
+                "`cue_prompt` and `cue_answer`, as a practice question in a draft has: give them as they should be "
+                "after the change (of the earlier paragraphs only those shown with the question).")
+             + (" " + note if note else ""), ""]
     parts += section_view(item["doc"], item["section"], item["blocks"], item["first"], item["last"], settings, None)
+    parts += earlier_view(book, [q], settings, None)
     for other in item["others"]:
         parts += [f"OTHER QUESTION OF THIS SECTION (do not change or repeat it): {other['prompt']}"]
     parts += [*question_lines(q, f"QUESTION TO CHANGE [{q['id']}]"), "THE READER ASKS", "~~~", wish.replace("~~~", "~ ~ ~"), "~~~"]

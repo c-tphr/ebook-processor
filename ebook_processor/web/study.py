@@ -12,7 +12,7 @@ import json
 from http import HTTPStatus
 from typing import Any
 
-from .. import assist, notes, reading, srs
+from .. import assist, notes, pathway, reading, srs
 from .. import forms as qforms
 from .. import highlight_questions as hq
 from ..outputs import stem_of
@@ -30,8 +30,12 @@ class Study:
     # ---- reading: the book as the reader shows it, and the reader's place and grades
 
     def manifest(self, job_id: str) -> dict[str, Any]:
-        """The book as the reader needs it, with the questions from highlights that its checkpoints ask."""
-        made = hq.with_questions(self.book(job_id).manifest(), notes.load(self.folder(job_id)))
+        """The book as the reader needs it, with the questions from highlights that its checkpoints ask, and with
+        its graduated pathway when it was prepared with one: the ephemeral questions inside its sections, and
+        what the pathway adds to its practice questions (see ``pathway.into_manifest``)."""
+        book = self.book(job_id)
+        made = pathway.into_manifest(book.manifest(), pathway.load(self.folder(job_id)), book.blocks)
+        made = hq.with_questions(made, notes.load(self.folder(job_id)))
         return {**made, "editable": self.editable(job_id)}
 
     def reading_state(self, job_id: str) -> dict[str, Any]:
@@ -43,9 +47,10 @@ class Study:
         known = {p["id"] for c in book.data["checkpoints"] for p in c["prompts"]}
         with self.lock:
             known |= hq.ids(notes.load(self.folder(job_id)))  # questions from highlights are graded too
+            checks = pathway.ids(pathway.load(self.folder(job_id)))  # ephemeral questions: met, never graded
             old = reading.load_state(self.folder(job_id))
-            state = reading.merge_state(old, reading.clean_state(raw, book.data["book"]["source_sha256"], known), known,
-                                        [c["index"] for c in book.manifest()["chapters"]])
+            state = reading.merge_state(old, reading.clean_state(raw, book.data["book"]["source_sha256"], known, checks),
+                                        known, [c["index"] for c in book.manifest()["chapters"]])
             write_json(self.folder(job_id) / reading.STATE_FILE, state)
         return state
 
@@ -180,6 +185,8 @@ class Study:
                 """The card as the page gets it. ``own`` is what differs between a book's card and a note's."""
                 return {"job": job_id, "id": pid, "book": book, "chapter": chapter, "section": label,
                         **qforms.as_question(prompt), **own,
+                        # several answers are defensible: the evidence a well-supported one accounts for
+                        "accounts_for": list(prompt.get("accounts_for") or []),
                         "state": state["state"], "again": state["again"], "interval": round(state["interval"], 1),
                         "first": srs.kind_of(state, today) == "first", "times": len(state["reviews"]), "go": go,
                         "preview": srs.preview(state, today, settings)}

@@ -31,7 +31,7 @@ from .prep.limits import MAX_PROMPTS
 from .llm import BackendError, UsageLimitError
 from .runner import ready_backend
 from .runner import Cancelled, PipelineError, default_out_dir, rebuild, run_book, trial_dir, try_chapter, work_dir
-from .settings import CONTENT_MODES, DENSITIES, EFFORTS, KINDS, MAX_QUESTIONS, Settings, SettingsError, from_options
+from .settings import CONTENT_MODES, DENSITIES, EFFORTS, EPHEMERAL, KINDS, MAX_QUESTIONS, Settings, SettingsError, from_options
 
 EXIT_OK, EXIT_INPUT, EXIT_USAGE, EXIT_STOPPED = 0, 1, 2, 3
 COMMANDS = ("process", "estimate", "rebuild", "serve", "models", "update", "beta")
@@ -51,6 +51,12 @@ def add_run_options(p: argparse.ArgumentParser) -> None:
                    help="the kinds of question a run may write, separated by commas: open (you recall the answer and "
                         "grade yourself), choice (multiple choice), truefalse, cloze (fill in the blank), or all. The "
                         "model picks among them for each idea (default: open)")
+    g.add_argument("--ephemeral", choices=EPHEMERAL,
+                   help="ephemeral questions inside the sections, for the reader of the web app: brief checks close to "
+                        "the passage they are about, never graded. 'attention': to help you sustain your attention "
+                        "generally. 'linked': to build toward the practice questions explicitly; each check names the "
+                        "practice questions it supports. With either, a checkpoint opens with a higher-order question "
+                        "where the text rewards one (default: none, questions at the end of each section only)")
     g = p.add_argument_group("what the model reads and how strictly it is checked")
     g.add_argument("--content", choices=CONTENT_MODES,
                    help="tables, code and formulas: 'prose' hides them, 'text' shows their text, 'figures' also "
@@ -95,6 +101,7 @@ def add_steer_options(p: argparse.ArgumentParser) -> None:
 def settings_from(args: argparse.Namespace) -> Settings:
     return from_options(
         density=args.density, section_words=args.section_words, max_questions=args.max_questions, forms=args.forms,
+        ephemeral=args.ephemeral,
         content=args.content, kind=args.kind, rounds=args.rounds, model=args.model,
         checker_model=args.checker_model, effort=args.effort, jobs=args.jobs, part_words=args.part_words,
         epubcheck=args.epubcheck, title_suffix=args.title_suffix, preview=args.preview_questions)

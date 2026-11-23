@@ -32,6 +32,7 @@ from typing import Any, Callable
 
 from . import __version__, prompts
 from . import forms as qforms
+from . import pathway
 from .content import export_images
 from .llm import Backend, BackendCancelled, Completion
 from .prep import checkpoints as cp
@@ -50,6 +51,7 @@ STATE_VERSION = 1
 STATE_FILE = "state.json"
 SOURCE_COPY = "source.epub"
 DRAFT_ATTEMPTS = 3  # calls for one part before the fallback
+CONTEXT_WORDS = 3000  # the graduated pathway: how much text from before a part its drafter is shown, at most
 # Question statuses that go into the outputs. ``edited``: changed or written by the reader (see ``editing``).
 KEPT = ("passed", "unchecked", "unverified", "edited")
 
@@ -189,6 +191,10 @@ def normal_question(raw: Any) -> dict[str, Any]:
             **qforms.from_model(raw, prompt, lambda text: clean_text(text).replace("\n", " "))}
 
 
+def _one_line(text: Any) -> str:
+    return clean_text(text).replace("\n", " ")
+
+
 def auto_label(blocks: list[Block]) -> str:
     heading = next((b for b in blocks if b.kind == "heading" and b.words), None)
     words = heading.words if heading else next((b.words for b in blocks if b.words), ["Section"])
@@ -196,10 +202,15 @@ def auto_label(blocks: list[Block]) -> str:
 
 
 def check_part(data: Any, groups: list[tuple[SpineDoc, list[Block]]], may_stop_early: bool,
-               settings: Settings) -> tuple[list[dict[str, Any]], list[str], list[tuple[int, int, str]]]:
+               settings: Settings, context: set[str] | None = None) -> tuple[list[dict[str, Any]], list[str], list[tuple[int, Any, str]]]:
     """(ranges as stored, structural problems, question problems as (range, question, message)).
 
     The ranges are complete only when there is no structural problem.
+
+    In a book prepared for the graduated pathway (``pathway``) a section also has ``checks``, its ephemeral
+    questions. A problem with the n-th of them (counted from 0) has ``-1 - n`` where a question's number stands,
+    and a problem that is no reason to leave a question out has ``None`` there. ``context`` are the paragraphs the
+    drafter was shown from before the part.
     """
     raw = data.get("ranges") if isinstance(data, dict) else None
     if not isinstance(raw, list) or not raw:
@@ -209,9 +220,11 @@ def check_part(data: Any, groups: list[tuple[SpineDoc, list[Block]]], may_stop_e
         for i, b in enumerate(blocks):
             pos[b.ref] = (g, i)
     structural: list[str] = []
-    flaws: list[tuple[int, int, str]] = []
+    flaws: list[tuple[int, Any, str]] = []
     out: list[dict[str, Any]] = []
     expected: tuple[int, int] | None = (0, 0)
+    before = set(context or ())  # the pathway: the paragraphs shown that come before the range in hand
+    local_keys: dict[str, tuple[int, str]] = {}  # a practice question's key in the reply -> (its range, its key in the run)
     for n, r in enumerate(raw):
         if not isinstance(r, dict):
             structural.append(f"range {n + 1} is not an object")
@@ -255,14 +268,34 @@ def check_part(data: Any, groups: list[tuple[SpineDoc, list[Block]]], may_stop_e
                                       "that takes no marker); move the boundary by one paragraph")
             label = clean_text(r.get("label")).replace("\n", " ") or auto_label(span)
             inside = {b.ref for b in span}
-            questions = [normal_question(q) for q in (r.get("prompts") if isinstance(r.get("prompts"), list) else [])]
+            given = r.get("prompts") if isinstance(r.get("prompts"), list) else []
+            questions = [normal_question(q) for q in given]
             for k, q in enumerate(questions):
                 if k >= settings.max_questions:
                     flaws.append((len(out), k, f"{name} has {len(questions)} questions; at most "
                                                f"{settings.max_questions} are allowed"))
-                for problem in question_problems(q, inside, settings.forms):
+                more: list[str] = []
+                if settings.pathway:
+                    q.update(pathway.extras(given[k], _one_line), key=f"{first_ref}#{k + 1}")
+                    local = _one_line(given[k].get("key")) if isinstance(given[k], dict) else ""
+                    if local in local_keys:
+                        more.append(f"the key {local!r} is used by another question; give each practice question its own")
+                    elif local:
+                        local_keys[local] = (len(out), q["key"])
+                    more += pathway.extras_problems(q, before, cp.plain_text_problem)
+                for problem in question_problems(q, inside, settings.forms) + more:
                     flaws.append((len(out), k, f"{name}, question {k + 1}: {problem}"))
             entry.update(kind="section", label=label[:MAX_LABEL_CHARS], prompts=questions)
+            if settings.pathway:
+                entry["checks"] = [pathway.check_from(c, normal_question(c), settings.ephemeral)
+                                   for c in (r.get("checks") if isinstance(r.get("checks"), list) else [])]
+                for k, c in enumerate(entry["checks"]):
+                    if k >= pathway.MAX_CHECKS:
+                        flaws.append((len(out), -1 - k, f"{name} has {len(entry['checks'])} ephemeral questions; at most "
+                                                        f"{pathway.MAX_CHECKS} are allowed in a section"))
+                    for problem in question_problems(c, inside, settings.forms) + pathway.check_problems(c, span, settings.ephemeral):
+                        flaws.append((len(out), -1 - k, f"{name}, ephemeral question {k + 1}: {problem}"))
+        before.update(b.ref for b in span)
         out.append(entry)
         if last[1] + 1 < len(blocks):
             expected = (last[0], last[1] + 1)
@@ -282,7 +315,41 @@ def check_part(data: Any, groups: list[tuple[SpineDoc, list[Block]]], may_stop_e
                 if done * 2 < total:
                     structural.append(f"you stopped before {blocks[i].ref}, after {done} of {total} words; go on at "
                                       "least to the middle of the text before you stop")
+    if settings.pathway and not structural:
+        flaws += _links(out, local_keys, settings)
     return out, structural, flaws
+
+
+def _links(ranges: list[dict[str, Any]], local_keys: dict[str, tuple[int, str]], settings: Settings) -> list[tuple[int, Any, str]]:
+    """The graduated pathway: give each ephemeral question the run's keys of the practice questions it supports, in
+    place of the reply's own, and say what is wrong with the links and with the help a higher-order question has."""
+    flaws: list[tuple[int, Any, str]] = []
+    supported: set[str] = set()
+    for r, entry in enumerate(ranges):
+        name = f"range {r + 1} ({entry['first_paragraph']} to {entry['last_paragraph']})"
+        for k, c in enumerate(entry.get("checks") or []):
+            resolved = []
+            for local in c["supports"]:
+                target = local_keys.get(local)
+                if target is None:
+                    flaws.append((r, -1 - k, f"{name}, ephemeral question {k + 1}: supports names {local!r}, which is the "
+                                             "key of no practice question in your reply"))
+                elif target[0] < r:
+                    flaws.append((r, -1 - k, f"{name}, ephemeral question {k + 1}: supports names {local!r}, a practice "
+                                             "question of an earlier section; an ephemeral question supports questions "
+                                             "of its own section's checkpoint or of a later one"))
+                else:
+                    resolved.append(target[1])
+            c["supports"] = resolved
+            supported.update(resolved)
+    need = ("an ephemeral question that supports it, or a cue (cue_prompt and cue_answer)" if settings.ephemeral == "linked"
+            else "a cue (cue_prompt and cue_answer)")
+    for r, entry in enumerate(ranges):
+        for k, q in enumerate(entry.get("prompts") or []):
+            if q.get("reasoning") and not q.get("cue") and q.get("key") not in supported:
+                flaws.append((r, None, f"range {r + 1} ({entry['first_paragraph']} to {entry['last_paragraph']}), question "
+                                       f"{k + 1}: a higher-order question needs something for \"Help me recall\": {need}"))
+    return flaws
 
 
 def fallback_ranges(groups: list[tuple[SpineDoc, list[Block]]], settings: Settings) -> list[dict[str, Any]]:
@@ -339,6 +406,7 @@ def new_state(book: Book, settings: Settings, steer: Steer | None = None,
         "excluded": [],
         "sections": [],
         "questions": [],
+        "ephemeral": [],  # the graduated pathway: the questions asked inside the sections (see ``pathway``)
         "next": {"section": 1, "checkpoint": 1},
         "exclusions_reviewed": False,
         "warnings": [],
@@ -403,15 +471,26 @@ def carried_ranges(trial: dict[str, Any], book: Book) -> dict[str, list[dict[str
     by_section: dict[str, list[dict[str, Any]]] = {}
     for q in trial["questions"]:
         by_section.setdefault(q["section"], []).append(q)
+    found = ("status", "checks", "criteria", "citations", "evidence", "problem", "suggested_fix", "minor_note", "history")
+
+    def wording(q: dict[str, Any]) -> dict[str, Any]:
+        return {"prompt": q["prompt"], "answer": q["answer"], "supporting_paragraphs": q["supporting_paragraphs"],
+                **qforms.members(q), "carried": {k: copy.deepcopy(q[k]) for k in found}}
+
+    checks: dict[str, list[dict[str, Any]]] = {}
+    for c in pathway.ephemeral(trial):
+        checks.setdefault(c["section"], []).append(c)
     for s in trial["sections"]:
         base = {k: s[k] for k in ("chapter_href", "first_paragraph", "last_paragraph")}
-        out.setdefault(prefix[s["chapter_href"]], []).append({
+        entry = {
             **base, "kind": "section", "label": s["label"],
             "carried": {k: s[k] for k in ("judged", "natural_boundary", "boundary_note")},
-            "prompts": [{"prompt": q["prompt"], "answer": q["answer"], "supporting_paragraphs": q["supporting_paragraphs"],
-                         "carried": {k: copy.deepcopy(q[k]) for k in ("status", "checks", "criteria", "citations", "evidence",
-                                                                      "problem", "suggested_fix", "minor_note", "history")}}
-                        for q in by_section.get(s["id"], [])]})
+            # a question's id in the trial is its key here: the ephemeral questions that support it name it so
+            "prompts": [{**wording(q), **pathway.extras_of(q), **({"key": q["id"]} if "reasoning" in q else {})}
+                        for q in by_section.get(s["id"], [])]}
+        if "ephemeral" in trial:
+            entry["checks"] = [{**wording(c), "after": c["after"], "supports": list(c["supports"])} for c in checks.get(s["id"], [])]
+        out.setdefault(prefix[s["chapter_href"]], []).append(entry)
     for e in trial["excluded"]:
         base = {k: e[k] for k in ("chapter_href", "first_paragraph", "last_paragraph")}
         out.setdefault(prefix[e["chapter_href"]], []).append({
@@ -496,6 +575,42 @@ class Run:
         with self.lock:
             count_call(self.state["usage"], role, completion)
         return completion
+
+    def every(self) -> list[dict[str, Any]]:
+        """Every question of the run: the practice questions, then the ephemeral ones."""
+        return self.state["questions"] + pathway.ephemeral(self.state)
+
+    def practice(self) -> dict[str, dict[str, Any]] | None:
+        """The practice questions by id, for the tasks that show an ephemeral question with those it supports."""
+        return {q["id"]: q for q in self.state["questions"]} if self.settings.pathway else None
+
+    def inside(self, item: dict[str, Any], q: dict[str, Any], citing: bool = True) -> set[str]:
+        """The paragraphs a question may rest on: its section's, for an ephemeral question only up to where it is
+        asked. With ``citing``, a check's citations: also the earlier paragraphs a practice question draws on."""
+        refs = [b.ref for b in item["blocks"]]
+        if pathway.is_ephemeral(q):
+            return set(refs[: refs.index(q["after"]) + 1] if q["after"] in refs else refs)
+        return set(refs) | set(q.get("earlier_paragraphs") or [] if citing else [])
+
+    def context_before(self, sd: SpineDoc, start: int) -> list[tuple[SpineDoc, list[Block]]] | None:
+        """The graduated pathway: the text just before the block ``start`` of a document, back through the
+        documents before it, up to a number of words. A higher-order question may draw on it."""
+        if not self.settings.pathway:
+            return None
+        budget = min(CONTEXT_WORDS, self.settings.part_words // 3)
+        out: list[tuple[SpineDoc, list[Block]]] = []
+        for doc in reversed([d for d in self.book.spine if d.is_xhtml and d.blocks and d.index <= sd.index]):
+            take: list[Block] = []
+            for block in reversed(doc.blocks[:start] if doc is sd else doc.blocks):
+                if budget <= 0:
+                    break
+                take.append(block)
+                budget -= block.word_count
+            if take:
+                out.append((doc, take[::-1]))
+            if budget <= 0:
+                break
+        return out[::-1] or None
 
     def parallel(self, jobs: list[Callable[[], None]]) -> None:
         """Run the jobs side by side; the first failure stops the rest and is raised."""
@@ -601,7 +716,7 @@ class Run:
         def whole(unit: Unit) -> None:
             groups = [(sd, sd.blocks) for sd in unit.docs]
             if unit.key not in self.state["parts"]:
-                ranges = self.draft_part(groups, None, None, unit.key)
+                ranges = self.draft_part(groups, None, None, unit.key, context=self.context_before(unit.docs[0], 0))
                 with self.lock:
                     self.state["parts"][unit.key] = ranges
                 self.save()
@@ -621,7 +736,7 @@ class Run:
                 key = window[0].ref
                 if key not in self.state["parts"]:
                     continues = sd.blocks[-1] if end < len(sd.blocks) else None
-                    ranges = self.draft_part([(sd, window)], continues, previous, key)
+                    ranges = self.draft_part([(sd, window)], continues, previous, key, context=self.context_before(sd, start))
                     with self.lock:
                         self.state["parts"][key] = ranges
                     self.save()
@@ -635,17 +750,20 @@ class Run:
         self.assemble()
 
     def draft_part(self, groups: list[tuple[SpineDoc, list[Block]]], continues: Block | None, previous: str | None,
-                   key: str, feedback: str | None = None) -> list[dict[str, Any]]:
+                   key: str, feedback: str | None = None,
+                   context: list[tuple[SpineDoc, list[Block]]] | None = None) -> list[dict[str, Any]]:
         system = prompts.drafter_system(self.settings, self.steer)
         ranges: list[dict[str, Any]] = []
         structural: list[str] = []
-        flaws: list[tuple[int, int, str]] = []
+        flaws: list[tuple[int, Any, str]] = []
+        shown = {b.ref for _, blocks in context or [] for b in blocks}
         for _ in range(DRAFT_ATTEMPTS):
             message = prompts.draft_message(self.book, groups, self.settings, self.images, continues, previous,
-                                            feedback, self.steer)
+                                            feedback, self.steer, context)
             reply = self.call("draft", system, message, prompts.draft_schema(self.settings)).data
-            ranges, structural, flaws = check_part(reply, groups, continues is not None, self.settings)
-            if not structural and not flaws:
+            ranges, structural, flaws = check_part(reply, groups, continues is not None, self.settings, shown)
+            # a problem that is no reason to leave a question out is no reason to draft the part again either
+            if not structural and all(k is None for _, k, _ in flaws):
                 return ranges
             feedback = "\n".join(f"- {p}" for p in structural + [m for _, _, m in flaws])
             feedback += "\n\nYour earlier reply:\n" + json.dumps(reply, ensure_ascii=False)[:60000]
@@ -653,10 +771,22 @@ class Run:
             self.warn(f"Part {key}: the model returned no usable division after {DRAFT_ATTEMPTS} attempts "
                       f"({structural[0]}). It was cut into sections by length, without questions.")
             return fallback_ranges(groups, self.settings)
-        drop = {(r, k) for r, k, _ in flaws}
+        drop = {(r, k) for r, k, _ in flaws if k is not None}
+        if not drop:  # what is left is no reason to leave a question out
+            return ranges
+        flaws = [f for f in flaws if f[1] is not None]
+        gone: set[str] = set()
         for r, entry in enumerate(ranges):
             if entry["kind"] == "section":
+                gone.update(q["key"] for k, q in enumerate(entry["prompts"]) if (r, k) in drop and q.get("key"))
                 entry["prompts"] = [q for k, q in enumerate(entry["prompts"]) if (r, k) not in drop]
+                if "checks" in entry:
+                    entry["checks"] = [c for k, c in enumerate(entry["checks"]) if (r, -1 - k) not in drop]
+        for entry in ranges:  # an ephemeral question whose practice questions are all gone has nothing to build toward
+            for c in entry.get("checks") or []:
+                c["supports"] = [k for k in c["supports"] if k not in gone]
+            if self.settings.ephemeral == "linked" and "checks" in entry:
+                entry["checks"] = [c for c in entry["checks"] if c["supports"]]
         self.warn(f"Part {key}: {len(drop)} question{'s' if len(drop) != 1 else ''} left out because the drafter did "
                   f"not correct {'them' if len(drop) != 1 else 'it'} ({flaws[0][2]}).")
         return ranges
@@ -664,6 +794,8 @@ class Run:
     def add_ranges(self, ranges: list[dict[str, Any]], reviewed: bool = False) -> None:
         """Give ids to new sections and questions and add them to the state, in reading order."""
         state = self.state
+        keys: dict[str, str] = {}  # the pathway: a practice question's key -> its id
+        checks: list[dict[str, Any]] = []
         for entry in sorted(ranges, key=self.index.order):
             base = {k: entry[k] for k in ("chapter_href", "first_paragraph", "last_paragraph")}
             carried = entry.get("carried") or {}  # what a trial already found out
@@ -678,13 +810,28 @@ class Run:
             if entry["prompts"]:
                 section["checkpoint"] = next_checkpoint(state)
             state["sections"].append(section)
-            for n, q in enumerate(entry["prompts"], start=1):
+            # a checkpoint opens with its higher-order questions
+            for n, q in enumerate(sorted(entry["prompts"], key=lambda q: not q.get("reasoning")), start=1):
                 found = q.get("carried") or {}
-                state["questions"].append(new_question(f"{section['checkpoint']}-p{n}", sid,
-                                                       {k: v for k, v in q.items() if k != "carried"}, **copy.deepcopy(found)))
+                qid = f"{section['checkpoint']}-p{n}"
+                if q.get("key"):
+                    keys[q["key"]] = qid
+                state["questions"].append(new_question(qid, sid, {k: v for k, v in q.items() if k not in ("carried", "key")},
+                                                       **copy.deepcopy(found)))
+            for n, c in enumerate(entry.get("checks") or [], start=1):
+                found = c.get("carried") or {}
+                checks.append(new_question(f"{sid}-e{n}", sid, {k: v for k, v in c.items() if k != "carried"},
+                                           promoted=None, **copy.deepcopy(found)))
+        for c in checks:
+            c["supports"] = [keys[k] for k in c["supports"] if k in keys]
+            c["purpose"] = "linked" if c["supports"] else "attention"
         state["sections"].sort(key=self.index.order)
         state["excluded"].sort(key=self.index.order)
         sort_questions(state)
+        if checks or "ephemeral" in state:
+            position = {s["id"]: n for n, s in enumerate(state["sections"])}
+            state["ephemeral"] = sorted(pathway.ephemeral(state) + checks, key=lambda c: (
+                position[c["section"]], self.index.where[c["after"]][1], int(c["id"].rsplit("-e", 1)[1])))
 
     def assemble(self) -> None:
         with self.lock:
@@ -695,8 +842,10 @@ class Run:
             raise PipelineError("the assembled draft does not fit the book (a fault of this tool, not of the book):\n"
                                 + "\n".join(f"  {i}" for i in issues[:20]))
         self.save()
+        inside = len(pathway.ephemeral(self.state))
         self.emit("draft", f"drafted {len(self.state['sections'])} sections and {len(self.state['questions'])} "
-                           "questions")
+                           "questions" + (f", with {inside} ephemeral question{'s' if inside != 1 else ''} inside the sections"
+                                          if self.settings.pathway else ""))
 
     # ---- check and revise
 
@@ -748,32 +897,32 @@ class Run:
             failed = self.questions_by_section(lambda q: q["status"] == "failed" and q["checks"] < self.settings.rounds)
             if failed:
                 items = [{**self.section_item(s), "failed": failed[s["id"]],
-                          "others": [q for q in self.state["questions"]
+                          "others": [q for q in self.every()
                                      if q["section"] == s["id"] and q not in failed[s["id"]] and kept(q)]}
                          for s in self.state["sections"] if s["id"] in failed]
                 count = sum(len(i["failed"]) for i in items)
                 self.emit("revise", f"revising {count} question{'s' if count != 1 else ''} the check failed", 0, count)
                 self.parallel([(lambda b=b: self.revise_batch(b)) for b in self.batches(items)])
-            if not any(q["status"] == "unchecked" for q in self.state["questions"]):
+            if not any(q["status"] == "unchecked" for q in self.every()):
                 break
 
     def questions_by_section(self, want: Callable[[dict[str, Any]], bool]) -> dict[str, list[dict[str, Any]]]:
         out: dict[str, list[dict[str, Any]]] = {}
-        for q in self.state["questions"]:
+        for q in self.every():
             if want(q):
                 out.setdefault(q["section"], []).append(q)
         return out
 
     def check_batch(self, items: list[dict[str, Any]], total: int) -> None:
         system = prompts.checker_system(self.settings, self.steer)
-        wanted = {q["id"]: (q, {b.ref for b in item["blocks"]}) for item in items for q in item["questions"]}
+        wanted = {q["id"]: (q, self.inside(item, q)) for item in items for q in item["questions"]}
         judge = {item["section"]["id"]: item["section"] for item in items if item["judge_break"]}
         feedback = None
         usable: dict[str, dict[str, Any]] = {}
         sections: dict[str, dict[str, Any]] = {}
         for _ in range(2):
             reply = self.call("check", system, prompts.check_message(self.book, items, self.settings, self.images,
-                                                                     feedback), prompts.check_schema(self.settings)).data
+                                                                     feedback, self.practice()), prompts.check_schema(self.settings)).data
             usable, sections, problems = read_check(reply, wanted, judge, prompts.criteria(self.settings))
             if not problems:
                 break
@@ -803,13 +952,13 @@ class Run:
 
     def revise_batch(self, items: list[dict[str, Any]]) -> None:
         system = prompts.drafter_system(self.settings, self.steer)
-        wanted = {q["id"]: (q, {b.ref for b in item["blocks"]}) for item in items for q in item["failed"]}
+        wanted = {q["id"]: (q, self.inside(item, q, citing=False)) for item in items for q in item["failed"]}
         feedback = None
         good: dict[str, dict[str, Any]] = {}
         for _ in range(2):
             reply = self.call("revise", system, prompts.revise_message(self.book, items, self.settings, self.images,
-                                                                       feedback), prompts.revise_schema(self.settings)).data
-            good, problems = read_revisions(reply, wanted, self.settings.forms)
+                                                                       feedback, self.practice()), prompts.revise_schema(self.settings)).data
+            good, problems = read_revisions(reply, wanted, self.settings.forms, self.settings.pathway)
             if not problems:
                 break
             feedback = "\n".join(f"- {p}" for p in problems)
@@ -942,7 +1091,9 @@ def read_check(reply: Any, wanted: dict[str, tuple[dict[str, Any], set[str]]], j
 
 
 def read_revisions(reply: Any, wanted: dict[str, tuple[dict[str, Any], set[str]]],
-                   allowed: tuple[str, ...] | None = None) -> tuple[dict[str, dict[str, Any]], list[str]]:
+                   allowed: tuple[str, ...] | None = None, with_pathway: bool = False) -> tuple[dict[str, dict[str, Any]], list[str]]:
+    """(usable revisions, problems to send back). ``with_pathway``: the book is prepared for the graduated pathway,
+    so a practice question's revision carries the pathway's members, and an ephemeral question's stays brief."""
     problems: list[str] = []
     good: dict[str, dict[str, Any]] = {}
     entries = reply.get("revisions") if isinstance(reply, dict) else None
@@ -954,12 +1105,18 @@ def read_revisions(reply: Any, wanted: dict[str, tuple[dict[str, Any], set[str]]
             good[qid] = {"action": "withdraw"}
             continue
         q = normal_question(entry)
+        old = wanted[qid][0]
         flaws = question_problems(q, wanted[qid][1], allowed)
+        if with_pathway and pathway.is_ephemeral(old):
+            flaws += pathway.brief_problems(q)
+        elif with_pathway:  # of the earlier paragraphs, a revision can keep those the question had: it was shown no others
+            q.update(pathway.extras(entry, _one_line))
+            flaws += pathway.extras_problems(q, set(old.get("earlier_paragraphs") or []), cp.plain_text_problem)
         if flaws:
             problems += [f"{qid}: {f}" for f in flaws]
             continue
-        old = wanted[qid][0]
-        if q["prompt"] == old["prompt"] and q["answer"] == old["answer"] and qforms.members(q) == qforms.members(old):
+        if q["prompt"] == old["prompt"] and q["answer"] == old["answer"] and qforms.members(q) == qforms.members(old) \
+                and (pathway.is_ephemeral(old) or pathway.extras_of(q) == pathway.extras_of(old)):
             problems.append(f"{qid}: the revision is identical to the question that failed; change what the "
                             "finding flags, or withdraw the question")
             continue

@@ -24,6 +24,9 @@ EXCLUDED_RE = re.compile(r"^\[(\d+)\] (d\d+-p\d+) to (d\d+-p\d+) ", re.M)
 
 
 EMPTY_FORM = {"correct_choice": "", "wrong_choices": [], "truth": False, "blank": "", "also_accept": []}
+# the graduated pathway: what a practice question has when none of it applies
+EMPTY_PATHWAY = {"reasoning": "", "earlier_paragraphs": [], "accounts_for": [], "cue_prompt": "", "cue_answer": ""}
+LINKED = "building toward the practice questions"  # in the drafting instructions of a book prepared with links
 
 
 def formed(form: str, cite: str, href: str, n: int = 0) -> dict[str, Any]:
@@ -78,12 +81,13 @@ class Script:
     readings: int = 0
     sections_drafted: int = 0
     schema: dict[str, Any] = field(default_factory=dict)
+    system: str = ""
 
     def backend(self) -> ScriptedBackend:
         return ScriptedBackend(self.reply)
 
     def reply(self, role: str, system: str, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
-        self.schema = schema
+        self.schema, self.system = schema, system
         need = schema.get("required", [])
         if "connections" in need:
             return self.connections(prompt)
@@ -169,10 +173,19 @@ class Script:
         may_stop = "so you may stop" in prompt
         redraft = "An earlier draft excluded all of this text" in prompt
         ranges = []
+        # The graduated pathway. A section with two paragraphs or more gets a higher-order question, which draws on
+        # the first paragraph of the earlier text when some was shown, and one ephemeral question after its first
+        # paragraph. With links that ephemeral question supports the higher-order one; without, the question has a cue.
+        with_checks = "checks" in self.schema["properties"]["ranges"]["items"]["properties"]
+        linked = LINKED in self.system
+        earlier = [b.group(1) for b in BLOCK_RE.finditer(prompt.split("\nTEXT\n", 1)[0].split("\nEARLIER TEXT", 1)[1])
+                   if b.group(2) == "paragraph" and int(b.group(3))] if "\nEARLIER TEXT" in prompt.split("\nTEXT\n", 1)[0] else []
+        before: list[str] = []  # a paragraph of each section drafted so far in this reply
         for prefix, href, blocks in text_groups(prompt):
             if self.exclude(href) and not redraft:
                 ranges.append({"kind": "excluded", "first_paragraph": blocks[0][0], "last_paragraph": blocks[-1][0],
-                               "label": "", "reason": "Front matter: title page.", "prompts": []})
+                               "label": "", "reason": "Front matter: title page.", "prompts": [],
+                               **({"checks": []} if with_checks else {})})
                 continue
             if may_stop and self.stop_early:
                 blocks = blocks[: max(1, len(blocks) * 2 // 3)]
@@ -187,10 +200,27 @@ class Script:
                 if allowed:  # one form after another, section by section
                     question = formed(allowed[self.sections_drafted % len(allowed)], support, href, self.sections_drafted)
                 self.sections_drafted += 1
+                more: dict[str, Any] = {}
+                if with_checks:
+                    paragraphs = [ref for ref, kind, words in span if kind == "paragraph" and words]
+                    higher = len(paragraphs) >= 2
+                    key = f"q{self.sections_drafted}"
+                    question = {**question, **EMPTY_PATHWAY, "key": key}
+                    if higher:  # an earlier paragraph: of the text before the part, or else of the section before this one
+                        question.update(reasoning="explain", earlier_paragraphs=earlier[:1] or before[-1:])
+                        if question.get("form", "open") == "open":
+                            question["accounts_for"] = [f"What {paragraphs[0]} says.", f"What {paragraphs[1]} says."]
+                        if not linked:
+                            question.update(cue_prompt=f"What does {paragraphs[0]} say first?", cue_answer=f"What {paragraphs[0]} says.")
+                    more["checks"] = [{**({**EMPTY_FORM, "form": "open"} if allowed else {}),
+                                       "prompt": f"What was just said at {paragraphs[0]}?", "answer": f"What {paragraphs[0]} says.",
+                                       "supporting_paragraphs": [paragraphs[0]], "after_paragraph": paragraphs[0],
+                                       "supports": [key] if linked else []}] if higher else []
                 ranges.append({
                     "kind": "section", "first_paragraph": span[0][0], "last_paragraph": span[-1][0],
                     "label": f"Section at {span[0][0]}", "reason": "",
-                    "prompts": [{**question, "supporting_paragraphs": [support]}]})
+                    "prompts": [{**question, "supporting_paragraphs": [support]}], **more})
+                before.append(support)
                 if len(span) > self.blocks_per_section:
                     break
         reply = {"ranges": ranges}
@@ -236,6 +266,7 @@ class Script:
                         revisions.append({**made, "id": qid, "action": "revise", "supporting_paragraphs": [cite]})
                         continue
                     revisions.append({**({**EMPTY_FORM, "form": "open"} if allowed else {}),
+                                      **(EMPTY_PATHWAY if "reasoning" in self.schema["properties"]["revisions"]["items"]["properties"] else {}),
                                       "id": qid, "action": "revise", "prompt": f"What does {cite} say (try {n_checks})?",
                                       "answer": f"What {cite} says, revised after check {n_checks}.",
                                       "supporting_paragraphs": [cite]})

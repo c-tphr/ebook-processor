@@ -146,14 +146,16 @@ class Questions:
 
     def restart_question(self, job_id: str, qid: str) -> dict[str, Any]:
         """Start a question over: it counts as never answered. It is asked again at its checkpoint, or, when the
-        reader is past that, it is a new card in Practice."""
+        reader is past that or the question was promoted from an ephemeral one, it is a new card in Practice."""
         with self.booked(job_id):
             shown = self._edit(job_id, lambda book, state: editing.view(book, state, qid), build=False)
             with self.lock:
                 self._forget_answers(job_id, qid)
                 manifest = self.book(job_id).manifest()
                 section = next((s for s in manifest["sections"] if s["id"] == shown["section"]["id"]), None)
-                if shown["kept"] and section is not None and hq.passed(reading.load_state(self.folder(job_id)), manifest, section):
+                # a question made of an ephemeral one is not asked at a checkpoint: it is a card wherever the reader is
+                if shown["kept"] and section is not None and (
+                        shown.get("promoted_from") or hq.passed(reading.load_state(self.folder(job_id)), manifest, section)):
                     cards = self.cards(job_id)
                     cards["cards"][qid] = srs.new_card()
                     write_json(self.folder(job_id) / srs.FILE, cards)
@@ -169,10 +171,29 @@ class Questions:
         return self.book_question(job_id, qid)
 
     def rewrite_question(self, job_id: str, qid: str, raw: dict[str, Any]) -> dict[str, Any]:
+        """A model's rewrite of a question to the reader's wish, for the reader to take or change. ``qid`` may be
+        an ephemeral question's: it is then rewritten as the practice question the reader is making of it."""
         settings, backend, steer = self._models(job_id, ["draft"])
         draft = raw.get("draft") if isinstance(raw.get("draft"), dict) else None
         return self._asked(lambda: self._look(
             job_id, lambda book, state: editing.rewrite(backend, book, state, qid, raw.get("wish"), settings, steer, draft)))
+
+    # ---- the graduated pathway: an ephemeral question kept for Practice (see pathway.py)
+
+    def ephemeral_question(self, job_id: str, eid: str) -> dict[str, Any]:
+        """An ephemeral question as the window that promotes it shows it."""
+        return self._edit(job_id, lambda book, state: editing.ephemeral_view(book, state, eid), build=False)
+
+    def promote_ephemeral(self, job_id: str, eid: str, raw: dict[str, Any]) -> dict[str, Any]:
+        """Keep an ephemeral question for Practice, as it is written or with the wording ``raw`` gives. It is a new
+        card at once. The app's reader does not ask it at the section's checkpoint, which stays as it was."""
+        with self.booked(job_id):
+            made = self._edit(job_id, lambda book, state: copy.deepcopy(editing.promote(state, book, eid, raw)))
+            with self.lock:
+                cards = self.cards(job_id)
+                cards["cards"].setdefault(made["id"], srs.new_card())
+                write_json(self.folder(job_id) / srs.FILE, cards)
+        return self.book_question(job_id, made["id"])
 
     # ---- questions from highlights (see highlight_questions.py)
 

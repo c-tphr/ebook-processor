@@ -126,7 +126,7 @@ One JSON object:
 - `prompts`: for a section, its questions (possibly none). Always empty for an excluded range.
 - Use the paragraph references exactly as the block headers show them.
 
-${form_reply}The task message says which paragraphs to cover. When it says the document continues after the part you were given, you may stop early: end your last section at the last natural boundary you are sure of, and leave the paragraphs after it out of your reply. They will be given again with what follows.
+${form_reply}${pathway_reply}The task message says which paragraphs to cover. When it says the document continues after the part you were given, you may stop early: end your last section at the last natural boundary you are sure of, and leave the paragraphs after it out of your reply. They will be given again with what follows.
 
 ## 9. Revising
 
@@ -184,3 +184,4 @@ When the task message lists problems with an earlier reply, or a checker's findi
 ## 11. The reader
 
 $reader_rules
+${pathway_rules}

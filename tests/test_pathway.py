@@ -422,3 +422,65 @@ def test_the_command_line_takes_the_choice(tmp_path, capsys):
     with pytest.raises(SystemExit):
         make_parser().parse_args(["process", "book.epub", "--ephemeral", "often"])
     capsys.readouterr()
+
+
+# --------------------------------------------------------------------------
+# What a review of this work found (November 2026)
+
+
+def test_a_check_stands_after_a_paragraph_of_text_never_after_a_table_or_a_picture():
+    book = load_book(FIXTURE)
+    sd = next(d for d in book.spine if any(b.placeholder is not None and b.words for b in d.blocks))
+    table = next(b for b in sd.blocks if b.placeholder is not None and b.words)
+    before = next(b.ref for b in sd.blocks if b.kind == "paragraph" and b.words)
+    reply = section(sd, checks=[a_check(table.ref, cite=before)])
+    assert any("is a table, a listing, a formula or a picture" in p for p in problems(reply, sd))
+
+
+def test_the_passage_of_a_check_begins_at_the_earliest_paragraph_it_rests_on():
+    blocks = {"d01-p003": [1, 30, 60], "d01-p006": [1, 120, 150]}
+    doc = {"format": pathway.FORMAT, "version": pathway.VERSION, "mode": "attention", "questions": {},
+           "ephemeral": [{"id": "s0001-e1", "section": "s0001", "after": "d01-p006", "purpose": "attention", "prompt": "Q?", "answer": "A.",
+                          "supporting_paragraphs": ["d01-p006", "d01-p003"], "supports": [], "promoted": None}]}
+    manifest = {"sections": [{"id": "s0001", "chapter": 1, "start": 0, "end": 400, "prompts": []}]}
+    (check,) = pathway.into_manifest(manifest, doc, blocks)["sections"][0]["checks"]
+    assert (check["from"], check["at"]) == (30, 150)
+
+
+def test_over_the_limit_a_recall_question_goes_before_a_higher_order_one():
+    _, sd, refs = part()
+    reply = section(sd, {"reasoning": "explain", "cue_prompt": "Who keeps the light?", "cue_answer": "The keeper."})
+    reply["ranges"][0]["prompts"].insert(0, {**EMPTY_PATHWAY, "key": "q0", "prompt": "Who winds the clockwork?", "answer": "The keeper.",
+                                             "supporting_paragraphs": [refs[0]]})
+    one = from_options(density="short", ephemeral="attention", max_questions=1)
+    _, _, flaws = check_part(reply, [(sd, sd.blocks)], False, one)
+    assert [k for _, k, m in flaws if "at most 1 are allowed" in m] == [0]         # the recall question, though it was written first
+
+
+def test_a_check_with_a_problem_of_its_own_is_no_help_for_the_question_it_supports():
+    _, sd, refs = part()
+    reply = section(sd, {"reasoning": "explain"}, checks=[a_check(refs[1], cite=refs[3])])   # it cites what the reader has not read
+    _, _, flaws = check_part(reply, [(sd, sd.blocks)], False, LINKED)
+    assert any(k is None and "Help me recall" in m for _, k, m in flaws)
+    reply = section(sd, {"reasoning": "explain"}, checks=[a_check(refs[1])])
+    assert check_part(reply, [(sd, sd.blocks)], False, LINKED)[2] == []
+
+
+def test_a_promoted_question_that_was_taken_out_does_not_stand_in_the_way(tmp_path):
+    _, out = letter(tmp_path, ATTENTION)
+    road = state_of(out)["ephemeral"][0]["id"]
+    change_run(out, lambda book, state: editing.promote(state, book, road) and None)
+    rebuild(out, remove=["c0001-p2"])
+    again = change_run(out, lambda book, state: dict(editing.promote(state, book, road)))
+    assert again["id"] == "c0001-p3" and pathway_of(out)["ephemeral"][0]["promoted"] == "c0001-p3"
+
+
+def test_the_notebook_opens_the_passage_of_an_answer_in_its_own_section(make_web_app):
+    app = make_web_app()
+    job = app.process_fixture(density="short", ephemeral="linked")
+    doc = json.loads((app.data / job["id"] / "fixture.questions.json").read_text(encoding="utf-8"))
+    crossing = next(q for q in doc["questions"] if q.get("earlier_paragraphs"))
+    assert crossing["passage"][0]["earlier"]
+    book = app.jobs.book(job["id"])
+    own = book.blocks[crossing["supporting_paragraphs"][0]]
+    assert app.jobs.sources(job["id"])[crossing["id"]] == {"chapter": own[0], "word": own[1]}

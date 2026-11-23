@@ -270,13 +270,17 @@ def check_part(data: Any, groups: list[tuple[SpineDoc, list[Block]]], may_stop_e
             inside = {b.ref for b in span}
             given = r.get("prompts") if isinstance(r.get("prompts"), list) else []
             questions = [normal_question(q) for q in given]
+            if settings.pathway:
+                for k, q in enumerate(questions):
+                    q.update(pathway.extras(given[k], _one_line), key=f"{first_ref}#{k + 1}")
+            # over the limit are the last ones, and of the graduated pathway the recall questions before a higher-order one
+            over = set(sorted(range(len(questions)), key=lambda k: not questions[k].get("reasoning"))[settings.max_questions:])
             for k, q in enumerate(questions):
-                if k >= settings.max_questions:
+                if k in over:
                     flaws.append((len(out), k, f"{name} has {len(questions)} questions; at most "
                                                f"{settings.max_questions} are allowed"))
                 more: list[str] = []
                 if settings.pathway:
-                    q.update(pathway.extras(given[k], _one_line), key=f"{first_ref}#{k + 1}")
                     local = _one_line(given[k].get("key")) if isinstance(given[k], dict) else ""
                     if local in local_keys:
                         more.append(f"the key {local!r} is used by another question; give each practice question its own")
@@ -316,13 +320,15 @@ def check_part(data: Any, groups: list[tuple[SpineDoc, list[Block]]], may_stop_e
                     structural.append(f"you stopped before {blocks[i].ref}, after {done} of {total} words; go on at "
                                       "least to the middle of the text before you stop")
     if settings.pathway and not structural:
-        flaws += _links(out, local_keys, settings)
+        flaws += _links(out, local_keys, settings, {(r, k) for r, k, _ in flaws})
     return out, structural, flaws
 
 
-def _links(ranges: list[dict[str, Any]], local_keys: dict[str, tuple[int, str]], settings: Settings) -> list[tuple[int, Any, str]]:
+def _links(ranges: list[dict[str, Any]], local_keys: dict[str, tuple[int, str]], settings: Settings,
+           flawed: set[tuple[int, Any]]) -> list[tuple[int, Any, str]]:
     """The graduated pathway: give each ephemeral question the run's keys of the practice questions it supports, in
-    place of the reply's own, and say what is wrong with the links and with the help a higher-order question has."""
+    place of the reply's own, and say what is wrong with the links and with the help a higher-order question has.
+    ``flawed`` are the questions that have a problem already: one of those may be left out, so it is no help."""
     flaws: list[tuple[int, Any, str]] = []
     supported: set[str] = set()
     for r, entry in enumerate(ranges):
@@ -341,7 +347,8 @@ def _links(ranges: list[dict[str, Any]], local_keys: dict[str, tuple[int, str]],
                 else:
                     resolved.append(target[1])
             c["supports"] = resolved
-            supported.update(resolved)
+            if (r, -1 - k) not in flawed and not any(f[:2] == (r, -1 - k) for f in flaws):
+                supported.update(resolved)
     need = ("an ephemeral question that supports it, or a cue (cue_prompt and cue_answer)" if settings.ephemeral == "linked"
             else "a cue (cue_prompt and cue_answer)")
     for r, entry in enumerate(ranges):

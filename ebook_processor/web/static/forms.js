@@ -269,8 +269,10 @@ async function openEditor({ job, id, onChange }) {
     if (draft && draft.supporting_paragraphs) passage.set(draft.supporting_paragraphs);
     const wish = el("input", { type: "text", id: "qf-wish", "aria-label": "What the model should change", maxlength: 300, placeholder: "Or tell the model what to change: make it harder, ask about the cause instead" });
     // A question that several answers can meet: the evidence a well-supported answer accounts for, one statement a line.
-    const had = (q.accounts_for || []).length > 0;
-    const evidence = had ? el("textarea", { id: "qf-evidence", "aria-label": "The evidence a well-supported answer accounts for", value: q.accounts_for.join("\n") }) : null;
+    // The field is there when the question has such evidence as it is saved, also after a rewrite that left it out:
+    // what the field holds is what is kept, so a rewrite into a question with one answer takes the evidence away.
+    const had = (shown.accounts_for || []).length > 0 || (q.accounts_for || []).length > 0;
+    const evidence = had ? el("textarea", { id: "qf-evidence", "aria-label": "The evidence a well-supported answer accounts for", value: (q.accounts_for || []).join("\n") }) : null;
     const cue = draft && "cue" in draft ? { cue: draft.cue } : {};       // a rewrite brings its own cue for Help me recall
     const changed = () => ({ ...fields.read(), supporting_paragraphs: passage.read(), ...cue,
       ...(evidence ? { accounts_for: evidence.value.split("\n").map((t) => t.trim()).filter(Boolean) } : {}) });

@@ -398,10 +398,19 @@ function drawFoot() {
 /* ---------- moving ---------- */
 async function setMode(m) {
   if (view && view.stop) view.stop();
-  mode = m; if (!reread) S.position = { ...pos, mode };
+  mode = m; if (!reread && !revisit) S.position = { ...pos, mode };
+  if (qc) qc.resume = { ...qc.resume, mode: m };          // a question that is open stays open, over the new view
+  if (cp && cp.resume) cp.resume = { ...cp.resume, mode: m };
   await render(); save();
+  if (qc) drawCheck(); else if (cp) drawCp();
 }
-async function jump(c, w) { closeDrawer(); if (view && view.stop) view.stop(); qc = null; pos = { chapter: c, word: w }; await render(); setPos(c, w, false); }
+// Going somewhere else ends a look back at a passage: the question it belonged to is done with.
+function endRevisit() {
+  if (!revisit) return;
+  S.x_checks[revisit.check.id] = { at: stamp(), outcome: "done", revisits: revisit.revisits };
+  revisit = null;
+}
+async function jump(c, w) { closeDrawer(); if (view && view.stop) view.stop(); qc = null; endRevisit(); pos = { chapter: c, word: w }; await render(); setPos(c, w, false); }
 function rearm(w) {
   handled = new Set(sectionsIn(pos.chapter).filter((s) => s.end <= w).map((s) => s.id));
   behind = new Set(sectionsIn(pos.chapter).flatMap((s) => (s.checks || []).filter((c) => c.at < w).map((c) => c.id)));
@@ -429,7 +438,9 @@ const due = (s) => !PANE && s.prompts.length && !completed(s) && !handled.has(s.
 let qcAsk = null;                     // the place to answer one that the app grades
 function checksOf(s) {                // the ones the reader's setting lets through: all, every second one of the chapter, or none
   const all = s.checks || [];
-  if (PANE || reread || settings.read_checks === "off") return [];
+  if (PANE || reread) return [];
+  // the one whose passage the reader went back to is asked again whatever the setting, or that look would never end
+  if (settings.read_checks === "off") return revisit ? all.filter((c) => c.id === revisit.check.id) : [];
   if (settings.read_checks !== "fewer") return all;
   const order = sectionsIn(s.chapter).flatMap((x) => x.checks || []).map((c) => c.id);
   return all.filter((c) => order.indexOf(c.id) % 2 === 0 || (revisit && revisit.check.id === c.id));
@@ -687,7 +698,7 @@ function scrollView() {
     let clip = null;
     for (const g of gates) {
       if (g.c) {                      // a question inside the section: the text stops at it until it is answered or skipped
-        const waits = !S.x_checks[g.c.id] && !behind.has(g.c.id) && checksOf(g.s).includes(g.c);
+        const waits = !S.x_checks[g.c.id] && !behind.has(g.c.id) && checksOf(g.s).some((c) => c.id === g.c.id);   // by id: the questions are taken anew when one changes
         g.gate.hidden = !waits;
         if (waits) put(g.gate, h("div", {}, h("span", { class: "m" }, "Quick check"), h("b", {}, "A question about what you just read")),
           h("span", { class: "row" }, h("button", { class: "link", onclick: () => { qc = { check: g.c, section: g.s, resume: { chapter: pos.chapter, word: pos.word, mode }, revisits: revisit && revisit.check.id === g.c.id ? revisit.revisits : 0 }; closeCheck("skipped"); } }, "Skip"),
@@ -883,6 +894,7 @@ function openCheckpoint(section, { index, resume = null, all = false } = {}) {
   if (index === undefined) index = all ? 0 : section.prompts.findIndex((p) => !S.grades[p.id]);
   if (index < 0 || index >= section.prompts.length) return;   // nothing left to ask
   if (view && view.stop) view.stop();
+  endRevisit();
   cp = { section, index, all, revealed: false, missed: false, text: "", resume: resume || { chapter: pos.chapter, word: mode === "rsvp" ? section.end : pos.word, mode } };
   persistCp(); drawCp();
 }

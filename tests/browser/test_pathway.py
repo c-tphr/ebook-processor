@@ -344,3 +344,75 @@ def test_the_add_form_offers_both_purposes_and_a_book_keeps_the_one_chosen(page:
     assert job["settings"]["ephemeral"] == "linked"
     expect(page.locator("#inside-s0001")).to_contain_text("Builds toward c0001-p1")
     road.call("PUT", "/api/settings", json={"add_ephemeral": None})   # the form remembers the choice: put it back
+
+
+# ---- what a review of this work found (November 2026)
+
+
+def test_in_the_scroll_view_the_next_question_is_still_asked_after_one_was_kept_for_practice(page: Page, road: WebApp):
+    app = prepare(road, "attention").never_opened()
+    reading = Reading(page, app, "scroll")
+    page.locator(f".gate.quick[data-check='{ROAD}']").get_by_role("button", name="Answer").click()
+    reading.key("Enter")
+    page.locator("#qc-keep").click()
+    page.locator(".qf-dlg[open] #qf-save").click()             # the book's questions are taken anew
+    expect(page.locator("#qc-kept")).to_be_visible()
+    reading.key("Enter")
+    expect(page.locator(f".gate.quick[data-check='{FORGERY}']")).to_be_visible()   # ... and the next one still stops the text
+    assert reading.state()["met"].keys() == {ROAD}
+
+
+def test_a_look_back_at_the_passage_always_ends(page: Page, prepared):
+    reading = Reading(page, prepared("attention"))
+    reading.on()
+    reading.key("Enter")
+    page.locator(".cp.qc [data-freq=off]").click()             # no more questions, please: and then the thread is lost
+    page.locator("#qc-back").click()
+    page.wait_for_function("() => !!revisit && !qc")
+    stop = reading.on()                                        # reading on asks the question once more, whatever the setting
+    assert stop["check"] == {"id": ROAD, "revealed": False} and stop["back"]
+    reading.key("Enter"), reading.key("Enter")
+    state = reading.state()
+    assert not state["back"] and state["met"][ROAD]["outcome"] == "done" and state["setting"] == "off"
+    assert reading.on()["question"] == REACTIONS               # and none of the others
+    page.keyboard.press("Escape")
+    # going somewhere else from the passage ends the look back too, and the place is the reader's again
+    page.evaluate("() => { delete S.x_checks['s0001-e1']; return AppSettings.set('read_checks', 'all'); }")
+    again = Reading(page, reading.app)
+    page.evaluate("() => { cp = null; document.querySelector('.cp')?.remove(); delete S.active_checkpoint; return jump(book.chapters[0].index, 0); }")
+    again.on()
+    again.key("Enter")
+    page.locator("#qc-back").click()
+    page.wait_for_function("() => !!revisit && !qc")
+    end = page.evaluate("() => book.sections[1].start")
+    page.evaluate("(w) => jump(book.chapters[0].index, w)", end)
+    state = again.state()
+    assert not state["back"] and state["met"][ROAD]["revisits"] == 1 and state["word"] == end
+    assert page.evaluate("() => S.position.word") == end
+
+
+def test_a_question_stays_open_when_the_view_is_changed_under_it(page: Page, prepared):
+    reading = Reading(page, prepared("attention"))
+    reading.on()
+    page.locator("#modes button", has_text="Scroll").click()
+    page.wait_for_function("() => mode === 'scroll' && !!view")
+    expect(page.locator(".cp.qc h1")).to_have_text("Which road does Tomas take to the council, and why?")
+    reading.key("Enter"), reading.key("Enter")                 # the keys still answer it
+    state = reading.state()
+    assert state["met"][ROAD]["outcome"] == "done" and state["mode"] == "scroll" and state["check"] is None
+
+
+def test_a_rewrite_into_a_question_with_one_answer_takes_the_evidence_away(page: Page, road: WebApp):
+    app = prepare(road, "attention").never_opened()
+    page.goto(f"{app.url}/#/run/{app.id}")
+    page.get_by_role("button", name=f"Edit question {REACTIONS}").click()
+    window = page.locator(".qf-dlg[open]")
+    assert len(window.locator("#qf-evidence").input_value().splitlines()) == 3
+    window.locator("#qf-wish").fill("ask only what Varga concluded")
+    window.locator("#qf-rewrite").click()
+    expect(window.locator(".qf-note")).to_contain_text("The model's rewrite is in the form")
+    expect(window.locator("#qf-evidence")).to_have_value("")   # the stand-in's rewrite has no such evidence: the field shows it
+    window.locator("#qf-save").click()
+    expect(window).to_have_count(0)
+    kept = app.call("GET", f"/jobs/{app.id}/book-questions/{REACTIONS}")
+    assert "accounts_for" not in kept and "(as asked: ask only what Varga concluded)" in kept["answer"]

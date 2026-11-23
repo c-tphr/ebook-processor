@@ -177,6 +177,9 @@ def check_problems(c: dict[str, Any], blocks: list[Any], mode: str) -> list[str]
         out.append(f"after_paragraph {c['after']!r} is not a paragraph of the question's section")
     elif not blocks[after].words or blocks[after].kind == "heading":
         out.append(f"after_paragraph {c['after']} is a heading or has no words; place the question after a paragraph of text")
+    elif blocks[after].placeholder is not None:  # the app's reader knows where a paragraph ends, not a table or a picture
+        out.append(f"after_paragraph {c['after']} is a table, a listing, a formula or a picture; place the question after a "
+                   "paragraph of text")
     elif not worded or after >= worded[-1]:
         out.append(f"after_paragraph {c['after']} is the section's last paragraph, where the checkpoint is; place the "
                    "question at a pause inside the section, or leave it out")
@@ -262,11 +265,11 @@ def into_manifest(manifest: dict[str, Any], doc: dict[str, Any] | None, blocks: 
         place = blocks.get(c.get("after"))
         if not place:
             continue
-        first = next((blocks[r] for r in c.get("supporting_paragraphs") or [] if r in blocks), place)
+        begins = min([blocks[r][1] for r in c.get("supporting_paragraphs") or [] if r in blocks and blocks[r][0] == place[0]] + [place[1]])
         by_section.setdefault(c["section"], []).append({
             "id": c["id"], "prompt": c["prompt"], "answer": c["answer"], **qforms.members(c),
             "purpose": c.get("purpose") or "attention", "supports": list(c.get("supports") or []),
-            "promoted": c.get("promoted") or None, "chapter": place[0], "at": place[2], "from": min(first[1], place[1])})
+            "promoted": c.get("promoted") or None, "chapter": place[0], "at": place[2], "from": begins})
     out = copy.copy(manifest)
     out["ephemeral"] = doc.get("mode") or "none"
     out["sections"] = []

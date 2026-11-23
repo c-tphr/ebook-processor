@@ -268,6 +268,8 @@ class Study:
         out = {}
         for q in doc.get("questions", []):
             for entry in q.get("passage") or []:
+                if entry.get("earlier"):  # what the question draws on from before its section stands first in the passage
+                    continue
                 if entry.get("ref") in where:
                     out[q["id"]] = {"chapter": where[entry["ref"]][0], "word": where[entry["ref"]][1]}
                     break

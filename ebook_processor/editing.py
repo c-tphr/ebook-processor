@@ -245,7 +245,7 @@ def promote(state: dict[str, Any], book: Book, eid: Any, raw: Any = None) -> dic
     ``supporting_paragraphs``, as an edit does. The ephemeral question itself stays what it is, with ``promoted``
     naming the new question."""
     c = find_ephemeral(state, eid)
-    if any(q["id"] == c.get("promoted") for q in state["questions"]):
+    if any(q["id"] == c.get("promoted") and kept(q) for q in state["questions"]):
         raise EditError("This question is already kept for Practice.")
     section = section_of(state, c["section"])
     _, blocks, _, _ = blocks_of(book, section)

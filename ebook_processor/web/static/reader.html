@@ -102,6 +102,8 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .gate { font-family: var(--grot); border-top: 1px solid var(--ink); border-bottom: 1px solid var(--ink); margin: 1.6em 0; padding: 16px 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
 .gate b { font: 500 20px/1.2 var(--grot); letter-spacing: -0.03em; display: block; }
 .gate.done { border-color: var(--ghost); padding: 8px 0; } .gate.done b { font-size: 15px; font-weight: 400; color: var(--mute); }
+.gate[hidden] { display: none; }
+.gate.quick { border-style: dashed; margin: 1.2em 0; padding: 12px 0; } .gate.quick b { font-size: 17px; }
 .chapnav { max-width: var(--measure); margin: 2em auto 0; display: flex; justify-content: space-between; gap: 10px; }
 /* rsvp */
 .rv { position: absolute; inset: 0; display: grid; grid-template-rows: minmax(120px, 1fr) auto minmax(0, 1.1fr); gap: 10px; padding: 16px 0; }
@@ -132,8 +134,9 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .rv .num { font-variant-numeric: tabular-nums; min-width: 4ch; text-align: center; display: inline-block; }
 
 /* checkpoint */
-.cp { position: absolute; inset: 0; background: var(--paper); z-index: 5; overflow: auto; display: grid; align-content: center; padding: 24px 0; }
-.cp .in { max-width: 900px; width: 100%; margin: 0 auto; position: relative; }
+.cp { position: absolute; inset: 0; background: var(--paper); z-index: 5; overflow: auto; display: grid; padding: 24px 0; }
+/* in the middle while it fits; from the top, and scrolled, when it is taller than the window (an answer with its evidence) */
+.cp .in { max-width: 900px; width: 100%; margin: auto; position: relative; }
 .cp .in::before, .cp .in::after { content: ""; position: absolute; width: 21px; height: 21px; pointer-events: none; background: linear-gradient(var(--ink), var(--ink)) center / 1px 100% no-repeat, linear-gradient(var(--ink), var(--ink)) center / 100% 1px no-repeat; }
 .cp .in::before { top: -22px; left: -11px; } .cp .in::after { bottom: -22px; right: -11px; }
 .cp .head { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--ink); padding-bottom: 8px; margin-bottom: 26px; flex-wrap: wrap; }
@@ -146,6 +149,12 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .cp .note { margin: 14px 0 0; color: var(--mute); }
 .cp .kind { display: block; margin: -12px 0 12px; color: var(--blue); }
 .cp .qf-verdict p { font: 18px/1.5 var(--serif); } .cp .qf-verdict p .m { font: 11.5px/1.5 var(--mono); }
+.cp .two .qf-evidence { font: 17px/1.45 var(--serif); margin-top: 8px; } .cp .two .qf-evidence + .m { display: inline-block; margin-top: 2px; }
+/* A question asked inside a section, and the prompt "Help me recall" brings back: lighter than a checkpoint. */
+.cp.qc .in { max-width: 720px; } .cp.qc h1 { font-size: clamp(22px, 2.8vw, 32px); }
+.cp .ref { border: 1px solid var(--ink); background: var(--sheet); padding: 14px 16px 18px; }
+.cp .ref p { margin: 8px 0 0; font: 18px/1.5 var(--serif); white-space: pre-wrap; }
+.cp .freq { margin-top: 28px; padding-top: 10px; border-top: 1px solid var(--ghost); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; color: var(--mute); }
 .lab { display: inline-block; font: 11px/1 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; padding: 4px 6px; border: 1px solid var(--ink); white-space: nowrap; }
 .lab.inv { background: var(--ink); color: var(--paper); } .lab.blue { background: var(--blue); border-color: var(--blue); color: var(--on-blue); }
 kbd { font: 11px/1 var(--mono); border: 1px solid currentColor; padding: 2px 4px; margin-left: 6px; opacity: 0.7; }
@@ -249,6 +258,9 @@ let mode = "page", pos = { chapter: 0, word: 0 };
 let handled = new Set();              // sections whose checkpoint is behind the reader on this pass
 let cp = null;                        // the open checkpoint: { section, index, revealed, missed, text, review }
 let reread = null;                    // { section, back: mode to return to }
+let behind = new Set();               // ephemeral questions behind the reader on this pass, as `handled` is for checkpoints
+let qc = null;                        // the ephemeral question that is open: { check, section, revealed, given, order, resume, revisits, onward }
+let revisit = null;                   // the reader went back to its passage: { check, section, resume, revisits }
 let view = null;                      // the current mode's controller
 let lastActive = Date.now();
 let practiceDue = 0;                  // cards of this book waiting in the practice queue
@@ -311,19 +323,19 @@ function setPos(c, w, forward) {
   if (PANE) { pos = { chapter: c, word: w }; return drawFoot(); }
   if (forward && c === pos.chapter && w > pos.word && mode !== "rsvp") S.x_stats.words[mode] += Math.min(w - pos.word, 4000);
   pos = { chapter: c, word: w };
-  if (!reread) {
+  if (!reread && !revisit) {          // back at a passage for a moment: the place in the book stays where it was
     S.position = { chapter: c, word: w, mode };
     const f = S.x_furthest;
     if (!f || chapterOrder(c) > chapterOrder(f.chapter) || (c === f.chapter && w > f.word)) S.x_furthest = { chapter: c, word: w };
     S.x_progress = book.words ? Math.min(1, wordsBefore(c, w) / book.words) : 0;
-  } else if (S.active_checkpoint) S.active_checkpoint.reread = { mode, chapter: c, word: w };
+  } else if (reread && S.active_checkpoint) S.active_checkpoint.reread = { mode, chapter: c, word: w };
   S.x_stats.last_read = stamp();
   drawFoot(); save();
 }
 setInterval(() => {
   if (!S || PANE) return;             // the book did not load, or this is the side reader
   const playing = view && view.playing;
-  if (document.visibilityState === "visible" && !cp && (playing || Date.now() - lastActive < 60000)) { S.x_stats.seconds[mode] += 5; save(); }
+  if (document.visibilityState === "visible" && !cp && !qc && (playing || Date.now() - lastActive < 60000)) { S.x_stats.seconds[mode] += 5; save(); }
 }, 5000);
 for (const type of ["keydown", "pointerdown", "wheel", "scroll"]) addEventListener(type, () => { lastActive = Date.now(); }, { capture: true, passive: true });
 addEventListener("pagehide", () => { if (S) save(true, true); });
@@ -374,6 +386,9 @@ function drawFoot() {
   const time = minutes >= 60 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min` : `${minutes} min`;
   put(foot,
     reread ? h("div", { class: "banner" }, h("span", { class: "m" }, "Rereading / " + reread.section.label), h("button", { onclick: endReread }, "Return to the question")) : null,
+    revisit ? h("div", { class: "banner" }, h("span", { class: "m" }, "Back at the passage / " + revisit.section.label), h("span", { class: "row" },
+      h("button", { id: "qc-retry", onclick: () => openCheck(revisit.check, revisit.section) }, "Try again with the text hidden"),
+      h("button", { id: "qc-on", onclick: () => closeCheck("done") }, "Continue reading"))) : null,
     map, h("span", { class: "row" },
       h("span", { class: "m" }, `${Math.round(100 * S.x_progress)}% / ${time} left` + (view && view.label ? " / " + view.label() : "")),
       mode === "page" && view ? h("span", { class: "seg" }, h("button", { "aria-label": "Previous page", onclick: () => view.prev() }, "←"), h("button", { "aria-label": "Next page", onclick: () => view.next() }, "→")) : null));
@@ -386,8 +401,11 @@ async function setMode(m) {
   mode = m; if (!reread) S.position = { ...pos, mode };
   await render(); save();
 }
-async function jump(c, w) { closeDrawer(); if (view && view.stop) view.stop(); pos = { chapter: c, word: w }; await render(); setPos(c, w, false); }
-function rearm(w) { handled = new Set(sectionsIn(pos.chapter).filter((s) => s.end <= w).map((s) => s.id)); }
+async function jump(c, w) { closeDrawer(); if (view && view.stop) view.stop(); qc = null; pos = { chapter: c, word: w }; await render(); setPos(c, w, false); }
+function rearm(w) {
+  handled = new Set(sectionsIn(pos.chapter).filter((s) => s.end <= w).map((s) => s.id));
+  behind = new Set(sectionsIn(pos.chapter).flatMap((s) => (s.checks || []).filter((c) => c.at < w).map((c) => c.id)));
+}
 async function render() {
   await chapter(pos.chapter);
   closeNote();
@@ -401,6 +419,98 @@ const completed = (s) => s.prompts.length > 0 && s.prompts.every((p) => S.grades
 const unanswered = (s) => s.prompts.filter((p) => !S.grades[p.id]).length;
 const toPreview = (s) => s.prompts.filter((p) => !p.hq && !S.grades[p.id]);   // not the reader's own, made while reading
 const due = (s) => !PANE && s.prompts.length && !completed(s) && !handled.has(s.id) && !(reread && reread.section.id === s.id);
+/* ---------- ephemeral questions (the graduated pathway) ---------- */
+// A book prepared with them has brief questions that are asked inside a section, close to the passage they are
+// about: `s.checks`, each with the word it follows (`at`) and the word its passage begins at (`from`). What the
+// reader did with one is kept in S.x_checks as done or skipped, never as a grade: it is asked once, and it becomes a
+// card only when the reader keeps it for Practice. How many are asked is the reader's choice (the setting
+// read_checks): all, fewer, or none. The page view asks one before turning the page its paragraph ends on, the
+// scroll view stops the text at it, and RSVP pauses at it.
+let qcAsk = null;                     // the place to answer one that the app grades
+function checksOf(s) {                // the ones the reader's setting lets through: all, every second one of the chapter, or none
+  const all = s.checks || [];
+  if (PANE || reread || settings.read_checks === "off") return [];
+  if (settings.read_checks !== "fewer") return all;
+  const order = sectionsIn(s.chapter).flatMap((x) => x.checks || []).map((c) => c.id);
+  return all.filter((c) => order.indexOf(c.id) % 2 === 0 || (revisit && revisit.check.id === c.id));
+}
+const pending = (s) => checksOf(s).filter((c) => !S.x_checks[c.id]);
+const checkById = (id) => { for (const s of book.sections) for (const c of s.checks || []) if (c.id === id) return c; return null; };
+// "Help me recall" at a checkpoint: the ephemeral questions that support a practice question, whether or not the
+// reader met them, or else the cue written for it.
+const helpFor = (p) => { const linked = (p.help || []).map(checkById).filter(Boolean); return linked.length ? linked : p.cue ? [p.cue] : []; };
+function openCheck(check, section, how = {}) {
+  if (view && view.stop) view.stop();
+  const back = revisit && revisit.check.id === check.id ? revisit : null;   // a second try, after a look at the passage
+  qc = { check, section, revealed: false, given: null, order: null, onward: !!how.onward, revisits: back ? back.revisits : 0,
+    resume: back ? back.resume : { chapter: pos.chapter, word: mode === "rsvp" ? check.at : pos.word, mode } };
+  drawCheck();
+}
+const promoteLink = (c) => (c.promoted ? h("span", { class: "m", id: "qc-kept" }, "Kept for Practice")
+  : book.editable && !PANE ? h("button", { class: "link", id: "qc-keep", onclick: () => QForms.openPromoter({ job: ID, id: c.id, onChange: async (made) => {
+      c.promoted = made.id;
+      await questionChanged({ id: made.id, added: true });
+      if (qc) drawCheck();
+      say("Kept for Practice. It is a new card."); setTimeout(refreshPractice, 300);
+    } }) }, "Keep for Practice") : null);
+function drawCheck() {
+  stage.querySelector(".cp")?.remove();
+  if (!qc) return;
+  const { check: c, section: s } = qc, graded = QForms.form(c) !== "open", answered = graded ? !!qc.given : qc.revealed;
+  qcAsk = null;
+  const skip = h("button", { class: "link", id: "qc-skip", onclick: () => closeCheck("skipped") }, "Skip");
+  let body;
+  if (!answered && graded) {            // a form the app grades: the verdict is shown, and nothing is kept of it
+    qcAsk = QForms.ask(c, (given) => { qc.given = given; drawCheck(); }, qc.order);
+    qc.order = qcAsk.order;
+    body = [qcAsk.el, h("div", { class: "acts" }, h("span", {}), skip)];
+  } else if (!answered) body = [h("p", { class: "note", style: "margin-top:0" }, "Recall the answer in your head, then look."),
+    h("div", { class: "acts" }, h("button", { class: "primary", id: "qc-reveal", onclick: () => { qc.revealed = true; drawCheck(); } }, "Reveal answer", h("kbd", {}, "↵")), skip)];
+  else body = [graded ? QForms.verdict(c, qc.given) : h("div", { class: "ref" }, h("span", { class: "m" }, "Answer"), h("p", {}, c.answer)),
+    h("div", { class: "acts" },
+      h("span", { class: "row" },
+        h("button", { class: "primary", id: "qc-next", onclick: () => closeCheck("done") }, "Continue", h("kbd", {}, "↵")),
+        h("button", { id: "qc-back", title: "Go back to the passage this question is about, then try again or read on", onclick: startRevisit }, "I lost the thread: show me the passage")),
+      h("span", { class: "row" }, promoteLink(c)))];
+  const now = settings.read_checks || "all";
+  stage.append(h("div", { class: "cp qc", role: "dialog", "aria-label": "Quick check" }, h("div", { class: "in" },
+    h("div", { class: "head" }, h("span", { class: "m" }, "Quick check / " + s.label), h("span", { class: "m" }, c.promoted ? "Kept for Practice" : "Not graded, not kept")),
+    graded ? h("span", { class: "m kind" }, QForms.label(c) + (QForms.form(c) === "truefalse" ? "?" : "")) : null,
+    h("h1", {}, QForms.heading(c, graded && !!qc.given)), body,
+    h("div", { class: "freq" }, h("span", { class: "m" }, "Questions while you read"),
+      h("span", { class: "seg", role: "group", "aria-label": "How many questions are asked while you read" },
+        [["all", "All"], ["fewer", "Fewer"], ["off", "None"]].map(([k, t]) => h("button", { "aria-pressed": String(now === k), "data-freq": k, onclick: () => { AppSettings.set("read_checks", k); drawCheck(); } }, t)))))));
+  if (qcAsk && QForms.form(c) === "cloze") qcAsk.focus();
+  else (stage.querySelector("#qc-next") || stage.querySelector("#qc-reveal"))?.focus();
+}
+// Done with the question that is open, or with the look at its passage: `outcome` is "done" or "skipped". Reading
+// goes on where the question stopped it.
+async function closeCheck(outcome) {
+  const was = qc || revisit;
+  if (!was) return;
+  qc = null; revisit = null;
+  stage.querySelector(".cp")?.remove();
+  S.x_checks[was.check.id] = { at: stamp(), outcome, ...(was.given ? { right: !!was.given.correct } : {}), ...(was.revisits ? { revisits: was.revisits } : {}) };
+  const r = was.resume, moved = r.mode !== mode || r.chapter !== pos.chapter || was.revisits > 0;
+  if (moved || mode === "rsvp") { mode = r.mode; pos = { chapter: r.chapter, word: r.word }; await render(); S.position = { ...pos, mode }; }
+  else if (view.refresh) view.refresh();
+  save(true); drawFoot();
+  if (moved) return;
+  if (mode === "rsvp" && view.toggle) view.toggle();          // the words go on
+  else if (was.onward && mode === "page") view.next();        // the turn of the page that the question came before
+}
+// The reader lost the thread: back to where the passage begins, with the question waiting. Reading on to its place
+// asks it again, with the text hidden; the bar at the foot offers the same, and a way to leave it at that.
+async function startRevisit() {
+  const was = qc;
+  qc = null; stage.querySelector(".cp")?.remove();
+  revisit = { check: was.check, section: was.section, resume: was.resume, revisits: was.revisits + 1 };
+  pos = { chapter: was.check.chapter, word: was.check.from };
+  await render(); behind.delete(was.check.id);
+  if (view && view.refresh) view.refresh();
+  aim(was.check.from); drawFoot();
+}
+
 // Question previews (a setting): a section whose checkpoint still has unanswered questions begins with them, as
 // a box in the text of the page and scroll views and as a pause in RSVP. When a question is first shown this way
 // is kept in S.x_previewed, so that an answer to it can be told from unprimed recall.
@@ -477,7 +587,7 @@ function pageView() {
   pv.addEventListener("scroll", () => { pv.scrollLeft = 0; pv.scrollTop = 0; });   // find-in-page must not shift the columns
   fill(cols, data.html);
   addPreviews(cols);
-  let screen = 0, screens = 1, step = 1, blocks = [], ends = new Map(), n = 1, colStep = 1;
+  let screen = 0, screens = 1, step = 1, blocks = [], ends = new Map(), quick = new Map(), n = 1, colStep = 1;
   const gap = 56;
   function layout(keep) {
     const W = pv.clientWidth, H = pv.clientHeight;
@@ -492,6 +602,14 @@ function pageView() {
     const at = (el) => { const r = el.getClientRects()[0] || el.parentElement.getBoundingClientRect(); return Math.floor(Math.floor((r.left - left + 2) / colStep) / n); };
     blocks = [...cols.querySelectorAll("[data-w]")].map((el) => ({ w: +el.dataset.w, s: at(el) }));
     ends = new Map([...cols.querySelectorAll("[data-anchor$='-end']")].map((el) => [el.dataset.anchor.slice(0, -4), at(el)]));
+    // the page each ephemeral question's paragraph ends on: the question is asked before that page is turned
+    const endAt = (el) => { const rs = el.getClientRects(), r = rs[rs.length - 1] || el.getBoundingClientRect(); return Math.floor(Math.floor((r.left - left + 2) / colStep) / n); };
+    const els = [...cols.querySelectorAll("[data-w]")];
+    quick = new Map();
+    for (const s of sectionsIn(pos.chapter)) for (const c of s.checks || []) {
+      const el = els.find((x) => +x.dataset.w + +x.dataset.n === c.at) || els.filter((x) => +x.dataset.w < c.at).pop();
+      if (el) quick.set(c.id, endAt(el));
+    }
     screens = Math.max(1, Math.ceil((Math.round(cols.scrollWidth / colStep + 0.4)) / n));
     if (keep) { screen = 0; for (const b of blocks) if (b.w <= pos.word) screen = b.s; }
     show();
@@ -503,9 +621,12 @@ function pageView() {
   const where = () => { const b = blocks.find((x) => x.s >= screen); return b ? (b.s === screen ? b.w : Math.max(pos.word, 0)) : pos.word; };
   function settle(forward) { const b = blocks.filter((x) => x.s === screen)[0]; setPos(pos.chapter, b ? b.w : pos.word, forward); }
   async function next() {
-    const hit = sectionsIn(pos.chapter).find((s) => ends.get(s.id) === screen && due(s));
     if (reread && ends.get(reread.section.id) === screen) return endReread();
-    if (hit) return openCheckpoint(hit);
+    // what stops the reader on this page, in reading order: a question inside a section, a checkpoint at its end
+    const here = sectionsIn(pos.chapter);
+    const stops = [...here.flatMap((s) => pending(s).filter((c) => quick.get(c.id) === screen).map((c) => ({ w: c.at, c, s }))),
+      ...here.filter((s) => ends.get(s.id) === screen && due(s)).map((s) => ({ w: s.end, s }))].sort((a, b) => a.w - b.w);
+    if (stops.length) return stops[0].c ? openCheck(stops[0].c, stops[0].s, { onward: true }) : openCheckpoint(stops[0].s);
     if (screen < screens - 1) { screen++; show(); settle(true); } else await nextChapter(1);
   }
   async function prev() {
@@ -542,19 +663,38 @@ function scrollView() {
   addPreviews(text);
   rearm(pos.word);
   const gates = [];
+  const all = [...text.querySelectorAll("[data-w]")];
   for (const s of PANE ? [] : sectionsIn(pos.chapter)) {
+    for (const c of s.checks || []) {   // an ephemeral question stands after the paragraph it follows
+      let el = all.find((x) => +x.dataset.w + +x.dataset.n === c.at) || all.filter((x) => +x.dataset.w < c.at).pop();
+      if (!el) continue;
+      while (el.parentElement !== text && /^(UL|OL|DL|TABLE|TBODY|THEAD|TFOOT|TR|FIGURE)$/.test(el.parentElement.tagName)) el = el.parentElement;
+      const gate = h("div", { class: "gate quick", "data-check": c.id, hidden: true });
+      el.after(gate);
+      gates.push({ s, c, gate, w: c.at });
+    }
     const anchor = text.querySelector(`[data-anchor="${s.id}-end"]`);
     if (!anchor) continue;
     const isReread = reread && reread.section.id === s.id;
     if (!s.prompts.length && !isReread) continue;
     const gate = h("div", { class: "gate" });
     (anchor.closest("[data-w]") || anchor).after(gate);
-    gates.push({ s, gate, isReread });
+    gates.push({ s, gate, isReread, w: s.end });
   }
+  gates.sort((a, b) => a.w - b.w);
   const left = (s) => { const n = unanswered(s); return `${n} question${n === 1 ? "" : "s"}`; };
   function drawGates() {
     let clip = null;
     for (const g of gates) {
+      if (g.c) {                      // a question inside the section: the text stops at it until it is answered or skipped
+        const waits = !S.x_checks[g.c.id] && !behind.has(g.c.id) && checksOf(g.s).includes(g.c);
+        g.gate.hidden = !waits;
+        if (waits) put(g.gate, h("div", {}, h("span", { class: "m" }, "Quick check"), h("b", {}, "A question about what you just read")),
+          h("span", { class: "row" }, h("button", { class: "link", onclick: () => { qc = { check: g.c, section: g.s, resume: { chapter: pos.chapter, word: pos.word, mode }, revisits: revisit && revisit.check.id === g.c.id ? revisit.revisits : 0 }; closeCheck("skipped"); } }, "Skip"),
+            h("button", { class: "primary", onclick: () => openCheck(g.c, g.s) }, "Answer")));
+        if (waits && !clip) clip = g.gate;
+        continue;
+      }
       const open = g.isReread ? false : !due(g.s);
       if (g.isReread) put(g.gate, h("div", {}, h("span", { class: "m" }, "End of the section you are rereading"), h("b", {}, g.s.label)), h("button", { class: "primary", onclick: endReread }, "Return to the question"));
       else if (open && completed(g.s)) put(g.gate, h("b", {}, `Checkpoint: ${g.s.prompts.filter((p) => S.grades[p.id]?.first === "correct").length} of ${g.s.prompts.length} recalled on the first try`), h("button", { class: "link", onclick: () => openCheckpoint(g.s, { all: true }) }, "Go through it again"));
@@ -700,6 +840,8 @@ function rsvpView() {
     const sec = sectionsIn(pos.chapter).find((s) => s.end === i);
     if (sec && reread && reread.section.id === sec.id) { pause(); return endReread(); }
     if (sec && due(sec)) { pause(); return openCheckpoint(sec); }
+    const quick = sectionsIn(pos.chapter).flatMap((s) => pending(s).filter((c) => c.at === i && !behind.has(c.id)).map((c) => ({ c, s })))[0];
+    if (quick) { pause(); return openCheck(quick.c, quick.s); }
     const ahead = previewing() ? sectionsIn(pos.chapter).find((s) => s.start === i && toPreview(s).length && !primed.has(s.id)) : null;
     if (ahead) { primed.add(ahead.id); pause(); return showPreview(ahead); }
     if (data.stops.has(i) && !shown.has(i)) { shown.add(i); pause(); return showStop(data.stops.get(i)); }
@@ -751,6 +893,35 @@ function drawCp() {
   const item = cp.review ? cp.queue[cp.index] : { s: cp.section, p: cp.section.prompts[cp.index] };
   if (!item || !item.p) return closeCp();
   const { s, p } = item, total = cp.review ? cp.queue.length : s.prompts.length, first = S.grades[p.id];
+  if (cp.help) {                        // "Help me recall": a short prompt first, then back to the same question
+    const it = cp.help.items[cp.help.index], graded2 = QForms.form(it) !== "open", answered = graded2 ? !!cp.help.given : cp.help.revealed;
+    const last = cp.help.index >= cp.help.items.length - 1;
+    const back = h("button", { class: answered && last ? "primary" : "link", id: "cp-back", onclick: () => { cp.help = null; drawCp(); } }, "Back to the question");
+    const more = answered && !last ? h("button", { class: "primary", id: "cp-more", onclick: () => { cp.help = { items: cp.help.items, index: cp.help.index + 1 }; drawCp(); } }, "Another prompt") : null;
+    let inner;
+    cpAsk = null;
+    if (!answered && graded2) {
+      cpAsk = QForms.ask(it, (given) => { cp.help.given = given; drawCp(); }, cp.help.order);
+      cp.help.order = cpAsk.order;
+      inner = [cpAsk.el, h("div", { class: "acts" }, h("span", {}), back)];
+    } else if (!answered) inner = [h("p", { class: "note", style: "margin-top:0" }, "Recall this first. It is not graded."),
+      h("div", { class: "acts" }, h("button", { class: "primary", id: "cp-help-reveal", onclick: () => { cp.help.revealed = true; drawCp(); } }, "Reveal answer", h("kbd", {}, "↵")), back)];
+    else inner = [graded2 ? QForms.verdict(it, cp.help.given) : h("div", { class: "ref" }, h("span", { class: "m" }, "Answer"), h("p", {}, it.answer)),
+      h("div", { class: "acts" }, h("span", { class: "row" }, more, back), h("span", {}))];
+    stage.append(h("div", { class: "cp qc", role: "dialog", "aria-label": "Help me recall" }, h("div", { class: "in" },
+      h("div", { class: "head" }, h("span", { class: "m" }, "Help me recall / " + s.label),
+        h("span", { class: "m" }, cp.help.items.length > 1 ? `Prompt ${cp.help.index + 1} of ${cp.help.items.length}` : "Then back to your question")),
+      h("h1", {}, QForms.heading(it, graded2 && !!cp.help.given)), inner)));
+    if (cpAsk && QForms.form(it) === "cloze") cpAsk.focus();
+    else (stage.querySelector("#cp-more") || stage.querySelector("#cp-help-reveal") || stage.querySelector("#cp-back"))?.focus();
+    return;
+  }
+  const helps = !first && !cp.review ? helpFor(p) : [];
+  const helpLink = helps.length ? h("button", { class: "link", id: "cp-help", title: "A short prompt about what this question builds on, then back to it", onclick: () => {
+    cp.help = { items: helps, index: 0 };
+    if (!S.x_helped[p.id]) { S.x_helped[p.id] = stamp(); save(); }
+    drawCp();
+  } }, "Help me recall") : null;
   const number = book.sections.filter((x) => x.prompts.length).indexOf(s) + 1;
   const box = h("textarea", { placeholder: "Type what you recall, if you like. It is kept with your grade.", "aria-label": "Your recall", value: cp.text, oninput: () => { cp.text = box.value; } });
   const skips = h("span", { class: "row" },
@@ -770,7 +941,7 @@ function drawCp() {
       save(); drawCp();
     }, cp.order);
     cp.order = cpAsk.order;
-    body = [cpAsk.el, h("div", { class: "acts" }, h("span", {}), skips),
+    body = [cpAsk.el, h("div", { class: "acts" }, h("span", {}, helpLink), skips),
       others ? h("p", { class: "note" }, "The questions of this checkpoint that you have already answered are not asked again.") : null];
   } else if (graded) {
     const overrule = () => {            // a typed answer the app judged wrong and the reader knows to be right
@@ -790,22 +961,23 @@ function drawCp() {
           editLink(p),
           !cp.given.correct && QForms.form(p) === "cloze" ? h("button", { class: "link", id: "cp-right", onclick: overrule }, "I was right") : null,
           h("button", { class: "primary", id: "cp-next", onclick: () => next() }, "Continue", h("kbd", {}, "↵"))))];
-  } else if (!cp.revealed) body = [box, h("div", { class: "acts" }, h("button", { class: "primary", onclick: () => { cp.revealed = true; drawCp(); } }, "Reveal answer", h("kbd", {}, "ctrl ↵")), skips),
+  } else if (!cp.revealed) body = [box, h("div", { class: "acts" }, h("button", { class: "primary", onclick: () => { cp.revealed = true; drawCp(); } }, "Reveal answer", h("kbd", {}, "ctrl ↵")), h("span", { class: "row" }, helpLink, skips)),
     others ? h("p", { class: "note" }, "The questions of this checkpoint that you have already answered are not asked again.") : null];
   else if (cp.missed) body = [
-    h("div", { class: "two" }, h("div", {}, h("span", { class: "m" }, "Your recall"), h("p", {}, cp.text || "Nothing typed.")), h("div", {}, h("span", { class: "m" }, "Reference answer"), h("p", {}, p.answer))),
+    h("div", { class: "two" }, h("div", {}, h("span", { class: "m" }, "Your recall"), h("p", {}, cp.text || "Nothing typed.")), h("div", {}, QForms.reference(p))),
     h("div", { class: "acts" },
       h("span", { class: "row" }, h("span", { class: "m" }, "Reread the section in"),
         h("span", { class: "seg" }, MODES.map(([k, t]) => h("button", { class: k === (cp.review ? mode : cp.resume.mode) ? "primary" : "", onclick: () => startReread(s, k) }, t)))),
       h("span", { class: "row" }, editLink(p), h("button", { class: "primary", onclick: () => next() }, "Continue")))];
   else body = [
-    h("div", { class: "two" }, h("div", {}, h("span", { class: "m" }, "Your recall"), h("p", {}, cp.text || "Nothing typed.")), h("div", {}, h("span", { class: "m" }, "Reference answer"), h("p", {}, p.answer))),
+    h("div", { class: "two" }, h("div", {}, h("span", { class: "m" }, "Your recall"), h("p", {}, cp.text || "Nothing typed.")), h("div", {}, QForms.reference(p))),
+    QForms.several(p),
     first ? h("p", { class: "note" }, `Your first grade for this question stays as it is: ${first.first}.`) : null,
     h("div", { class: "acts" }, h("span", { class: "row" },
       h("button", { class: "primary", onclick: () => advance("correct") }, "Correct", h("kbd", {}, "c")),
       h("button", { class: "primary", onclick: () => advance("incorrect") }, "Incorrect", h("kbd", {}, "x"))), h("span", { class: "row" }, editLink(p), skips))];
   stage.append(h("div", { class: "cp", role: "dialog", "aria-label": "Checkpoint" }, h("div", { class: "in" },
-    h("div", { class: "head" }, h("span", { class: "m" }, cp.review ? "Review / " + s.label : `Checkpoint ${number} / ${s.label}`), h("span", { class: "m" }, `Question ${cp.index + 1} of ${total}` + (p.hq ? " / from your highlight" : ""))),
+    h("div", { class: "head" }, h("span", { class: "m" }, cp.review ? "Review / " + s.label : `Checkpoint ${number} / ${s.label}`), h("span", { class: "m" }, `Question ${cp.index + 1} of ${total}` + (p.hq ? " / from your highlight" : "") + ((p.earlier || []).length ? " / draws on earlier reading" : ""))),
     graded ? h("span", { class: "m kind" }, QForms.label(p) + (QForms.form(p) === "truefalse" ? "?" : "")) : null,
     h("h1", {}, QForms.heading(p, graded && !!cp.given)), body)));
   if (cpAsk && QForms.form(p) === "cloze") cpAsk.focus();
@@ -822,7 +994,7 @@ function drawCp() {
   function next() {
     cp.index++;
     if (!cp.review && !cp.all) while (cp.index < total && S.grades[s.prompts[cp.index].id]) cp.index++;   // only what is not answered yet
-    cp.revealed = false; cp.missed = false; cp.text = ""; cp.given = null; cp.order = null;
+    cp.revealed = false; cp.missed = false; cp.text = ""; cp.given = null; cp.order = null; cp.help = null;
     if (cp.index >= total) return closeCp();
     persistCp(); drawCp();
   }
@@ -1044,7 +1216,7 @@ const awaited = new Map();            // highlight id -> { mode, had: ids of the
 function syncPrompts() {
   if (!book) return;
   for (const s of book.sections) {
-    s.own = s.own || s.prompts.filter((p) => !p.hq);
+    s.own = s.own || s.prompts.filter((p) => !p.hq && !p.promoted);   // one kept from an ephemeral question is a card, not asked here
     s.prompts = s.own.concat((NB.questions || []).filter((q) => q.status === "accepted" && q.ask === "checkpoint" && q.section === s.id)
       .map((q) => ({ id: q.id, prompt: q.question, answer: q.answer, hq: true,
         ...Object.fromEntries(["form", "choices", "correct", "truth", "accept"].filter((k) => k in q).map((k) => [k, q[k]])) })));
@@ -1058,7 +1230,7 @@ async function questionChanged(change) {
   try { fresh = await api(`/jobs/${ID}/book`); } catch (e) { return; }
   for (const now of fresh.sections) {
     const s = book.sections.find((x) => x.id === now.id);
-    if (s) { s.own = now.prompts.filter((p) => !p.hq); s.checkpoint = now.checkpoint; }
+    if (s) { s.own = now.prompts.filter((p) => !p.hq && !p.promoted); s.checkpoint = now.checkpoint; s.checks = now.checks || []; }
   }
   syncPrompts();
   if (cp) {
@@ -1281,6 +1453,7 @@ AppSettings.onChange((key) => {
   if (PANE && key === "nb_view" && mode !== settings.nb_view) setMode(settings.nb_view === "page" ? "page" : "scroll");
   if (PANE && key === "nb_side") drawFoot();
   if (key === "read_preview") refreshPreviews();
+  if (key === "read_checks" && view && view.relayout) view.relayout();   // more of the questions inside a section, or fewer
 });
 function aim(w) {                     // show the reader where a place is: bring it into view and light its paragraph
   if (!view_root) return;
@@ -1319,6 +1492,21 @@ addEventListener("keydown", (e) => {
   if (AppSettings.isOpen || QForms.isOpen) return;      // the settings window, or the question editor, has the keys
   if (e.target.closest && e.target.closest(".np, .nt-capture")) return;   // so has a note that is being written
   if (e.key === "Escape") { if ($("drawer").classList.contains("on")) return closeDrawer(); if (stage.querySelector(".notebox")) return closeNote(); }
+  if (qc) {                             // an ephemeral question is open
+    if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (qcAsk && !qc.given) { if (qcAsk.key(e)) e.preventDefault(); return; }
+    if ((e.key === "Enter" || e.key === " ") && !(e.target.closest && e.target.closest("button"))) { e.preventDefault(); (stage.querySelector("#qc-reveal") || stage.querySelector("#qc-next"))?.click(); }
+    else if (e.key === "Escape") closeCheck("skipped");
+    return;
+  }
+  if (cp && cp.help) {                  // "Help me recall" is open over a checkpoint's question
+    const it = cp.help.items[cp.help.index];
+    if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (QForms.form(it) !== "open" && cpAsk && !cp.help.given) { if (cpAsk.key(e)) e.preventDefault(); return; }
+    if (e.key === "Enter" && !(e.target.closest && e.target.closest("button"))) { e.preventDefault(); (stage.querySelector("#cp-help-reveal") || stage.querySelector("#cp-more") || stage.querySelector("#cp-back"))?.click(); }
+    else if (e.key === "Escape") { cp.help = null; drawCp(); }
+    return;
+  }
   if (cp) {
     const asked = cp.review ? (cp.queue[cp.index] || {}).p : cp.section.prompts[cp.index];
     if (asked && QForms.form(asked) !== "open") {   // a question the app grades has keys of its own
@@ -1361,6 +1549,7 @@ addEventListener("keydown", (e) => {
       e.message === "not found" ? "The app may have been updated while it was running: stop it and start it again. " : "", h("a", { href: "/" }, "Back to the library")));
   }
   S.x_previewed = S.x_previewed || {};   // a state saved before previews existed
+  S.x_checks = S.x_checks || {}; S.x_helped = S.x_helped || {};   // ... and before the questions inside a section
   S.x_attempts = S.x_attempts || [];
   for (const a of S.x_attempts) sentAttempts.add(attemptKey(a));
   NB.questions = NB.questions || [];

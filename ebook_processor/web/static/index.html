@@ -231,6 +231,7 @@ body.dragging { cursor: col-resize; user-select: none; } body.dragging .side ifr
 .q .qt { font-weight: 600; letter-spacing: -0.01em; text-wrap: pretty; cursor: pointer; }
 .q .at { margin-top: 4px; max-width: 72ch; text-wrap: pretty; }
 .q.off .qt, .q.off .at { color: var(--mute); }
+.inside { margin-top: 6px; padding-top: 12px; border-top: 1px dashed var(--ghost); } .inside .q .qt { font-size: 16px; }
 .q.off .qt { text-decoration: line-through; text-decoration-thickness: 1px; }
 .q .meta { margin-top: 9px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .note { font-size: 14px; color: var(--mute); margin: 8px 0 0; max-width: 72ch; }
@@ -1319,7 +1320,8 @@ async function showPractice(only) {
       h("h1", {}, c.question),
       !revealed ? [area, h("div", { class: "acts" }, h("button", { class: "primary", onclick: () => { revealed = true; draw(); } }, "Reveal answer", h("kbd", {}, "ctrl ↵")),
           h("span", { class: "m mute" }, c.state === "new" ? "New card" : c.again ? "Forgotten earlier today" : c.first ? "Learned today" : `Interval ${c.interval} days`))]
-      : [h("div", { class: "two" }, h("div", {}, h("span", { class: "m" }, "Your recall"), h("p", {}, text || "Nothing typed.")), h("div", {}, h("span", { class: "m" }, "Reference answer"), h("p", {}, c.answer))),
+      : [h("div", { class: "two" }, h("div", {}, h("span", { class: "m" }, "Your recall"), h("p", {}, text || "Nothing typed.")), h("div", {}, QForms.reference(c))),
+        QForms.several(c),
         c.passage.length ? h("details", {}, h("summary", { class: "m", style: "margin-top:16px;cursor:pointer" }, c.note ? "From your note" : "From the book"), h("div", { class: "passage" }, c.passage.map((runs) => h("p", {}, runs.flatMap((r, n) => [n ? " " : null, r.h ? h("mark", {}, r.t) : r.t]))))) : null,
         h("div", { class: "acts" },
           h("div", { class: "ans" },
@@ -1605,10 +1607,31 @@ async function showRun(id) {
           h("span", { class: "m mute raw" }, `${s.id} / ${s.first_paragraph}–${s.last_paragraph.split("-")[1]} / ${fmt(s.words || 0)} words`),
           h("button", { class: "text", type: "button", style: "padding:0", "aria-label": "Add a question to " + s.label, onclick: () => QForms.openAdder({ job: id, section: s.id, onChange: changed }) }, "Add a question"))),
         s.natural_boundary === false ? h("p", { class: "note" }, "The checker doubted this section's break: " + s.boundary_note) : null,
-        qs.length ? qs.map(question) : h("p", { class: "note" }, "No questions for this section.")));
+        qs.length ? qs.map(question) : h("p", { class: "note" }, "No questions for this section."),
+        view.filter === "all" || view.filter === "out" ? ephemeral(s) : null));
     }
     if (!list.children.length) list.append(h("p", { class: "empty" }, "Nothing to show here."));
     drawSticky();
+  }
+  // The graduated pathway: the questions the reader meets inside this section. They are not graded and not kept,
+  // unless the reader keeps one for Practice, here or while reading.
+  function ephemeral(s) {
+    const rows = (s.ephemeral || []).filter((c) => view.filter === "all" || !c.kept);
+    if (!rows.length) return null;
+    return h("div", { class: "inside", id: "inside-" + s.id },
+      h("span", { class: "m mute" }, `Asked while reading / ${rows.length} ephemeral question${rows.length === 1 ? "" : "s"}`),
+      rows.map((c) => {
+        const tags = [h("span", { class: "lab quiet" }, c.id)];
+        if (QForms.label(c)) tags.push(h("span", { class: "lab quiet" }, QForms.label(c)));
+        if (c.supports.length) tags.push(h("span", { class: "lab quiet" }, "Builds toward " + c.supports.join(", ")));
+        if (!c.kept) tags.push(h("span", { class: "lab inv" }, c.status === "withdrawn" ? "Left out / withdrawn" : "Left out / failed the check"));
+        if (c.promoted) tags.push(h("span", { class: "lab" }, "Kept for Practice as " + c.promoted));
+        return h("div", { class: "q" + (c.kept ? "" : " off"), "data-check": c.id }, h("span", {}), h("div", {},
+          h("div", { class: "qt" }, QForms.plain(c).question), QForms.choices(c), h("div", { class: "at" }, c.answer),
+          h("div", { class: "meta" }, tags, c.kept && !c.promoted ? h("button", { class: "text", type: "button", style: "padding:0 0 0 6px", "aria-label": "Keep " + c.id + " for Practice",
+            onclick: () => QForms.openPromoter({ job: id, id: c.id, onChange: changed }) }, "Keep for Practice") : null),
+          c.failed_criteria.length ? h("p", { class: "note" }, "Why: " + c.failed_criteria.map((k) => (info.criteria || {})[k] || k).join("; ") + ". " + (c.problem || "")) : null));
+      }));
   }
   function question(q) {
     const off = !q.can_keep || view.removed.has(q.id);
@@ -1619,14 +1642,20 @@ async function showRun(id) {
         document.querySelector(`.map i[data-q="${q.id}"]`)?.classList.toggle("out", !box.checked); drawSticky(); } });
     const tags = [h("span", { class: "lab quiet" }, q.id)];
     if (QForms.label(q)) tags.push(h("span", { class: "lab quiet" }, QForms.label(q)));
-    if (q.added) tags.push(h("span", { class: "lab" }, "Written by you"));
+    if (q.reasoning) tags.push(h("span", { class: "lab quiet" }, "Asks for reasoning"));
+    if ((q.earlier_paragraphs || []).length) tags.push(h("span", { class: "lab quiet" }, "Draws on earlier reading"));
+    if (q.promoted_from) tags.push(h("span", { class: "lab" }, "Kept from " + q.promoted_from));
+    else if (q.added) tags.push(h("span", { class: "lab" }, "Written by you"));
     else if (q.edited) tags.push(h("span", { class: "lab" }, "Edited by you"));
     if (q.status === "failed") tags.push(h("span", { class: "lab inv" }, "Left out / failed the check"));
     else if (q.status === "withdrawn") tags.push(h("span", { class: "lab inv" }, "Left out / withdrawn"));
     else if (q.status !== "passed" && q.status !== "edited") tags.push(h("span", { class: "lab" }, "Not checked"));
     else if (q.revisions) tags.push(h("span", { class: "lab" }, "Passed after revision"));
     row.append(box, h("div", {},
-      h("label", { class: "qt", for: "q-" + q.id }, QForms.plain(q).question), QForms.choices(q), h("div", { class: "at" }, q.answer),
+      h("label", { class: "qt", for: "q-" + q.id }, QForms.plain(q).question), QForms.choices(q),
+      (q.accounts_for || []).length ? h("div", { class: "at" }, "A well-supported answer accounts for: " + q.accounts_for.join(" / ")) : null,
+      h("div", { class: "at" }, ((q.accounts_for || []).length ? "One such answer: " : "") + q.answer),
+      q.cue ? h("div", { class: "at mute" }, "Help me recall: " + q.cue.prompt + " / " + q.cue.answer) : null,
       h("div", { class: "meta" }, tags, h("button", { class: "text", type: "button", style: "padding:0 0 0 6px", "aria-label": "Edit question " + q.id,
         onclick: () => QForms.openEditor({ job: id, id: q.id, onChange: changed }) }, "Edit")),
       q.failed_criteria.length ? h("p", { class: "note" }, "Why: " + q.failed_criteria.map((k) => (info.criteria || {})[k] || k).join("; ") + ". " + (q.problem || "")) : null,

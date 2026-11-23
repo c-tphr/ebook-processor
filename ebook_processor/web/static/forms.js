@@ -193,6 +193,18 @@ function compose() {
   return { el: box, read: () => fields.read() };
 }
 
+/* ---------- the graduated pathway: an answer with more than one defensible reading ---------- */
+// What stands beside the reader's own recall once an open question is revealed. A question that several answers
+// can meet lists the evidence a well-supported answer accounts for, and gives one such answer under it.
+function reference(q) {
+  const evidence = q.accounts_for || [];
+  if (!evidence.length) return [el("span", { class: "m" }, "Reference answer"), el("p", {}, q.answer)];
+  return [el("span", { class: "m" }, "A well-supported answer accounts for"), el("ul", { class: "qf-evidence" }, evidence.map((t) => el("li", {}, t))),
+    el("span", { class: "m" }, "One such answer"), el("p", {}, q.answer)];
+}
+const several = (q) => ((q.accounts_for || []).length
+  ? el("p", { class: "note qf-several" }, "More than one answer can be right here. Count yours as correct when it accounts for this evidence and you can say how the evidence leads to it, even if your conclusion differs.") : null);
+
 /* ---------- changing a book's own question, and adding one ---------- */
 let open = null;                        // the window that is open, if one is
 function windowFor(title, sub) {
@@ -256,7 +268,12 @@ async function openEditor({ job, id, onChange }) {
     const passage = passagePicker(shown.paragraphs, draft && draft.supporting_paragraphs ? draft.supporting_paragraphs : shown.supporting_paragraphs, false);
     if (draft && draft.supporting_paragraphs) passage.set(draft.supporting_paragraphs);
     const wish = el("input", { type: "text", id: "qf-wish", "aria-label": "What the model should change", maxlength: 300, placeholder: "Or tell the model what to change: make it harder, ask about the cause instead" });
-    const changed = () => ({ ...fields.read(), supporting_paragraphs: passage.read() });
+    // A question that several answers can meet: the evidence a well-supported answer accounts for, one statement a line.
+    const had = (q.accounts_for || []).length > 0;
+    const evidence = had ? el("textarea", { id: "qf-evidence", "aria-label": "The evidence a well-supported answer accounts for", value: q.accounts_for.join("\n") }) : null;
+    const cue = draft && "cue" in draft ? { cue: draft.cue } : {};       // a rewrite brings its own cue for Help me recall
+    const changed = () => ({ ...fields.read(), supporting_paragraphs: passage.read(), ...cue,
+      ...(evidence ? { accounts_for: evidence.value.split("\n").map((t) => t.trim()).filter(Boolean) } : {}) });
     const save = async (button, andCheck) => {
       const saved = await w.run(button, () => api(base, { method: "PUT", json: changed() }));
       if (!saved) return;
@@ -273,9 +290,13 @@ async function openEditor({ job, id, onChange }) {
     wish.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); rewrite(wishButton); } });
     const wishButton = el("button", { type: "button", id: "qf-rewrite", onclick: (e) => rewrite(e.currentTarget) }, "Rewrite");
     const state = shown.left_out_because ? `Left out by the check: ${shown.left_out_because} Once you change it, it is yours and is kept.`
+      : shown.promoted_from ? "Kept by you from a question asked while reading. It is a card in Practice and is not asked at the checkpoint."
       : shown.added ? "Written by you." : shown.status === "edited" ? "Edited by you." : "";
-    w.body.replaceChildren(...[state ? el("p", { class: "qf-hint", id: "qf-state" }, state) : null, fields.el, passage.el,
-      el("div", { class: "qf-wish" }, wish, wishButton), verdictBox(shown.verdict)].filter(Boolean));
+    w.body.replaceChildren(...[state ? el("p", { class: "qf-hint", id: "qf-state" }, state) : null, fields.el,
+      evidence ? el("div", { class: "qf-edit" }, el("span", { class: "qf-cap" }, "A well-supported answer accounts for (one statement a line)"), evidence) : null,
+      (shown.earlier || []).length ? el("details", { class: "qf-passage", id: "qf-earlier" }, el("summary", {}, `Also draws on ${shown.earlier.length} earlier paragraph${shown.earlier.length === 1 ? "" : "s"}`),
+        shown.earlier.map((p) => el("p", { class: "qf-hint" }, p.text))) : null,
+      passage.el, el("div", { class: "qf-wish" }, wish, wishButton), verdictBox(shown.verdict)].filter(Boolean));
     w.foot.replaceChildren(
       el("span", { class: "qf-side" },
         shown.has_original ? el("button", { type: "button", class: "quiet", id: "qf-restore", onclick: async (e) => {
@@ -292,6 +313,38 @@ async function openEditor({ job, id, onChange }) {
       el("span", { class: "qf-side" },
         el("button", { type: "button", id: "qf-check", onclick: (e) => save(e.currentTarget, true) }, "Save and check"),
         el("button", { type: "button", class: "primary", id: "qf-save", onclick: (e) => save(e.currentTarget, false) }, "Save")));
+    if (message !== undefined) w.say(message);
+  }
+  draw(null);
+}
+
+// Keep an ephemeral question for Practice: as it is written, as changed here, or as the model rewrites it to a wish.
+async function openPromoter({ job, id, onChange }) {
+  const base = `/jobs/${job}/ephemeral/${encodeURIComponent(id)}`;
+  let shown;
+  try { shown = await api(base); } catch (e) { alert(e.message); return; }
+  const w = windowFor("Keep for Practice", shown.section.label);
+  function draw(draft, message) {
+    const q = draft ? { ...shown, ...draft, ...(draft.form || {}) } : shown;
+    const fields = edit(q);
+    const passage = passagePicker(shown.paragraphs, draft && draft.supporting_paragraphs ? draft.supporting_paragraphs : shown.supporting_paragraphs, false);
+    if (draft && draft.supporting_paragraphs) passage.set(draft.supporting_paragraphs);
+    const wish = el("input", { type: "text", id: "qf-wish", "aria-label": "What you want to remember", maxlength: 300, placeholder: "Or tell the model what you want to remember, and it rewrites the question" });
+    const rewrite = async (button) => {
+      const made = await w.run(button, () => api(base + "/rewrite", { method: "POST", json: { wish: wish.value, draft: fields.read() } }));
+      if (made) draw(made, "The model's rewrite is in the form. Change it if you like, then keep it.");
+    };
+    wish.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); rewrite(wishButton); } });
+    const wishButton = el("button", { type: "button", id: "qf-rewrite", onclick: (e) => rewrite(e.currentTarget) }, "Rewrite");
+    w.body.replaceChildren(el("p", { class: "qf-hint", id: "qf-state" }, "This question was asked while you read and is not kept. Keep it, and it is a card in Practice from now on: as it is written, as you change it here, or as the model rewrites it."),
+      fields.el, passage.el, el("div", { class: "qf-wish" }, wish, wishButton));
+    w.foot.replaceChildren(el("span", { class: "qf-side" }), el("span", { class: "qf-side" },
+      el("button", { type: "button", class: "primary", id: "qf-save", onclick: async (e) => {
+        const made = await w.run(e.currentTarget, () => api(base + "/promote", { method: "POST", json: { ...fields.read(), supporting_paragraphs: passage.read() } }));
+        if (!made) return;
+        if (onChange) onChange({ id: made.id, from: id, promoted: true });
+        w.close();
+      } }, "Keep for Practice")));
     if (message !== undefined) w.say(message);
   }
   draw(null);
@@ -382,6 +435,7 @@ document.head.append(el("style", {}, `
 .qf-verdict.right .qf-mark { color: var(--blue); }
 .qf-verdict p { margin: 6px 0 0; display: grid; grid-template-columns: 124px minmax(0, 1fr); gap: 12px; align-items: baseline; text-wrap: pretty; }
 .qf-verdict p .m, .qf-key .m { font: 11.5px/1.5 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--mute); }
+.qf-evidence { margin: 4px 0 14px; padding-left: 1.2em; } .qf-evidence li { margin: 3px 0; text-wrap: pretty; }
 .qf-list { margin: 6px 0 0; padding-left: 1.6em; list-style: upper-alpha; }
 .qf-list li { margin: 2px 0; color: var(--mute); } .qf-list li.right { color: var(--ink); font-weight: 600; }
 .qf-list li .m { font: 11px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--blue); font-weight: 400; }
@@ -389,6 +443,6 @@ document.head.append(el("style", {}, `
 @media (max-width: 560px) { .qf-verdict p { grid-template-columns: minmax(0, 1fr); gap: 0; } }
 `));
 
-window.QForms = { form, label, key, plain, heading, matches, ask, verdict, choices, edit, compose, openEditor, openAdder, GAP,
+window.QForms = { form, label, key, plain, heading, matches, ask, verdict, choices, edit, compose, openEditor, openAdder, openPromoter, reference, several, GAP,
   get isOpen() { return !!open; } };
 })();

@@ -18,11 +18,16 @@
 const DEFAULTS = {
   theme: "system",                                    // general
   face: "serif", size: 19, leading: 1.6, measure: "medium", read_mode: "page", read_preview: false, hq_review: "later",   // reader
+  read_checks: "all",                                 // the ephemeral questions asked inside a section: all, fewer or off
   nb_beside: true, nb_side: "left", nb_view: "scroll", nb_split: 0.5,            // notebook and its side reader
   steer_about: "", steer_style: "", steer_confirm: true,                         // what the question writers are told about you
   own_passage: "section",                                                        // the passage of a question you add yourself
 };
-const RUN_KEYS = ["density", "max_questions", "kind", "content", "rounds", "model", "checker_model", "effort", "jobs", "epubcheck", "preview", "forms"];
+const RUN_KEYS = ["density", "max_questions", "kind", "content", "rounds", "model", "checker_model", "effort", "jobs", "epubcheck", "preview", "forms", "ephemeral"];
+// What should guide the questions asked inside a section (the graduated pathway). The words of the two choices are the reader's own.
+const EPHEMERAL = [["none", "None", "Questions at the end of each section only, as before."],
+  ["attention", "To sustain my attention", "I want ephemeral questions to help me sustain my attention generally."],
+  ["linked", "To build toward practice", "I want ephemeral questions to build toward practice questions explicitly."]];
 const FORMS = [["open", "Open", "You recall the answer and grade yourself"], ["choice", "Multiple choice", "One of four"],
   ["truefalse", "True or false", "A statement to judge"], ["cloze", "Fill in the blank", "You type the missing words"]];
 const formList = (value) => { const given = Array.isArray(value) ? value : String(value || "").split(","); const kept = FORMS.map(([k]) => k).filter((k) => given.includes(k)); return kept.length ? kept : ["open"]; };
@@ -74,7 +79,7 @@ let serial = 0;
 function processing(inf, initial, onchange) {
   const d = inf.defaults || {}, dens = inf.densities || {}, models = inf.models || [];
   const v = { density: "medium", max_questions: d.max_questions, kind: d.kind, content: d.content, rounds: d.rounds, jobs: d.jobs,
-    model: "", checker_model: "", effort: "", epubcheck: false, preview: false, forms: "open" };
+    model: "", checker_model: "", effort: "", epubcheck: false, preview: false, forms: "open", ephemeral: "none" };
   for (const [k, x] of Object.entries(initial || {})) if (x != null && k in v) v[k] = x;
   const name = "st-density-" + (++serial);
   const fire = (key) => { if (onchange) onchange(key, read()[key]); };
@@ -126,6 +131,13 @@ function processing(inf, initial, onchange) {
     onchange: (e) => { if (!formBoxes.some(([, b]) => b.checked)) e.target.checked = true; fire("forms"); } }), t, what]);
   const forms = el("div", { class: "st-ticks", role: "group", "aria-label": "Kinds of question" },
     formBoxes.map(([, box, t, what]) => el("label", { title: what }, box, el("span", {}, t))));   // what each is, on hover
+  // Ephemeral questions: none, or one of the two things that can guide where they go and what they ask.
+  const ephemeralSaid = el("small", {});
+  const sayEphemeral = () => { ephemeralSaid.textContent = (EPHEMERAL.find(([k]) => k === ephemeral.querySelector("input:checked").value) || EPHEMERAL[0])[2]
+    + " Either choice adds brief questions inside a section, close to the passage they are about and never graded, and opens each checkpoint with a question that asks for reasoning where the text rewards one. You can ask for fewer, or none, while you read."; };
+  const ephemeral = el("div", { class: "st-seg", role: "radiogroup", "aria-label": "Ephemeral questions" },
+    EPHEMERAL.map(([k, t]) => el("label", {}, el("input", { type: "radio", name: name + "-e", value: k, checked: k === v.ephemeral, onchange: () => { sayEphemeral(); fire("ephemeral"); } }), t)));
+  sayEphemeral();
   const checkerHint = el("span", {}), effortHint = el("span", {});
   const text = (key, placeholder, value) => el("input", { type: "text", placeholder, value: value || "", onchange: () => fire(key) });
   const c = {
@@ -167,11 +179,12 @@ function processing(inf, initial, onchange) {
     return { density: density.querySelector("input:checked").value, max_questions: +c.max_questions.value, kind: c.kind.value,
       content: c.content.value, rounds: +c.rounds.value, model: c.model.value.trim(), checker_model: c.checker_model.value.trim(),
       effort: c.effort.value, jobs: +c.jobs.value, epubcheck: c.epubcheck.value === "1", preview: c.preview.value === "1",
-      forms: formBoxes.filter(([, b]) => b.checked).map(([k]) => k) };
+      forms: formBoxes.filter(([, b]) => b.checked).map(([k]) => k), ephemeral: ephemeral.querySelector("input:checked").value };
   }
   function setOne(key, value) {
-    if (value == null) value = { density: "medium", model: "", checker_model: "", effort: "", epubcheck: false, preview: false }[key] ?? d[key];
+    if (value == null) value = { density: "medium", model: "", checker_model: "", effort: "", epubcheck: false, preview: false, ephemeral: "none" }[key] ?? d[key];
     if (key === "density") { const box = density.querySelector(`input[value="${value}"]`); if (box) box.checked = true; return; }
+    if (key === "ephemeral") { const box = ephemeral.querySelector(`input[value="${value}"]`); if (box) box.checked = true; sayEphemeral(); return; }
     if (key === "forms") { const on = formList(value); for (const [k, box] of formBoxes) box.checked = on.includes(k); return; }
     if (!c[key]) return;
     if (c[key].have) c[key].have(String(value));
@@ -186,6 +199,7 @@ function processing(inf, initial, onchange) {
     field("Kind of book", c.kind),
     el("div", { class: "st-field wide" }, el("span", { class: "m" }, "Kinds of question"), forms,
       el("small", {}, "For each idea the model picks the kind that suits it, among those you tick. The app grades the last three itself. Recalling an answer from nothing is the strongest practice; the others are quicker.")),
+    el("div", { class: "st-field wide", id: "st-ephemeral" }, el("span", { class: "m" }, "Ephemeral questions"), ephemeral, ephemeralSaid),
     field("Tables, code, formulas, figures", c.content, "What the model may see and ask about beyond the running text."),
     field("Independent check", c.rounds, "A question that fails its last check is left out and listed in the report."));
   const advanced = el("div", { class: "st-grid" },
@@ -342,6 +356,7 @@ const DRAW = {
       row("Column width", choice("measure", [["narrow", "Narrow"], ["medium", "Medium"], ["wide", "Wide"]])),
       row("A new book opens in", choice("read_mode", [["page", "Pages"], ["scroll", "Scroll"], ["rsvp", "RSVP"]]), "A book you have started opens in the view you left it in."),
       row("Preview questions", choice("read_preview", [[false, "Off"], [true, "On"]]), "A section begins with the questions of its checkpoint that you have not answered yet, to read with them in mind. RSVP pauses there to show them. Answers to previewed questions are marked as such in the notebook."),
+      row("Ephemeral questions", choice("read_checks", [["all", "All"], ["fewer", "Fewer"], ["off", "Off"]]), "For a book prepared with ephemeral questions: the brief questions asked inside a section. Fewer asks every second one. Off leaves the questions at the end of each section only. You can also change this on any such question while you read."),
       row("After asking for a question on a highlight", choice("hq_review", [["later", "Review later"], ["wait", "Wait for it"], ["toast", "Tell me quietly"], ["auto", "Accept it"]]),
         "Review later: you read on, and the proposal waits in the notebook. Wait for it: a panel opens and shows the proposal when it is written. Tell me quietly: a small notice appears when it is ready; press it to review, or leave it for the notebook. Accept it: the question is checked and accepted without asking you, and asked at the end of the section; one that fails its check waits in the notebook."),
       el("h4", {}, "Keys"),

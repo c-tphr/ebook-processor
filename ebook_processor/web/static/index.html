@@ -1014,7 +1014,9 @@ async function showNotes(params) {
       onclick: (e) => { if (find.value.trim()) { e.preventDefault(); askNow = true; location.hash = "#/notes/ask?" + new URLSearchParams({ q: find.value.trim() }); } } }, "Ask"),
       h("a", { class: "btn primary", href: "#/notes/new" }, "New note"))), filters, body);
   let home = null, typing = null, turn = 0;
-  const go = () => { history.replaceState(null, "", notesAt(state)); load(); };
+  // A search still waiting for the typing to stop does nothing once the page has been left (the Ask button, a link):
+  // it would put this page's address in place of the one the reader went to.
+  const go = () => { if (!find.isConnected) return; history.replaceState(null, "", notesAt(state)); load(); };
   find.addEventListener("input", () => { state.q = find.value; clearTimeout(typing); typing = setTimeout(go, 220); });
   find.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.q) { e.preventDefault(); find.value = state.q = ""; go(); } });
   const pick = (key, label, options) => {

@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
 
 from tests.browser.helpers import App, Reader, start_app
@@ -48,6 +49,13 @@ def page(page: Page) -> Page:
     errors: list[str] = []
     page.on("pageerror", lambda exc: errors.append(str(exc)))
     yield page
+    # The reader saves once more as its page is left. That save must not arrive after the next test has put the book
+    # back to "never opened", so the page is cut off from the app here, and what is on its way is given time to land.
+    try:
+        page.evaluate("() => { window.fetch = () => new Promise(() => {}); }")
+        page.wait_for_timeout(100)
+    except PlaywrightError:
+        pass                                   # the page is gone already, or between two addresses
     assert not errors, f"script errors on the page: {errors}"
 
 

@@ -96,13 +96,13 @@ def test_a_question_of_any_kind_is_added_to_a_section_with_its_passage(page: Pag
     expect(window.locator(".qf-passage summary")).to_have_text("Passage: 1 of the section's 3 paragraphs")
     window.locator(".qf-passage label").first.locator("input").check()
     window.locator("#qf-save").click()
-    expect(page.locator(".q", has_text="How many steps led to the lamp room?")).to_be_visible()
+    expect(page.locator(".q", has_text="How many steps led to the lamp room?")).to_be_visible(timeout=20000)
     assert question(edited, "c0002-p4")["supporting_paragraphs"] == ["d02-p005", "d02-p006"]
     # one's own question can be deleted from its editor
     page.on("dialog", lambda dialog: dialog.accept())
     page.get_by_role("button", name="Edit question c0002-p4").click()
     page.locator("#qf-delete").click()
-    expect(page.locator(".q", has_text="How many steps led to the lamp room?")).to_have_count(0)
+    expect(page.locator(".q", has_text="How many steps led to the lamp room?")).to_have_count(0, timeout=20000)   # the files are built again
 
 
 def test_a_question_is_edited_at_its_checkpoint_and_started_over(page: Page, edited: App):

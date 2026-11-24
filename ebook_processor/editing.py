@@ -147,12 +147,14 @@ def _earlier(book: Book, q: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def ephemeral_view(book: Book, state: dict[str, Any], eid: str) -> dict[str, Any]:
-    """An ephemeral question as the window that promotes it shows it."""
+    """An ephemeral question as the window that promotes it shows it. ``practice_forms`` are the forms the book's
+    practice questions take, so that the window can tell whether the question is of one of them."""
     c = find_ephemeral(state, eid)
     section = section_of(state, c["section"])
     promoted = c.get("promoted") if any(q["id"] == c.get("promoted") and kept(q) for q in state["questions"]) else None
     return {"id": c["id"], "section": {"id": section["id"], "label": section["label"]}, **qforms.as_question(c),
             "supporting_paragraphs": c["supporting_paragraphs"], "promoted": promoted,
+            "practice_forms": list(Settings.from_json(state["settings"]).forms),
             "paragraphs": paragraphs(book, state, section["id"], c["supporting_paragraphs"])}
 
 
@@ -242,8 +244,9 @@ def delete(state: dict[str, Any], qid: str) -> dict[str, Any]:
 def promote(state: dict[str, Any], book: Book, eid: Any, raw: Any = None) -> dict[str, Any]:
     """Keep an ephemeral question for Practice: a practice question of its section is made of it. Without ``raw``
     it keeps its wording; ``raw`` may give ``question``, ``answer``, the members of its ``form`` and
-    ``supporting_paragraphs``, as an edit does. The ephemeral question itself stays what it is, with ``promoted``
-    naming the new question."""
+    ``supporting_paragraphs``, as an edit does. Unlike an edit, ``form`` may be another form than the ephemeral
+    question's: the reader may keep it in one of the forms of the book's practice questions (see ``rewrite``). The
+    ephemeral question itself stays what it is, with ``promoted`` naming the new question."""
     c = find_ephemeral(state, eid)
     if any(q["id"] == c.get("promoted") and kept(q) for q in state["questions"]):
         raise EditError("This question is already kept for Practice.")
@@ -252,8 +255,8 @@ def promote(state: dict[str, Any], book: Book, eid: Any, raw: Any = None) -> dic
     inside = [b.ref for b in citable(blocks)]
     raw = raw if isinstance(raw, dict) else {}
     members = raw.get("form") if isinstance(raw.get("form"), dict) else {}
-    if members.get("form", qforms.form_of(c)) != qforms.form_of(c):
-        raise EditError("A question keeps its kind.")
+    if members.get("form", qforms.form_of(c)) not in qforms.FORMS:
+        raise EditError("the kinds of question are: " + ", ".join(qforms.NAMES.values()))
     made = _wording({"question": raw.get("question", c["prompt"]), "answer": raw.get("answer", c["answer"]),
                      "form": {**qforms.members(c), **members}}, {b.ref for b in blocks},
                     _passage(raw.get("supporting_paragraphs"), inside, [r for r in c["supporting_paragraphs"] if r in inside] or inside))
@@ -316,19 +319,28 @@ FOR_PRACTICE = ("Until now this question was asked inside the section, right aft
                 "of a practice question: above all it stands alone, weeks later, without the page.")
 
 
+CONVERT = ("The practice questions of this book take other forms than this question has, and the reader wants it in one "
+           "of those forms. Ask about the same thing, so that its answer stays what it was, in the form that tests it best.")
+
+
 def rewrite(backend: Backend, book: Book, state: dict[str, Any], qid: str, wish: Any, settings: Settings,
-            steer: Steer | None = None, draft: dict[str, Any] | None = None) -> dict[str, Any]:
+            steer: Steer | None = None, draft: dict[str, Any] | None = None, convert: bool = False) -> dict[str, Any]:
     """Have the model rewrite a question as the reader asks, in the same form. Nothing is kept: the result is for
-    the reader to take or change: ``{"question", "answer", "form", "supporting_paragraphs"}``. ``draft`` is the
-    wording in the reader's form when it differs from what is saved.
+    the reader to take or change: ``{"question", "answer", "form", "supporting_paragraphs"}``, where ``form`` names
+    the form also for an open question, so that ``promote`` keeps it in that form. ``draft`` is the wording in the
+    reader's form when it differs from what is saved.
 
     ``qid`` may name an ephemeral question that the reader is promoting: it is then rewritten as a practice
-    question. For a practice question of a book prepared for the graduated pathway the result also has
-    ``accounts_for`` and ``cue``, as the rewrite needs them."""
+    question, in the form of ``draft`` when that gives one. With ``convert`` such a question, whose form is not one
+    of the forms of the book's practice questions (``settings.forms``), is rewritten in one of those; the model
+    chooses which, and the wish may be empty. For a practice question of a book prepared for the graduated pathway
+    the result also has ``accounts_for`` and ``cue``, as the rewrite needs them."""
     check = next((c for c in pathway.ephemeral(state) if c["id"] == qid), None)
     q = check or find(state, qid)
     wish = clean_text(wish).replace("\n", " ")
-    if not wish:
+    if convert and check is None:
+        raise EditError("Only a question asked while reading is rewritten in another kind.")
+    if not wish and not convert:
         raise EditError("Say what should be different.")
     if len(wish) > INSTRUCTION_MAX:
         raise EditError(f"the wish can hold {INSTRUCTION_MAX} characters")
@@ -338,11 +350,16 @@ def rewrite(backend: Backend, book: Book, state: dict[str, Any], qid: str, wish:
     if draft:
         current = {**{k: v for k, v in current.items() if k not in qforms.MEMBERS},
                    **_wording({**draft, "form": {**qforms.members(q), **(draft.get("form") or {})}}, inside, q["supporting_paragraphs"])}
-    # the form stays what it is; a question that is being promoted is written by the rules of a practice question
-    only = replace(settings, forms=(qforms.form_of(q),), **({"ephemeral": "none"} if check is not None else {}))
+    # the form stays what it is, unless it is converted; a question that is being promoted is written by the rules of a
+    # practice question, in the form the reader's draft has
+    own = qforms.form_of(current if check is not None else q)
+    if convert and own in settings.forms:
+        raise EditError("This question is already of a kind the book's practice questions take.")
+    allowed = tuple(settings.forms) if convert else (own,)  # for the one question rewritten, whatever its role
+    only = replace(settings, forms=allowed, ephemeral_forms=allowed, **({"ephemeral": "none"} if check is not None else {}))
     others = [x for x in state["questions"] if x["section"] == q["section"] and x["id"] != qid and kept(x)]
-    message = prompts.rewrite_message(book, {**item, "question": {**current, "id": qid}, "others": others}, only, wish,
-                                      FOR_PRACTICE if check is not None else "")
+    note = " ".join([FOR_PRACTICE] + ([CONVERT] if convert else [])) if check is not None else ""
+    message = prompts.rewrite_message(book, {**item, "question": {**current, "id": qid}, "others": others}, only, wish, note)
 
     def read(done: Completion) -> dict[str, Any]:
         entries = done.data.get("revisions") if isinstance(done.data, dict) else None
@@ -361,7 +378,7 @@ def rewrite(backend: Backend, book: Book, state: dict[str, Any], qid: str, wish:
             more = {"accounts_for": given["accounts_for"], "cue": given["cue"]}
         if wrong:
             raise Unusable(wrong)
-        return {"question": made["prompt"], "answer": made["answer"], "form": qforms.members(made),
+        return {"question": made["prompt"], "answer": made["answer"], "form": qforms.members(made) or {"form": "open"},
                 "supporting_paragraphs": made["supporting_paragraphs"], **more}
 
     return ask_with_retry(backend, role="revise", system=prompts.drafter_system(only, steer), message=message,

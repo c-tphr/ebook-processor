@@ -235,7 +235,7 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(raw, dict):
             raise ApiError(HTTPStatus.BAD_REQUEST, "settings must be an object")
         allowed = {"density", "section_words", "max_questions", "content", "kind", "rounds", "model", "checker_model",
-                   "effort", "jobs", "epubcheck", "preview", "forms", "ephemeral"}
+                   "effort", "jobs", "epubcheck", "preview", "forms", "ephemeral", "ephemeral_forms"}
         options = {k: (v if v != "" else None) for k, v in raw.items() if k in allowed}
         try:
             return from_options(**options)

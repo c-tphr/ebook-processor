@@ -15,7 +15,7 @@ import re
 from typing import Any
 
 from ebook_processor import sources
-from tests.scripted import EMPTY_PATHWAY, LINKED, Script
+from tests.scripted import EMPTY_FORM, EMPTY_PATHWAY, LINKED, Script, forms_in
 
 NAME = "The Forged Letter.md"
 TEXT = """# The Forged Letter
@@ -60,14 +60,34 @@ def _paragraph(blocks: list[tuple[str, str, str]], words: str) -> str:
 def script() -> Script:
     """A stand-in for the model that writes the plan's examples for this book."""
     made = Script()
-    made.draft_hook = lambda reply, prompt: worked(prompt, LINKED in made.system)
+    made.draft_hook = lambda reply, prompt: worked(prompt, LINKED in made.system, forms_in(made.schema, "ranges", "checks"))
     return made
 
 
-def worked(prompt: str, linked: bool) -> dict[str, Any]:
+# The ephemeral questions as multiple choice, for a book whose ephemeral questions may not be open: the right choice,
+# the wrong ones, and the explanation shown after the reader has answered.
+CHOICES = {
+    "Which road does Tomas take to the council, and why?": (
+        "The slow river road, because the bridge at Stone Ford was down",
+        ["The quick ridge road, because every courier is told to take it", "The ridge road, because the river had flooded",
+         "The river road, because Maren told him to avoid the ridge"],
+        "A carter told him the bridge at Stone Ford had gone, so he turned onto the river road."),
+    "Who knows that the letter Tomas carries was forged?": (
+        "Only the steward Maren and the scribe Ilse",
+        ["Tomas, the courier who carries it", "Councillor Oduya, who later doubts it", "The old duke, whose hand was copied"],
+        "Maren ordered the letter written and Ilse copied the duke's hand; nobody else knew."),
+    "What did Maren tell the gatekeeper about the courier's road?": (
+        "That he had gone by the ridge road",
+        ["That he had gone by the river road", "That he had not left yet", "That he had gone straight to the duke"],
+        "She watched Tomas ride out and told the gatekeeper he had gone by the ridge."),
+}
+
+
+def worked(prompt: str, linked: bool, check_forms: list[str] | None = None) -> dict[str, Any]:
     """What a careful model writes for this book in the graduated pathway: the plan's acceptance examples. The
     chapter of the letter is one section and the short chapter after it another. ``linked``: the reader asked for
-    ephemeral questions that build toward the practice questions explicitly."""
+    ephemeral questions that build toward the practice questions explicitly. ``check_forms`` are the forms the reply
+    schema allows for an ephemeral question: where open questions are not among them, they are multiple choice."""
     blocks = [(m.group(1), m.group(2), m.group(3)) for m in _BLOCK.finditer(prompt.split("\nTEXT\n", 1)[1])]
     refs = [ref for ref, _, _ in blocks]
     fork, forged = _paragraph(blocks, "At the fork he stopped"), _paragraph(blocks, "Only those two knew")
@@ -77,7 +97,14 @@ def worked(prompt: str, linked: bool) -> dict[str, Any]:
     second = next(ref for ref, kind, text in blocks if kind == "heading" and "Afternoon Vote" in text)
 
     def check(prompt: str, answer: str, after: str, supports: list[str]) -> dict[str, Any]:
-        return {"prompt": prompt, "answer": answer, "supporting_paragraphs": [after], "after_paragraph": after, "supports": supports}
+        made = {"prompt": prompt, "answer": answer, "supporting_paragraphs": [after], "after_paragraph": after, "supports": supports}
+        if not check_forms:
+            return made
+        if "open" in check_forms:
+            return {**EMPTY_FORM, "form": "open", **made}
+        assert "choice" in check_forms, "the worked chapter has its ephemeral questions as open questions or as multiple choice"
+        right, wrong, why = CHOICES[prompt]
+        return {**made, **EMPTY_FORM, "form": "choice", "answer": why, "correct_choice": right, "wrong_choices": wrong}
 
     forgery = check("Who knows that the letter Tomas carries was forged?",
                     "Only the steward Maren, who ordered it, and the scribe Ilse, who wrote it.", forged, ["reactions"] if linked else [])

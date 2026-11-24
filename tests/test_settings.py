@@ -128,13 +128,15 @@ def test_settings_cannot_be_changed_once_made():
 def test_what_is_saved_with_a_run_is_loaded_again_as_the_same_settings():
     settings = from_options(section_words="400-1200", max_questions=5, content="figures", kind="technical", rounds=1,
                             model="small", checker_model="codex:gpt", effort="high", jobs=2, part_words=5000,
-                            epubcheck=True, preview=True, forms="open,cloze", ephemeral="linked")
+                            epubcheck=True, preview=True, forms="open,cloze", ephemeral="linked", ephemeral_forms="choice,truefalse")
     saved = settings.as_json()
     assert saved == {"min_words": 400, "max_words": 1200, "max_questions": 5, "content": "figures", "kind": "technical",
                      "rounds": 1, "model": "small", "checker_model": "codex:gpt", "effort": "high", "jobs": 2,
                      "part_words": 5000, "epubcheck": True, "title_suffix": " (checkpoints)", "preview": True,
-                     "forms": ["open", "cloze"], "ephemeral": "linked"}   # a list, as JSON has no tuple
+                     "forms": ["open", "cloze"], "ephemeral": "linked",
+                     "ephemeral_forms": ["choice", "truefalse"]}   # lists, as JSON has no tuple
     assert Settings.from_json(saved) == settings and Settings.from_json(saved).forms == ("open", "cloze")
+    assert Settings.from_json(saved).ephemeral_forms == ("choice", "truefalse")
     assert set(saved) == {f.name for f in dataclasses.fields(Settings)}  # every option is saved
 
 
@@ -142,6 +144,35 @@ def test_loading_fills_in_what_an_older_run_did_not_save_and_ignores_what_it_doe
     old = Settings.from_json({"min_words": 300, "max_words": 1000, "an_option_of_a_later_version": 7})
     assert (old.min_words, old.max_words) == (300, 1000) and old == from_options(density="short")
     assert Settings.from_json({}) == Settings()
+
+
+def test_the_forms_of_ephemeral_questions_are_a_setting_of_their_own():
+    settings = from_options(forms="open", ephemeral="attention", ephemeral_forms="cloze, choice")
+    assert settings.forms == ("open",) and settings.ephemeral_forms == ("choice", "cloze")   # tidied as the forms are
+    assert settings.open_only and settings.all_forms == ("open", "choice", "cloze")
+    assert Settings().ephemeral_forms == ("open",)                                   # open only, unless the reader ticks others
+    # without ephemeral questions they play no part
+    plain = from_options(forms="open", ephemeral_forms="choice")
+    assert plain.all_forms == ("open",)
+    with pytest.raises(SettingsError, match="^ephemeral questions: unknown form of question: essay "):
+        from_options(ephemeral_forms="essay")
+    with pytest.raises(SettingsError, match="^ephemeral questions: allow at least one form of question$"):
+        from_options(ephemeral_forms="")
+    with pytest.raises(SettingsError, match="^the forms of an ephemeral question are given in this order, each once: "):
+        Settings(ephemeral_forms=("cloze", "open")).validate()
+
+
+def test_a_run_saved_before_the_ephemeral_questions_had_forms_of_their_own_wrote_them_in_the_forms_of_the_book():
+    """Such a run's settings have ``ephemeral`` but no ``ephemeral_forms``: its ephemeral questions took ``forms``."""
+    old = {**from_options(forms="open,choice", ephemeral="attention").as_json()}
+    del old["ephemeral_forms"]
+    loaded = Settings.from_json(old)
+    assert loaded.ephemeral_forms == ("open", "choice") and loaded.forms == ("open", "choice")
+    # so it resumes with the same choice made in both places, and not with the new default
+    assert loaded.drafting_key() == from_options(forms="open,choice", ephemeral="attention", ephemeral_forms="open,choice").drafting_key()
+    assert loaded.drafting_key() != from_options(forms="open,choice", ephemeral="attention").drafting_key()
+    older = Settings.from_json({"forms": ["choice"]})                              # from before ephemeral questions
+    assert older.ephemeral_forms == ("open",) and older.drafting_key() == from_options(forms="choice").drafting_key()
 
 
 def test_loading_checks_the_limits_again():
@@ -165,3 +196,8 @@ def test_the_drafting_key_holds_only_what_changes_the_draft():
     for change in ({"density": "medium"}, {"density": "short", "max_questions": 2}, {"density": "short", "content": "prose"},
                    {"density": "short", "kind": "narrative"}, {"density": "short", "part_words": 4000}, {"density": "short", "forms": "all"}):
         assert from_options(**change).drafting_key() != first.drafting_key(), change
+    # the forms of the ephemeral questions count only in a book that has them
+    assert from_options(density="short", ephemeral_forms="all").drafting_key() == first.drafting_key()
+    with_them = from_options(density="short", ephemeral="linked")
+    assert with_them.drafting_key() == {**first.drafting_key(), "ephemeral": "linked", "ephemeral_forms": ["open"]}
+    assert from_options(density="short", ephemeral="linked", ephemeral_forms="choice").drafting_key() != with_them.drafting_key()

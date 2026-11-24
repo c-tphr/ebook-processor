@@ -46,6 +46,8 @@ class Settings:
     # Ephemeral questions inside the sections (see ``pathway``): none, to sustain attention generally ("attention"),
     # or to build toward the practice questions explicitly ("linked")
     ephemeral: str = "none"
+    # the forms an ephemeral question may take; they matter only in a book with ephemeral questions
+    ephemeral_forms: tuple[str, ...] = ("open",)
 
     def validate(self) -> None:
         if not 50 <= self.min_words < self.max_words <= 20000:
@@ -60,11 +62,12 @@ class Settings:
             raise SettingsError("rounds must be 0 to 5")
         if self.effort is not None and self.effort not in EFFORTS:
             raise SettingsError(f"effort must be one of {', '.join(EFFORTS)}")
-        try:
-            if clean_forms(self.forms) != tuple(self.forms):
-                raise FormError(f"the forms of question are given in this order, each once: {', '.join(FORMS)}")
-        except FormError as exc:
-            raise SettingsError(str(exc)) from exc
+        for forms, what in ((self.forms, "the forms of question"), (self.ephemeral_forms, "the forms of an ephemeral question")):
+            try:
+                if clean_forms(forms) != tuple(forms):
+                    raise FormError(f"{what} are given in this order, each once: {', '.join(FORMS)}")
+            except FormError as exc:
+                raise SettingsError(str(exc)) from exc
         if self.ephemeral not in EPHEMERAL:
             raise SettingsError(f"ephemeral questions must be one of {', '.join(EPHEMERAL)}")
         if not 1 <= self.jobs <= 8:
@@ -75,11 +78,19 @@ class Settings:
             raise SettingsError("part size must be at least twice the longest section")
 
     def as_json(self) -> dict[str, Any]:
-        return {**asdict(self), "forms": list(self.forms)}
+        return {**asdict(self), "forms": list(self.forms), "ephemeral_forms": list(self.ephemeral_forms)}
 
     @property
     def open_only(self) -> bool:
+        """Whether the practice questions are open questions only."""
         return tuple(self.forms) == ("open",)
+
+    @property
+    def all_forms(self) -> tuple[str, ...]:
+        """The forms a question of the book may take, in either role: in a book with ephemeral questions, the forms
+        of the practice questions and those of the ephemeral questions together."""
+        wanted = set(self.forms) | (set(self.ephemeral_forms) if self.pathway else set())
+        return tuple(f for f in FORMS if f in wanted)
 
     @property
     def pathway(self) -> bool:
@@ -89,14 +100,19 @@ class Settings:
     def drafting_key(self) -> dict[str, Any]:
         """The options that decide what the drafter writes. A run can be resumed only while these are unchanged."""
         return {**{k: getattr(self, k) for k in ("min_words", "max_words", "max_questions", "content", "kind", "part_words")},
-                "forms": list(self.forms), "ephemeral": self.ephemeral}
+                "forms": list(self.forms), "ephemeral": self.ephemeral,
+                # the forms of the ephemeral questions only where there are any: a run without them resumes whatever they are
+                **({"ephemeral_forms": list(self.ephemeral_forms)} if self.pathway else {})}
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> Settings:
         known = {f.name for f in fields(cls)}
         values = {k: v for k, v in data.items() if k in known}
-        if isinstance(values.get("forms"), list):
-            values["forms"] = tuple(values["forms"])
+        for name in ("forms", "ephemeral_forms"):
+            if isinstance(values.get(name), list):
+                values[name] = tuple(values[name])
+        if "ephemeral" in values and "ephemeral_forms" not in values:  # saved before the two roles had forms of their own
+            values["ephemeral_forms"] = values.get("forms", cls.forms)
         settings = cls(**values)
         settings.validate()
         return settings
@@ -105,11 +121,12 @@ class Settings:
 def from_options(density: str | None = None, section_words: str | None = None, **rest: Any) -> Settings:
     """Settings from the user's options. ``section_words`` ("400-1200") wins over ``density``."""
     values = {k: v for k, v in rest.items() if v is not None}
-    if "forms" in values:
-        try:
-            values["forms"] = clean_forms(values["forms"])
-        except FormError as exc:
-            raise SettingsError(str(exc)) from exc
+    for name in ("forms", "ephemeral_forms"):
+        if name in values:
+            try:
+                values[name] = clean_forms(values[name])
+            except FormError as exc:
+                raise SettingsError(str(exc) if name == "forms" else f"ephemeral questions: {exc}") from exc
     if section_words:
         low, sep, high = section_words.partition("-")
         if not sep or not low.strip().isdigit() or not high.strip().isdigit():

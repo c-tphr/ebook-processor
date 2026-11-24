@@ -22,8 +22,9 @@ const DEFAULTS = {
   nb_beside: true, nb_side: "left", nb_view: "scroll", nb_split: 0.5,            // notebook and its side reader
   steer_about: "", steer_style: "", steer_confirm: true,                         // what the question writers are told about you
   own_passage: "section",                                                        // the passage of a question you add yourself
+  promote_kind: "keep",                     // an ephemeral question kept for Practice in a kind the book's practice questions do not take: keep, rewrite, ask
 };
-const RUN_KEYS = ["density", "max_questions", "kind", "content", "rounds", "model", "checker_model", "effort", "jobs", "epubcheck", "preview", "forms", "ephemeral"];
+const RUN_KEYS = ["density", "max_questions", "kind", "content", "rounds", "model", "checker_model", "effort", "jobs", "epubcheck", "preview", "forms", "ephemeral", "ephemeral_forms"];
 // What should guide the questions asked inside a section (the graduated pathway). The words of the two choices are the reader's own.
 const EPHEMERAL = [["none", "None", "Questions at the end of each section only, as before."],
   ["attention", "To sustain my attention", "I want ephemeral questions to help me sustain my attention generally."],
@@ -79,7 +80,7 @@ let serial = 0;
 function processing(inf, initial, onchange) {
   const d = inf.defaults || {}, dens = inf.densities || {}, models = inf.models || [];
   const v = { density: "medium", max_questions: d.max_questions, kind: d.kind, content: d.content, rounds: d.rounds, jobs: d.jobs,
-    model: "", checker_model: "", effort: "", epubcheck: false, preview: false, forms: "open", ephemeral: "none" };
+    model: "", checker_model: "", effort: "", epubcheck: false, preview: false, forms: "open", ephemeral: "none", ephemeral_forms: "open" };
   for (const [k, x] of Object.entries(initial || {})) if (x != null && k in v) v[k] = x;
   const name = "st-density-" + (++serial);
   const fire = (key) => { if (onchange) onchange(key, read()[key]); };
@@ -126,15 +127,30 @@ function processing(inf, initial, onchange) {
     last = s.value;
     return s;
   };
-  // The kinds of question a run may write. At least one stays ticked.
-  const formBoxes = FORMS.map(([k, t, what]) => [k, el("input", { type: "checkbox", value: k, ...(formList(v.forms).includes(k) ? { checked: true } : {}),
-    onchange: (e) => { if (!formBoxes.some(([, b]) => b.checked)) e.target.checked = true; fire("forms"); } }), t, what]);
-  const forms = el("div", { class: "st-ticks", role: "group", "aria-label": "Practice questions" },
-    formBoxes.map(([, box, t, what]) => el("label", { title: what }, box, el("span", {}, t))));   // what each is, on hover
+  // The kinds of question a run may write: one row of ticks for the practice questions, one for the ephemeral ones.
+  // In each row at least one stays ticked.
+  const ticks = (key, label) => {
+    const boxes = FORMS.map(([k, t, what]) => [k, el("input", { type: "checkbox", value: k, ...(formList(v[key]).includes(k) ? { checked: true } : {}),
+      onchange: (e) => { if (!boxes.some(([, b]) => b.checked)) e.target.checked = true; fire(key); } }), t, what]);
+    const row = el("div", { class: "st-ticks", role: "group", "aria-label": label },
+      boxes.map(([, box, t, what]) => el("label", { title: what }, box, el("span", {}, t))));   // what each is, on hover
+    return { boxes, row, read: () => boxes.filter(([, b]) => b.checked).map(([k]) => k),
+      set(value) { const on = formList(value); for (const [k, box] of boxes) box.checked = on.includes(k); } };
+  };
+  const formTicks = ticks("forms", "Practice questions"), ephemeralTicks = ticks("ephemeral_forms", "Kinds of ephemeral questions");
+  const forms = formTicks.row;
   // Ephemeral questions: none, or one of the two things that can guide where they go and what they ask.
+  // Their kinds are a row of ticks of their own, shown only while there are ephemeral questions.
   const ephemeralSaid = el("small", {});
-  const sayEphemeral = () => { ephemeralSaid.textContent = (EPHEMERAL.find(([k]) => k === ephemeral.querySelector("input:checked").value) || EPHEMERAL[0])[2]
-    + " Either choice adds brief questions inside a section, close to the passage they are about and never graded, and opens each checkpoint with a question that asks for reasoning where the text rewards one. They take the kinds ticked above. You can ask for fewer, or none, while you read."; };
+  const ephemeralKinds = el("div", { class: "st-kinds", id: "st-ephemeral-forms" }, el("span", { class: "m" }, "Kinds of ephemeral questions"), ephemeralTicks.row,
+    el("small", {}, "The kinds of the brief questions asked inside a section. They can differ from the kinds of the practice questions. A kind the app grades is answered on the spot, and the answer is still not kept."));
+  const sayEphemeral = () => {
+    const chosen = ephemeral.querySelector("input:checked").value;
+    ephemeralSaid.textContent = (EPHEMERAL.find(([k]) => k === chosen) || EPHEMERAL[0])[2]
+      + " Either choice adds brief questions inside a section, close to the passage they are about and never graded, and opens each checkpoint with a question that asks for reasoning where the text rewards one."
+      + (chosen === "none" ? "" : " They take the kinds you tick below.") + " You can ask for fewer, or none, while you read.";
+    ephemeralKinds.hidden = chosen === "none";
+  };
   const ephemeral = el("div", { class: "st-seg", role: "radiogroup", "aria-label": "Ephemeral questions" },
     EPHEMERAL.map(([k, t]) => el("label", {}, el("input", { type: "radio", name: name + "-e", value: k, checked: k === v.ephemeral, onchange: () => { sayEphemeral(); fire("ephemeral"); } }), t)));
   sayEphemeral();
@@ -179,13 +195,14 @@ function processing(inf, initial, onchange) {
     return { density: density.querySelector("input:checked").value, max_questions: +c.max_questions.value, kind: c.kind.value,
       content: c.content.value, rounds: +c.rounds.value, model: c.model.value.trim(), checker_model: c.checker_model.value.trim(),
       effort: c.effort.value, jobs: +c.jobs.value, epubcheck: c.epubcheck.value === "1", preview: c.preview.value === "1",
-      forms: formBoxes.filter(([, b]) => b.checked).map(([k]) => k), ephemeral: ephemeral.querySelector("input:checked").value };
+      forms: formTicks.read(), ephemeral: ephemeral.querySelector("input:checked").value, ephemeral_forms: ephemeralTicks.read() };
   }
   function setOne(key, value) {
     if (value == null) value = { density: "medium", model: "", checker_model: "", effort: "", epubcheck: false, preview: false, ephemeral: "none" }[key] ?? d[key];
     if (key === "density") { const box = density.querySelector(`input[value="${value}"]`); if (box) box.checked = true; return; }
     if (key === "ephemeral") { const box = ephemeral.querySelector(`input[value="${value}"]`); if (box) box.checked = true; sayEphemeral(); return; }
-    if (key === "forms") { const on = formList(value); for (const [k, box] of formBoxes) box.checked = on.includes(k); return; }
+    if (key === "forms") return formTicks.set(value);
+    if (key === "ephemeral_forms") return ephemeralTicks.set(value);
     if (!c[key]) return;
     if (c[key].have) c[key].have(String(value));
     c[key].value = key === "epubcheck" || key === "preview" ? (value ? "1" : "") : String(value);
@@ -199,7 +216,7 @@ function processing(inf, initial, onchange) {
     field("Kind of book", c.kind),
     el("div", { class: "st-field wide" }, el("span", { class: "m" }, "Practice questions"), forms,
       el("small", {}, "For each idea the model picks the kind that suits it, among those you tick. The app grades the last three itself. Recalling an answer from nothing is the strongest practice; the others are quicker.")),
-    el("div", { class: "st-field wide", id: "st-ephemeral" }, el("span", { class: "m" }, "Ephemeral questions"), ephemeral, ephemeralSaid),
+    el("div", { class: "st-field wide", id: "st-ephemeral" }, el("span", { class: "m" }, "Ephemeral questions"), ephemeral, ephemeralSaid, ephemeralKinds),
     field("Tables, code, formulas, figures", c.content, "What the model may see and ask about beyond the running text."),
     field("Independent check", c.rounds, "A question that fails its last check is left out and listed in the report."));
   const advanced = el("div", { class: "st-grid" },
@@ -228,6 +245,9 @@ const CSS = `
 .st-ticks input:checked { background: var(--blue); border-color: var(--blue); }
 .st-ticks input:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .st-ticks span { font: 12px/1.3 var(--mono); letter-spacing: 0.05em; text-transform: uppercase; }
+.st-kinds { margin-top: 18px; } .st-kinds[hidden] { display: none; }
+.st-kinds > .m { display: block; margin-bottom: 6px; font: 12px/1.5 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; }
+.st-kinds > small { display: block; color: var(--mute); margin-top: 6px; font-size: 13px; line-height: 1.35; }
 @media (max-width: 760px) { .st-ticks { grid-template-columns: repeat(2, minmax(0, 1fr)); } .st-ticks label:nth-child(2) { border-right: 0; } .st-ticks label:nth-child(-n+2) { border-bottom: 1px solid var(--ink); } }
 .st-count { font: 11px/1.5 var(--mono); letter-spacing: 0.04em; color: var(--mute); float: right; }
 .st-seg { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--ink); }
@@ -340,6 +360,9 @@ const DRAW = {
       el("h4", {}, "A question you add yourself"),
       row("Its passage", choice("own_passage", [["section", "The whole section"], ["pick", "I pick the paragraphs"], ["model_review", "The model picks, I confirm"], ["model", "The model picks"]]),
         "On a book's page you can write a question of your own for a section. Its passage is what is shown with the card under \u201cFrom the book\u201d. The whole section is always right but long. Picking is precise. The model can pick for you in one short call, with or without showing you its choice first. A question written on a highlight has the highlight as its passage."),
+      el("h4", {}, "A question you keep from those asked while reading"),
+      row("When its kind is not a practice kind", choice("promote_kind", [["keep", "Keep its kind"], ["rewrite", "Rewrite it"], ["ask", "Ask me each time"]]),
+        "A book can ask its ephemeral questions in other kinds than its practice questions. When you keep such a question for Practice, it can keep its own kind, or the model can rewrite it in one of the kinds of the book's practice questions. You see the rewrite and can change it before you keep it. Ask me each time offers both ways."),
       el("h4", {}, "Before a run"),
       row("Show me how my wishes were read", choice("steer_confirm", [[true, "On"], [false, "Off"]]),
         "On: before a book or a trial chapter is processed, the model states in its own words what it will favour and how it will write, with a look at the book's chapters. You correct it, answer its questions if it has any, and confirm. One short call. Off: your words go to the question writers as they are.")];

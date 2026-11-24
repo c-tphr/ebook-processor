@@ -297,7 +297,7 @@ def check_part(data: Any, groups: list[tuple[SpineDoc, list[Block]]], may_stop_e
                     if k >= pathway.MAX_CHECKS:
                         flaws.append((len(out), -1 - k, f"{name} has {len(entry['checks'])} ephemeral questions; at most "
                                                         f"{pathway.MAX_CHECKS} are allowed in a section"))
-                    for problem in question_problems(c, inside, settings.forms) + pathway.check_problems(c, span, settings.ephemeral):
+                    for problem in question_problems(c, inside, settings.ephemeral_forms) + pathway.check_problems(c, span, settings.ephemeral):
                         flaws.append((len(out), -1 - k, f"{name}, ephemeral question {k + 1}: {problem}"))
         before.update(b.ref for b in span)
         out.append(entry)
@@ -965,7 +965,7 @@ class Run:
         for _ in range(2):
             reply = self.call("revise", system, prompts.revise_message(self.book, items, self.settings, self.images,
                                                                        feedback, self.practice()), prompts.revise_schema(self.settings)).data
-            good, problems = read_revisions(reply, wanted, self.settings.forms, self.settings.pathway)
+            good, problems = read_revisions(reply, wanted, self.settings.forms, self.settings.pathway, self.settings.ephemeral_forms)
             if not problems:
                 break
             feedback = "\n".join(f"- {p}" for p in problems)
@@ -1046,8 +1046,8 @@ class Run:
 
 
 def _differences(old: Settings, new: Settings) -> str:
-    a, b = old.drafting_key(), new.drafting_key()
-    return ", ".join(f"{k}: {a[k]} then, {b[k]} now" for k in a if a[k] != b[k])
+    a, b = old.drafting_key(), new.drafting_key()  # a key holds the forms of the ephemeral questions only where there are any
+    return ", ".join(f"{k}: {a.get(k, 'not used')} then, {b.get(k, 'not used')} now" for k in dict.fromkeys([*a, *b]) if a.get(k) != b.get(k))
 
 
 def read_check(reply: Any, wanted: dict[str, tuple[dict[str, Any], set[str]]], judge: dict[str, dict[str, Any]],
@@ -1098,9 +1098,12 @@ def read_check(reply: Any, wanted: dict[str, tuple[dict[str, Any], set[str]]], j
 
 
 def read_revisions(reply: Any, wanted: dict[str, tuple[dict[str, Any], set[str]]],
-                   allowed: tuple[str, ...] | None = None, with_pathway: bool = False) -> tuple[dict[str, dict[str, Any]], list[str]]:
+                   allowed: tuple[str, ...] | None = None, with_pathway: bool = False,
+                   ephemeral_allowed: tuple[str, ...] | None = None) -> tuple[dict[str, dict[str, Any]], list[str]]:
     """(usable revisions, problems to send back). ``with_pathway``: the book is prepared for the graduated pathway,
-    so a practice question's revision carries the pathway's members, and an ephemeral question's stays brief."""
+    so a practice question's revision carries the pathway's members, and an ephemeral question's stays brief.
+    ``allowed`` are the forms a practice question may take, ``ephemeral_allowed`` those of an ephemeral question
+    (the same as ``allowed`` when not given)."""
     problems: list[str] = []
     good: dict[str, dict[str, Any]] = {}
     entries = reply.get("revisions") if isinstance(reply, dict) else None
@@ -1113,8 +1116,9 @@ def read_revisions(reply: Any, wanted: dict[str, tuple[dict[str, Any], set[str]]
             continue
         q = normal_question(entry)
         old = wanted[qid][0]
-        flaws = question_problems(q, wanted[qid][1], allowed)
-        if with_pathway and pathway.is_ephemeral(old):
+        ephemeral = with_pathway and pathway.is_ephemeral(old)
+        flaws = question_problems(q, wanted[qid][1], (ephemeral_allowed or allowed) if ephemeral else allowed)
+        if ephemeral:
             flaws += pathway.brief_problems(q)
         elif with_pathway:  # of the earlier paragraphs, a revision can keep those the question had: it was shown no others
             q.update(pathway.extras(entry, _one_line))

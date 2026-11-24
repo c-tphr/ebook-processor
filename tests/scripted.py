@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from ebook_processor.forms import NAMES
 from ebook_processor.llm import ScriptedBackend
 from ebook_processor.prompts import CRITERIA, ONE_RIGHT
 
@@ -20,6 +21,7 @@ SECTION_RE = re.compile(r"^=== SECTION (s\d+): ", re.M)
 QUESTION_RE = re.compile(r"^QUESTION \[([^\]]+)\]$", re.M)
 FIX_RE = re.compile(r"^QUESTION TO (?:FIX|CHANGE) \[([^\]]+)\]$", re.M)
 JUDGE_RE = re.compile(r"^JUDGE THE BREAK of (s\d+): (yes|no)$", re.M)
+ROLE_FORMS_RE = re.compile(r"A practice question takes one of these forms: ([^;]+); an ephemeral question one of these: ([^.]+)\.")
 EXCLUDED_RE = re.compile(r"^\[(\d+)\] (d\d+-p\d+) to (d\d+-p\d+) ", re.M)
 
 
@@ -212,9 +214,13 @@ class Script:
                             question["accounts_for"] = [f"What {paragraphs[0]} says.", f"What {paragraphs[1]} says."]
                         if not linked:
                             question.update(cue_prompt=f"What does {paragraphs[0]} say first?", cue_answer=f"What {paragraphs[0]} says.")
-                    more["checks"] = [{**({**EMPTY_FORM, "form": "open"} if allowed else {}),
-                                       "prompt": f"What was just said at {paragraphs[0]}?", "answer": f"What {paragraphs[0]} says.",
-                                       "supporting_paragraphs": [paragraphs[0]], "after_paragraph": paragraphs[0],
+                    # in the forms the schema allows for an ephemeral question, one after another, section by section
+                    check_forms = forms_in(self.schema, "ranges", "checks")
+                    check: dict[str, Any] = {"prompt": f"What was just said at {paragraphs[0]}?", "answer": f"What {paragraphs[0]} says."}
+                    if check_forms:
+                        form = check_forms[(self.sections_drafted - 1) % len(check_forms)]
+                        check = {**EMPTY_FORM, "form": "open", **check} if form == "open" else formed(form, paragraphs[0], href, self.sections_drafted)
+                    more["checks"] = [{**check, "supporting_paragraphs": [paragraphs[0]], "after_paragraph": paragraphs[0],
                                        "supports": [key] if linked else []}] if higher else []
                 ranges.append({
                     "kind": "section", "first_paragraph": span[0][0], "last_paragraph": span[-1][0],
@@ -261,6 +267,11 @@ class Script:
                 else:
                     n_checks = self.checks_seen.get(qid, 0)
                     allowed = forms_in(self.schema, "revisions")
+                    roles = ROLE_FORMS_RE.search(prompt)
+                    if roles:  # the two roles have forms of their own: those of the question's role
+                        mine = body[q.end():].split("QUESTION TO FIX [", 1)[0]
+                        names = roles.group(2 if "Role: ephemeral question" in mine else 1).split(", ")
+                        allowed = [f for f, name in NAMES.items() if name in names]
                     if allowed and "open" not in allowed:  # revised in the first form that is allowed
                         made = formed(allowed[0], cite, f"the book (try {n_checks})")
                         revisions.append({**made, "id": qid, "action": "revise", "supporting_paragraphs": [cite]})

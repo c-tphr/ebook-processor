@@ -4,7 +4,8 @@ a messenger takes a forged letter to the council, by the slow road, and two coun
 The chapter is prepared both ways the plan offers, through the app's own upload. Prepared for general attention it
 has three ephemeral questions (the road, who knows of the forgery, what the gatekeeper was told) and a cue for the
 checkpoint's question. Prepared with explicit links it has one, about who knows of the forgery, which supports the
-checkpoint's question about the councillors' reactions.
+checkpoint's question about the councillors' reactions. Prepared with open practice questions and multiple-choice
+ephemeral questions, its three ephemeral questions are multiple choice.
 """
 
 from __future__ import annotations
@@ -30,17 +31,26 @@ STATE = """() => ({
     word: pos.word, mode, back: !!revisit, playing: !!(view && view.playing), setting: settings.read_checks })"""
 
 
+WITHDRAW: set[str] = set()                                # what the stand-in refuses to rewrite, while a test says so
+
+
+def stand_in(settings: Any) -> Any:
+    made = messenger.script()
+    made.withdraw = WITHDRAW
+    return made.backend()
+
+
 @pytest.fixture(scope="module")
 def road(tmp_path_factory):
-    web = start_web_app(tmp_path_factory.mktemp("road"), model=lambda s: messenger.script().backend(),
-                        claude={"ok": True, "version": "0.0.0 (test)"})
+    web = start_web_app(tmp_path_factory.mktemp("road"), model=stand_in, claude={"ok": True, "version": "0.0.0 (test)"})
     yield web
     web.close()
 
 
-def prepare(web: WebApp, how: str) -> App:
-    """The chapter, added as the Add form adds a book, with ephemeral questions of this purpose."""
-    job = web.wait(web.add_fixture(name="The Forged Letter.epub", book=messenger.book(), density="short", ephemeral=how))
+def prepare(web: WebApp, how: str, **more: Any) -> App:
+    """The chapter, added as the Add form adds a book, with ephemeral questions of this purpose (and ``more``
+    settings)."""
+    job = web.wait(web.add_fixture(name="The Forged Letter.epub", book=messenger.book(), density="short", ephemeral=how, **more))
     assert job["status"] == "done", job.get("message")
     return App(web, job["id"])
 
@@ -334,12 +344,12 @@ def test_the_add_form_offers_both_purposes_and_a_book_keeps_the_one_chosen(page:
     page.goto(road.url + "/#/add")
     page.locator("#app form").wait_for()
     choice = page.locator("#app form #st-ephemeral")
-    expect(choice.locator("label")).to_have_text(["None", "To sustain my attention", "To build toward practice"])
-    expect(choice.locator("input:checked")).to_have_value("none")   # as before, unless the reader asks
+    expect(choice.locator(".st-seg label")).to_have_text(["None", "To sustain my attention", "To build toward practice"])
+    expect(choice.locator(".st-seg input:checked")).to_have_value("none")   # as before, unless the reader asks
     choice.locator("label", has_text="To sustain my attention").click()
-    expect(choice.locator("small")).to_contain_text("I want ephemeral questions to help me sustain my attention generally.")
+    expect(choice.locator(":scope > small")).to_contain_text("I want ephemeral questions to help me sustain my attention generally.")
     choice.locator("label", has_text="To build toward practice").click()
-    expect(choice.locator("small")).to_contain_text("I want ephemeral questions to build toward practice questions explicitly.")
+    expect(choice.locator(":scope > small")).to_contain_text("I want ephemeral questions to build toward practice questions explicitly.")
     page.locator("#app form .st-seg label", has_text="short").click()
     page.locator("#app form input[type=file]").set_input_files(str(source))
     page.get_by_role("button", name="Process book").click()
@@ -422,3 +432,137 @@ def test_a_rewrite_into_a_question_with_one_answer_takes_the_evidence_away(page:
     expect(window).to_have_count(0)
     kept = app.call("GET", f"/jobs/{app.id}/book-questions/{REACTIONS}")
     assert "accounts_for" not in kept and "(as asked: ask only what Varga concluded)" in kept["answer"]
+
+
+# ---- the kinds of the ephemeral questions, chosen apart from those of the practice questions
+
+
+def graded(road: WebApp) -> App:
+    """The chapter with open practice questions and multiple-choice ephemeral questions."""
+    return prepare(road, "attention", forms="open", ephemeral_forms="choice").never_opened()
+
+
+def test_a_multiple_choice_question_while_reading_shows_its_verdict_and_takes_no_grade(page: Page, road: WebApp):
+    app = graded(road)
+    reading = Reading(page, app)
+    section = page.evaluate("() => book.sections[0]")
+    assert [c["form"] for c in section["checks"]] == ["choice"] * 3 and "form" not in section["prompts"][0]
+    stop = reading.on()
+    assert stop["check"] == {"id": ROAD, "revealed": False}
+    card = page.locator(".cp.qc")
+    expect(card.locator(".kind")).to_have_text("Multiple choice")
+    expect(card.locator(".head")).to_contain_text("Not graded, not kept")
+    road_check = section["checks"][0]
+    card.locator(".qf-choice", has_text=road_check["choices"][road_check["correct"]]).click()
+    verdict = card.locator(".qf-verdict.right")
+    expect(verdict).to_contain_text("Right")
+    expect(verdict).to_contain_text("A carter told him the bridge at Stone Ford had gone")
+    page.locator("#qc-next").click()
+    state = reading.state()
+    assert state["met"][ROAD]["outcome"] == "done" and state["met"][ROAD]["right"] is True
+    assert state["grades"] == {} and state["answers"] == [] and state["check"]["id"] == FORGERY
+    wrong = next(c for n, c in enumerate(section["checks"][1]["choices"]) if n != section["checks"][1]["correct"])
+    card.locator(".qf-choice", has_text=wrong).click()          # a wrong choice is said, and is not held against the reader
+    expect(card.locator(".qf-verdict.wrong")).to_contain_text("Only the steward Maren and the scribe Ilse")
+    page.locator("#qc-next").click()
+    stored = reading.saved()
+    assert stored["x_checks"][ROAD]["right"] is True and stored["x_checks"][FORGERY] == {**stored["x_checks"][FORGERY], "outcome": "done", "right": False}
+    assert stored["grades"] == {} and stored["x_attempts"] == []
+    assert app.web.jobs.cards(app.id)["cards"] == {}            # no card comes of it
+
+
+def test_the_add_form_has_ticks_of_their_own_for_the_ephemeral_questions_and_a_book_keeps_them(page: Page, road: WebApp, tmp_path):
+    source = tmp_path / "The Forged Letter.epub"
+    source.write_bytes(messenger.book())
+    page.goto(road.url + "/#/add")
+    page.locator("#app form").wait_for()
+    block = page.locator("#app form #st-ephemeral")
+    kinds = block.locator("#st-ephemeral-forms")
+    checked = "(row) => [...row.querySelectorAll('input:checked')].map((b) => b.value)"
+    expect(kinds).to_be_hidden()                                # with no ephemeral questions there is nothing to choose
+    block.locator("label", has_text="To sustain my attention").click()
+    expect(kinds).to_be_visible()
+    expect(kinds.locator(".st-ticks input[type=checkbox]")).to_have_count(4)
+    assert kinds.locator(".st-ticks").evaluate(checked) == ["open"]   # open only, unless the reader ticks others
+    expect(block.locator(":scope > small")).to_contain_text("They take the kinds you tick below.")
+    kinds.locator("input[value=open]").click()                  # the last one ticked stays ticked
+    expect(kinds.locator("input[value=open]")).to_be_checked()
+    kinds.locator("input[value=choice]").click()
+    kinds.locator("input[value=open]").click()
+    assert kinds.locator(".st-ticks").evaluate(checked) == ["choice"]
+    practice = page.locator("#app form .st-ticks[aria-label='Practice questions']")
+    assert practice.evaluate(checked) == ["open"]               # the practice questions keep their own
+    block.locator("label", has_text="None").click()
+    expect(kinds).to_be_hidden()
+    block.locator("label", has_text="To sustain my attention").click()
+    assert kinds.locator(".st-ticks").evaluate(checked) == ["choice"]
+    page.locator("#app form .st-seg label", has_text="short").click()
+    page.locator("#app form input[type=file]").set_input_files(str(source))
+    page.get_by_role("button", name="Process book").click()
+    page.wait_for_url("**/#/run/**")
+    page.locator(".files .file").first.wait_for(timeout=60000)
+    job = road.call("GET", f"/api/jobs/{page.url.rsplit('/', 1)[1]}").data
+    assert job["settings"]["ephemeral"] == "attention" and job["settings"]["ephemeral_forms"] == ["choice"] and job["settings"]["forms"] == ["open"]
+    road.call("PUT", "/api/settings", json={"add_ephemeral": None, "add_ephemeral_forms": None})   # the form remembers the choice: put it back
+
+
+def test_a_question_of_a_kind_the_practice_questions_do_not_take_is_kept_rewritten_or_as_the_reader_chooses(page: Page, road: WebApp):
+    app = graded(road)
+    page.goto(f"{app.url}/#/run/{app.id}")
+    window = page.locator(".qf-dlg[open]")
+
+    def promoter(eid: str) -> None:
+        page.get_by_role("button", name=f"Keep {eid} for Practice").click()
+        expect(window.locator("header b")).to_have_text("Keep for Practice")
+
+    def setting(button: str) -> None:                           # Settings, Your questions
+        page.evaluate("() => AppSettings.open('questions')")
+        page.locator(".stg").get_by_role("button", name=button).click()
+        page.locator(".stg header button", has_text="Close").click()
+
+    def kept(eid: str, qid: str) -> dict[str, Any]:
+        window.locator("#qf-save").click()
+        expect(page.locator(f"[data-check='{eid}']")).to_contain_text(f"Kept for Practice as {qid}")
+        return app.call("GET", f"/jobs/{app.id}/book-questions/{qid}")
+
+    # by default it keeps its kind, as before, and the window says nothing more
+    promoter(ROAD)
+    expect(window.locator("#qf-kind")).to_have_count(0)
+    expect(window.get_by_label("Choice 1", exact=True)).to_be_visible()
+    assert kept(ROAD, "c0001-p2")["form"] == "choice"
+    # rewritten: the model writes it as a practice kind at once, and the reader sees it in the form before keeping it
+    setting("Rewrite it")
+    promoter(FORGERY)
+    expect(window.locator(".qf-note")).to_contain_text("The model rewrote it as an open question")
+    expect(window.get_by_label("Choice 1", exact=True)).to_have_count(0)
+    expect(window.get_by_label("Answer", exact=True)).to_be_visible()   # the fields of an open question
+    expect(window.locator("#qf-kind")).to_contain_text("In the form it is now an open question")
+    window.get_by_label("Question", exact=True).fill("Which two people know that the duke's letter is forged?")
+    made = kept(FORGERY, "c0001-p3")
+    assert "form" not in made and made["question"] == "Which two people know that the duke's letter is forged?"
+    # when the model cannot do it, the window says so and the question can be kept in its own kind
+    WITHDRAW.add(GATE)
+    try:
+        promoter(GATE)
+        expect(window.locator(".qf-note.bad")).to_contain_text("The model could not rewrite it in a practice kind")
+        expect(window.locator(".qf-note.bad")).to_contain_text("You can keep it in its own kind.")
+        expect(window.get_by_label("Choice 1", exact=True)).to_be_visible()
+        window.locator("header button", has_text="Close").click()
+        # asked each time: both ways are offered, and the reader can go back to the question's own kind
+        setting("Ask me each time")
+        promoter(GATE)
+        expect(window.locator("#qf-kind")).to_contain_text("Keep it in its own kind, or have the model rewrite it in a practice kind.")
+        expect(window.get_by_label("Choice 1", exact=True)).to_be_visible()
+        window.locator("#qf-convert").click()
+        expect(window.locator(".qf-note.bad")).to_contain_text("could not rewrite it")
+    finally:
+        WITHDRAW.clear()
+    window.locator("#qf-convert").click()
+    expect(window.locator(".qf-note")).to_contain_text("The model rewrote it as an open question")
+    expect(window.get_by_label("Choice 1", exact=True)).to_have_count(0)
+    window.locator("#qf-own").click()
+    expect(window.get_by_label("Choice 1", exact=True)).to_be_visible()
+    expect(window.locator("#qf-convert")).to_be_visible()
+    assert kept(GATE, "c0001-p4")["form"] == "choice"
+    assert set(app.web.jobs.cards(app.id)["cards"]) == {"c0001-p2", "c0001-p3", "c0001-p4"}
+    page.evaluate("() => AppSettings.set('promote_kind', null)")

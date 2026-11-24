@@ -172,11 +172,12 @@ class Questions:
 
     def rewrite_question(self, job_id: str, qid: str, raw: dict[str, Any]) -> dict[str, Any]:
         """A model's rewrite of a question to the reader's wish, for the reader to take or change. ``qid`` may be
-        an ephemeral question's: it is then rewritten as the practice question the reader is making of it."""
+        an ephemeral question's: it is then rewritten as the practice question the reader is making of it, and with
+        ``convert`` in one of the forms of the book's practice questions."""
         settings, backend, steer = self._models(job_id, ["draft"])
         draft = raw.get("draft") if isinstance(raw.get("draft"), dict) else None
-        return self._asked(lambda: self._look(
-            job_id, lambda book, state: editing.rewrite(backend, book, state, qid, raw.get("wish"), settings, steer, draft)))
+        return self._asked(lambda: self._look(job_id, lambda book, state: editing.rewrite(
+            backend, book, state, qid, raw.get("wish"), settings, steer, draft, convert=raw.get("convert") is True)))
 
     # ---- the graduated pathway: an ephemeral question kept for Practice (see pathway.py)
 

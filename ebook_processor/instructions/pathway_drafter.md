@@ -5,6 +5,8 @@ The reader of this book has asked for more than questions at the end of each sec
 
 A question has a **form** (how the reader answers) and a **role** (ephemeral, or for practice). The two are independent: an open question can be a quick ephemeral check.
 
+$forms
+
 ### 12.1 Ephemeral questions
 
 An ephemeral question serves the reading session. The book stops for a moment after a paragraph, with the text hidden. The reader recalls the answer in a few words, reveals yours, and reads on. Nothing is graded and the question is not kept for later practice. Its job is to let a reader whose attention has slipped notice it while the passage is still close, so that they can go back at once.

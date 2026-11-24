@@ -132,18 +132,18 @@ def test_practice_asks_in_the_same_form_and_grades_the_card(page: Page, formed: 
 
 def test_the_kinds_are_ticked_in_settings_and_a_highlights_question_can_be_edited(page: Page, formed: App):
     page.goto(formed.url + "/#/add")
-    page.locator("#app form .st-ticks").wait_for()
-    open_box = page.locator("#app form .st-ticks input[value=open]")
+    page.locator("#app form .st-ticks[aria-label='Practice questions']").wait_for()
+    open_box = page.locator("#app form .st-ticks[aria-label='Practice questions'] input[value=open]")
     expect(open_box).to_be_checked()
     open_box.click()                                            # the last one ticked stays ticked
     expect(open_box).to_be_checked()
     page.locator("#b-settings").click()
-    ticks = page.locator(".stg .st-ticks")
+    ticks = page.locator(".stg .st-ticks[aria-label='Practice questions']")
     ticks.locator("label", has_text="Multiple choice").click()
     ticks.locator("label", has_text="Open").click()
     page.wait_for_function("() => AppSettings.values.add_forms === 'choice'")
     page.locator(".stg header button").click()
-    expect(page.locator("#app form .st-ticks input[value=choice]")).to_be_checked()   # the form on the page follows
+    expect(page.locator("#app form .st-ticks[aria-label='Practice questions'] input[value=choice]")).to_be_checked()   # the form on the page follows
     expect(open_box).not_to_be_checked()
     assert formed.call("GET", "/settings")["add_forms"] == "choice"
     # a question for a highlight is now multiple choice; its choices can be changed before it is accepted

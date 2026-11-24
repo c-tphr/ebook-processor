@@ -14,14 +14,16 @@ from pathlib import Path
 import pytest
 
 from ebook_processor import editing, pathway, prompts, reading, srs
-from ebook_processor.pipeline import BookIndex, check_part, draft_document, kept, read_check
+from ebook_processor import forms as qforms
+from ebook_processor.llm import BackendError
+from ebook_processor.pipeline import BookIndex, PipelineError, check_part, draft_document, kept, read_check, read_revisions
 from ebook_processor.prep.epub import load_book
 from ebook_processor.runner import change_run, open_run, rebuild, review_data, run_book, try_chapter
 from ebook_processor.settings import Settings, from_options
 from tests import messenger
 from tests.helpers import run, state_of
 from tests.paths import FIXTURE
-from tests.scripted import EMPTY_PATHWAY, Script
+from tests.scripted import EMPTY_FORM, EMPTY_PATHWAY, Script
 
 ATTENTION = from_options(density="short", ephemeral="attention")
 LINKED = from_options(density="short", ephemeral="linked")
@@ -484,3 +486,180 @@ def test_the_notebook_opens_the_passage_of_an_answer_in_its_own_section(make_web
     book = app.jobs.book(job["id"])
     own = book.blocks[crossing["supporting_paragraphs"][0]]
     assert app.jobs.sources(job["id"])[crossing["id"]] == {"chapter": own[0], "word": own[1]}
+
+
+# --------------------------------------------------------------------------
+# The forms of each role: practice questions in some, ephemeral questions in others
+
+SPLIT = from_options(density="short", ephemeral="attention", forms="open", ephemeral_forms="choice,truefalse")
+GRADED_CHECKS = from_options(density="short", ephemeral="attention", forms="open", ephemeral_forms="choice")
+
+
+def test_open_practice_questions_and_graded_ephemeral_ones_are_drafted_checked_and_revised_each_in_their_own_forms(tmp_path):
+    _, backend, script = run(tmp_path, Script(fail={"s0001-e1": 1, "c0001-p1": 1}), SPLIT)
+    state = state_of(tmp_path / "out")
+    assert [qforms.form_of(q) for q in state["questions"]] == ["open"] * len(state["questions"])
+    assert {qforms.form_of(c) for c in state["ephemeral"]} == {"choice", "truefalse"} and all(c["status"] == "passed" for c in state["ephemeral"])
+    # each failed question is revised in the forms of its own role: the ephemeral one is not made an open question
+    revised = next(c for c in state["ephemeral"] if c["id"] == "s0001-e1")
+    assert len(revised["history"]) == 1 and qforms.form_of(revised) == "choice" and revised["after"]
+    practice = next(q for q in state["questions"] if q["id"] == "c0001-p1")
+    assert len(practice["history"]) == 1 and qforms.form_of(practice) == "open"
+    # the drafter is told the forms of each role, and its reply has the members of a form only where a role needs them
+    schema = prompts.draft_schema(SPLIT)["properties"]["ranges"]["items"]["properties"]
+    assert "form" not in schema["prompts"]["items"]["properties"]
+    assert schema["checks"]["items"]["properties"]["form"]["enum"] == ["choice", "truefalse"]
+    system = next(c["system"] for c in backend.calls if c["role"] == "draft")
+    assert "Practice questions are open questions and have no `form`." in system
+    assert "Ephemeral questions may take these forms: **multiple choice, true or false**." in system
+    assert "**Which form for an ephemeral question.** Open questions are not allowed for this role" in system
+    assert system.count("- **Multiple choice** (`\"form\": \"choice\"`)") == 1             # each form's guide once
+    assert "The forms of ephemeral questions, quick checks in the middle of reading, are **multiple choice, true or false**." in system
+    assert "An ephemeral question of a form the app grades is answered on the spot" in system
+    # the checker judges whether a graded ephemeral question has one right answer, though the practice questions are open
+    check = next(c for c in backend.calls if c["role"] == "check")
+    assert "There is a sixth criterion, **`one_right_answer`**." in check["system"] and prompts.criteria(SPLIT)[-1] == prompts.ONE_RIGHT
+    assert prompts.ONE_RIGHT in prompts.check_schema(SPLIT)["properties"]["prompts"]["items"]["properties"]
+    revise = next(c for c in backend.calls if c["role"] == "revise")
+    assert "A practice question takes one of these forms: open question; an ephemeral question one of these: multiple choice, true or false." in revise["prompt"]
+    assert prompts.revise_schema(SPLIT)["properties"]["revisions"]["items"]["properties"]["form"]["enum"] == ["open", "choice", "truefalse"]
+
+
+def test_a_question_in_a_form_its_role_does_not_allow_is_sent_back_with_the_forms_it_may_take():
+    _, sd, refs = part()
+    settings = from_options(density="short", ephemeral="linked", forms="open", ephemeral_forms="choice")
+    choice = {**EMPTY_FORM, "form": "choice", "answer": "The keeper keeps the light.", "correct_choice": "The keeper",
+              "wrong_choices": ["The mayor", "The baker", "The priest"]}
+    assert problems(section(sd, checks=[{**a_check(refs[1]), **choice}]), sd, settings) == []
+    (open_check,) = problems(section(sd, checks=[a_check(refs[1])]), sd, settings)
+    assert open_check.endswith("ephemeral question 1: its form is open question, which is not allowed here; the allowed forms are multiple choice")
+    (choice_question,) = problems(section(sd, {**choice, "prompt": "Who winds the clockwork at dusk?"}, checks=[{**a_check(refs[1]), **choice}]), sd, settings)
+    assert choice_question.endswith("question 1: its form is multiple choice, which is not allowed here; the allowed forms are open question")
+    # a revision too is held to the forms of its question's role
+    inside = {b.ref for b in sd.blocks}
+    check = {**a_check(refs[1]), **choice, "after": refs[1], "supporting_paragraphs": [refs[1]]}
+    question = {"prompt": "Why does the keeper wind the clockwork at dusk?", "answer": "So that the lamp turns all night.",
+                "supporting_paragraphs": [refs[-1]], **{k: v for k, v in EMPTY_PATHWAY.items() if k not in ("cue_prompt", "cue_answer")}}
+    wanted = {"s0001-e1": (check, inside), "c0001-p1": (question, inside)}
+    as_open = {"id": "s0001-e1", "action": "revise", "prompt": "Who keeps the light at night?", "answer": "The keeper.", "supporting_paragraphs": [refs[1]]}
+    as_choice = {**as_open, **choice, "id": "c0001-p1", "prompt": "Who winds the clockwork?", "supporting_paragraphs": [refs[-1]]}
+    good, said = read_revisions({"revisions": [as_open, as_choice]}, wanted, settings.forms, True, settings.ephemeral_forms)
+    assert good == {} and said == ["s0001-e1: its form is open question, which is not allowed here; the allowed forms are multiple choice",
+                                   "c0001-p1: its form is multiple choice, which is not allowed here; the allowed forms are open question"]
+    good, said = read_revisions({"revisions": [{**as_open, **choice, "prompt": "Who keeps the light at night?"},
+                                               {**as_choice, **{k: "" if isinstance(v, str) else v for k, v in EMPTY_FORM.items()}, "form": "open"}]},
+                                wanted, settings.forms, True, settings.ephemeral_forms)
+    assert said == [] and qforms.form_of(good["s0001-e1"]) == "choice" and qforms.form_of(good["c0001-p1"]) == "open"
+
+
+def test_without_ephemeral_questions_their_forms_change_nothing_the_models_are_given():
+    for forms in [("open",), ("open", "choice"), ("choice", "truefalse", "cloze")]:
+        plain, other = Settings(forms=forms), Settings(forms=forms, ephemeral_forms=("cloze",))
+        for make in (prompts.drafter_system, prompts.checker_system, prompts.draft_schema, prompts.revise_schema, prompts.check_schema):
+            assert make(plain) == make(other), (forms, make.__name__)
+        assert "ephemeral" not in prompts.drafter_system(plain).lower()
+    assert prompts.draft_schema(Settings()) is prompts.DRAFT_SCHEMA and prompts.check_schema(Settings()) is prompts.CHECK_SCHEMA
+    assert prompts.revise_schema(Settings()) is prompts.REVISE_SCHEMA and prompts.criteria(Settings(ephemeral_forms=("choice",))) == prompts.CRITERIA
+
+
+def test_with_the_same_forms_for_both_roles_every_question_is_told_the_same_forms():
+    same = from_options(density="short", ephemeral="attention", forms="open,cloze", ephemeral_forms="open,cloze")
+    schema = prompts.draft_schema(same)["properties"]["ranges"]["items"]["properties"]
+    assert schema["prompts"]["items"]["properties"]["form"]["enum"] == schema["checks"]["items"]["properties"]["form"]["enum"] == ["open", "cloze"]
+    system = prompts.drafter_system(same)
+    assert "The reader has allowed these forms: **open question, fill in the blank**. Every question says which it is, in `form`." in system
+    assert "In this book the reader allowed the same forms for both roles: **open question, fill in the blank**." in system
+    assert "Which form for" not in system and "separately" not in system
+
+
+def test_a_run_saved_before_the_two_roles_had_forms_of_their_own_resumes_with_the_same_forms(tmp_path):
+    both = from_options(density="short", ephemeral="attention", forms="open,choice", ephemeral_forms="open,choice")
+    run(tmp_path, Script(), both)
+    path = tmp_path / "out" / "work" / "state.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    del state["settings"]["ephemeral_forms"]                    # as an earlier version wrote it
+    path.write_text(json.dumps(state), encoding="utf-8")
+    assert Settings.from_json(state["settings"]).ephemeral_forms == ("open", "choice")
+    report, backend, _ = run(tmp_path, Script(), both)          # continued: nothing is drafted again
+    assert report["counts"]["ephemeral"] == len(state["ephemeral"]) and not [c for c in backend.calls if c["role"] == "draft"]
+    with pytest.raises(PipelineError, match=r"ephemeral_forms: \['open', 'choice'\] then, \['open'\] now"):
+        run(tmp_path, Script(), from_options(density="short", ephemeral="attention", forms="open,choice"))
+    with pytest.raises(PipelineError, match=r"ephemeral: attention then, none now, ephemeral_forms: \['open', 'choice'\] then, not used now"):
+        run(tmp_path, Script(), from_options(density="short", forms="open,choice"))
+
+
+def test_the_command_line_takes_the_forms_of_the_ephemeral_questions():
+    from ebook_processor.cli import make_parser, settings_from
+    args = make_parser().parse_args(["process", "book.epub", "--ephemeral", "attention", "--forms", "open", "--ephemeral-forms", "truefalse,choice"])
+    settings = settings_from(args)
+    assert settings.forms == ("open",) and settings.ephemeral_forms == ("choice", "truefalse")
+    assert settings_from(make_parser().parse_args(["process", "book.epub"])).ephemeral_forms == ("open",)
+
+
+# --------------------------------------------------------------------------
+# Promotion when the forms of the two roles differ
+
+
+def test_a_graded_ephemeral_question_is_kept_in_its_own_kind_or_in_one_of_the_practice_kinds(tmp_path):
+    _, out = letter(tmp_path, GRADED_CHECKS)
+    road, forgery, gate = (c["id"] for c in state_of(out)["ephemeral"])
+    shown = change_run(out, lambda book, state: editing.ephemeral_view(book, state, road), build=False)
+    assert shown["form"] == "choice" and len(shown["choices"]) == 4
+    assert shown["practice_forms"] == ["open"]                                     # so the window can tell the kinds differ
+    # as it is: it keeps its kind, as before
+    kept_as_is = change_run(out, lambda book, state: dict(editing.promote(state, book, road)))
+    assert qforms.form_of(kept_as_is) == "choice" and kept_as_is["choices"] == state_of(out)["ephemeral"][0]["choices"]
+    # in another kind, as the reader or the model wrote it
+    open_one = {"question": "Who knows that the duke's letter is forged?", "answer": "Only Maren and Ilse.", "form": {"form": "open"}}
+    made = change_run(out, lambda book, state: dict(editing.promote(state, book, forgery, open_one)))
+    assert qforms.form_of(made) == "open" and "choices" not in made and made["answer"] == "Only Maren and Ilse."
+    with pytest.raises(editing.EditError, match="A question keeps its kind"):   # a practice question's edit still keeps its kind
+        change_run(out, lambda book, state: editing.edit(state, book, kept_as_is["id"], {"form": {"form": "open"}}))
+    # the model rewrites it in a practice kind; no wish is needed for that
+    backend = messenger.script().backend()
+    book, state = open_run(out)
+    converted = editing.rewrite(backend, book, state, gate, "", GRADED_CHECKS, convert=True)
+    assert converted["form"] == {"form": "open"} and converted["question"] and converted["supporting_paragraphs"]
+    task = backend.calls[-1]
+    assert editing.CONVERT in task["prompt"] and editing.FOR_PRACTICE in task["prompt"] and "THE READER ASKS" not in task["prompt"]
+    assert "it takes, in place of its own form, the form of an open question." in task["prompt"] and "Form: multiple choice" in task["prompt"]
+    assert "graduated pathway" not in task["system"]
+    kept = change_run(out, lambda book, state: dict(editing.promote(state, book, gate, converted)))
+    assert qforms.form_of(kept) == "open" and kept["promoted_from"] == gate
+    # what cannot be converted, and what needs a wish
+    with pytest.raises(editing.EditError, match="Only a question asked while reading"):
+        editing.rewrite(backend, book, state, REACTIONS, "", GRADED_CHECKS, convert=True)
+    with pytest.raises(editing.EditError, match="Say what should be different"):
+        editing.rewrite(backend, book, state, gate, "", GRADED_CHECKS)
+    with pytest.raises(editing.EditError, match="already of a kind the book's practice questions take"):
+        editing.rewrite(backend, book, state, gate, "", GRADED_CHECKS, convert=True, draft=converted)
+    # a practice question of such a book is rewritten in its own form, and the model is told of no other
+    rewritten = editing.rewrite(backend, book, state, REACTIONS, "make it shorter", GRADED_CHECKS)
+    assert rewritten["form"] == {"form": "open"} and "Forms of question" not in backend.calls[-1]["system"]
+
+
+def test_a_conversion_the_model_cannot_make_says_so_and_keeps_nothing(tmp_path):
+    _, out = letter(tmp_path, GRADED_CHECKS)
+    road = state_of(out)["ephemeral"][0]["id"]
+    script = messenger.script()
+    script.withdraw = {road}
+    book, state = open_run(out)
+    with pytest.raises(BackendError, match="could not rewrite the question"):
+        editing.rewrite(script.backend(), book, state, road, "", GRADED_CHECKS, convert=True)
+    assert state_of(out)["ephemeral"][0]["promoted"] is None
+
+
+def test_the_app_promotes_a_question_into_a_practice_kind_through_its_routes(make_web_app):
+    app = make_web_app(model=lambda s: messenger.script().backend())
+    job = app.wait(app.add_fixture(name="The Forged Letter.epub", book=messenger.book(), density="short", ephemeral="attention",
+                                   forms="open", ephemeral_forms="choice"))
+    assert job["status"] == "done" and job["settings"]["ephemeral_forms"] == ["choice"] and job["settings"]["forms"] == ["open"]
+    jid = job["id"]
+    seen = app.call("GET", f"/api/jobs/{jid}/ephemeral/s0001-e1").data
+    assert seen["form"] == "choice" and seen["practice_forms"] == ["open"]
+    made = app.call("POST", f"/api/jobs/{jid}/ephemeral/s0001-e1/rewrite", json={"convert": True, "draft": {"question": seen["question"],
+                    "answer": seen["answer"], "form": {k: seen[k] for k in ("form", "choices", "correct")}}}).data
+    assert made["form"] == {"form": "open"}
+    kept = app.call("POST", f"/api/jobs/{jid}/ephemeral/s0001-e1/promote", json=made).data
+    assert kept["promoted_from"] == "s0001-e1" and "form" not in kept and kept["question"] == made["question"]
+    assert app.call("POST", f"/api/jobs/{jid}/ephemeral/s0001-e2/rewrite", json={"wish": ""}).status == 400

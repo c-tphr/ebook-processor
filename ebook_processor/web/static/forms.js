@@ -321,35 +321,64 @@ async function openEditor({ job, id, onChange }) {
 }
 
 // Keep an ephemeral question for Practice: as it is written, as changed here, or as the model rewrites it to a wish.
+// A book can ask its ephemeral questions in other kinds than its practice questions. For such a question the
+// setting promote_kind says what the window does: keep its kind (the default), have the model rewrite it in one of
+// the practice kinds at once, or offer both ways. The reader sees a rewrite in the form before it is kept.
+const KIND_WORDS = { open: "an open question", choice: "a multiple-choice question", truefalse: "a true-or-false question", cloze: "a fill-in-the-blank question" };
+const MEMBER_KEYS = ["form", "choices", "correct", "truth", "accept"];
 async function openPromoter({ job, id, onChange }) {
   const base = `/jobs/${job}/ephemeral/${encodeURIComponent(id)}`;
   let shown;
   try { shown = await api(base); } catch (e) { alert(e.message); return; }
   const w = windowFor("Keep for Practice", shown.section.label);
-  function draw(draft, message) {
-    const q = draft ? { ...shown, ...draft, ...(draft.form || {}) } : shown;
+  const practice = shown.practice_forms || [form(shown)];
+  const setting = window.AppSettings && AppSettings.values.promote_kind;
+  const how = practice.includes(form(shown)) ? "keep" : ["rewrite", "ask"].includes(setting) ? setting : "keep";
+  const own = Object.fromEntries(Object.entries(shown).filter(([k]) => !MEMBER_KEYS.includes(k)));   // the question without its kind
+  const kinds = practice.map((k) => (KINDS.find(([v]) => v === k) || [k, k])[1]).join(", ");
+  let current = null;                   // reads the form as it is now
+  function draw(draft, message, bad) {
+    const q = draft ? { ...own, ...draft, ...(draft.form || {}) } : shown;
     const fields = edit(q);
+    // what is sent always names its kind, so that a question rewritten as an open one is kept as one
+    const read = current = () => { const r = fields.read(); return r.form ? r : { ...r, form: { form: "open" } }; };
     const passage = passagePicker(shown.paragraphs, draft && draft.supporting_paragraphs ? draft.supporting_paragraphs : shown.supporting_paragraphs, false);
     if (draft && draft.supporting_paragraphs) passage.set(draft.supporting_paragraphs);
     const wish = el("input", { type: "text", id: "qf-wish", "aria-label": "What you want to remember", maxlength: 300, placeholder: "Or tell the model what you want to remember, and it rewrites the question" });
     const rewrite = async (button) => {
-      const made = await w.run(button, () => api(base + "/rewrite", { method: "POST", json: { wish: wish.value, draft: fields.read() } }));
+      const made = await w.run(button, () => api(base + "/rewrite", { method: "POST", json: { wish: wish.value, draft: read() } }));
       if (made) draw(made, "The model's rewrite is in the form. Change it if you like, then keep it.");
     };
     wish.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); rewrite(wishButton); } });
     const wishButton = el("button", { type: "button", id: "qf-rewrite", onclick: (e) => rewrite(e.currentTarget) }, "Rewrite");
-    w.body.replaceChildren(el("p", { class: "qf-hint", id: "qf-state" }, "This question was asked while you read and is not kept. Keep it, and it is a card in Practice from now on: as it is written, as you change it here, or as the model rewrites it."),
-      fields.el, passage.el, el("div", { class: "qf-wish" }, wish, wishButton));
+    const foreign = how !== "keep" && !practice.includes(form(q));
+    const kind = how === "keep" ? null : el("div", { class: "qf-kind", id: "qf-kind" },
+      el("p", { class: "qf-hint" }, `Asked while reading, it is ${KIND_WORDS[form(shown)]}. This book's practice questions are of these kinds: ${kinds}.`
+        + (form(q) !== form(shown) ? ` In the form it is now ${KIND_WORDS[form(q)]}.` : how === "ask" ? " Keep it in its own kind, or have the model rewrite it in a practice kind." : "")),
+      el("span", { class: "qf-side" },
+        foreign ? el("button", { type: "button", id: "qf-convert", onclick: (e) => convert(e.currentTarget) }, "Rewrite in a practice kind") : null,
+        form(q) !== form(shown) ? el("button", { type: "button", class: "quiet", id: "qf-own", onclick: () => draw(null, "The question is back in its own kind.") }, "Back to its own kind") : null));
+    w.body.replaceChildren(...[el("p", { class: "qf-hint", id: "qf-state" }, "This question was asked while you read and is not kept. Keep it, and it is a card in Practice from now on: as it is written, as you change it here, or as the model rewrites it."),
+      kind, fields.el, passage.el, el("div", { class: "qf-wish" }, wish, wishButton)].filter(Boolean));
     w.foot.replaceChildren(el("span", { class: "qf-side" }), el("span", { class: "qf-side" },
       el("button", { type: "button", class: "primary", id: "qf-save", onclick: async (e) => {
-        const made = await w.run(e.currentTarget, () => api(base + "/promote", { method: "POST", json: { ...fields.read(), supporting_paragraphs: passage.read() } }));
+        const made = await w.run(e.currentTarget, () => api(base + "/promote", { method: "POST", json: { ...read(), supporting_paragraphs: passage.read() } }));
         if (!made) return;
         if (onChange) onChange({ id: made.id, from: id, promoted: true });
         w.close();
       } }, "Keep for Practice")));
-    if (message !== undefined) w.say(message);
+    if (message !== undefined) w.say(message, bad);
+  }
+  // The model rewrites the question in one of the practice kinds. When it cannot, the form stays as it is, in the
+  // question's own kind, and can be kept so.
+  async function convert(button) {
+    let failed = "";
+    const made = await w.run(button, () => api(base + "/rewrite", { method: "POST", json: { convert: true, draft: current() } }).catch((e) => { failed = e.message; throw e; }));
+    if (made) draw(made, `The model rewrote it as ${KIND_WORDS[form(made.form)]}. Change it if you like, then keep it.`);
+    else w.say(`The model could not rewrite it in a practice kind: ${(failed || "no answer").replace(/\.?$/, ".")} You can keep it in its own kind.`, true);
   }
   draw(null);
+  if (how === "rewrite") convert(w.body.querySelector("#qf-convert"));
 }
 
 async function openAdder({ job, section, onChange }) {
@@ -410,6 +439,7 @@ document.head.append(el("style", {}, `
 .qf-note.bad { background: var(--ink); color: var(--paper); }
 .qf-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 20px; border-top: 1px solid var(--ink); }
 .qf-side { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.qf-kind { display: grid; gap: 8px; justify-items: start; border-left: 3px solid var(--blue); padding-left: 12px; }
 .qf-wish { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
 .qf-wish input { font: inherit; color: var(--ink); background: var(--sheet); border: 1px solid var(--ink); border-radius: 0; padding: 9px 11px; min-width: 0; }
 .qf-passage summary { cursor: pointer; font: 12px/1.5 var(--mono); letter-spacing: 0.04em; text-transform: uppercase; }
